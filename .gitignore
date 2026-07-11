@@ -1,0 +1,30 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+*.xcworkspace
+*.xcodeproj
+.vs/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.pdb
+*.exe
+*.dll
+*.dylib
+*.app
+FileOpenOrder/
+*-Debug.*
+*-Shipping.*
+
+# Mac
+.DS_Store
+
+# Local AI / tooling (keep secrets out of git)
+.grok/
