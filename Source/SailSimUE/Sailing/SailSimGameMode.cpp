@@ -37,7 +37,8 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 		}
 	}
 
-	// Hide the OpenWorld checkerboard landscape (M_ProcGrid).
+	// Hide checkerboard OpenWorld landscape so it doesn't cover the ocean mesh.
+	// Keep it non-colliding; water still tessellates without it.
 	for (TActorIterator<ALandscape> It(World); It; ++It)
 	{
 		It->SetActorHiddenInGame(true);

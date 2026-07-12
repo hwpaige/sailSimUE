@@ -185,24 +185,25 @@ protected:
 
 	/** Soft radius around origin for the water-brush island (spawn just outside). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float OriginIslandRadiusCm = 12000.f;
+	float OriginIslandRadiusCm = 5000.f;
 
 	/**
-	 * Spawn on the WaterZone near origin (not km offshore — far spawn sits outside
-	 * ocean tessellation and looks like empty sky after landscape is hidden).
+	 * Spawn just outside the island, still well inside a normal WaterZone
+	 * (default zone is ~512 m full extent; stay near origin so the mesh draws).
 	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(18000.f, 14000.f);
+	FVector2D OpenWaterSpawnXY = FVector2D(6000.f, 8000.f);
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
-	/** Diagnostic only: log water zone presence (never moves/resizes Static water actors). */
+	/** Resize WaterZone extent (not location) so the water mesh covers the boat. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	bool bEnsureOceanCoverage = false;
+	bool bEnsureOceanCoverage = true;
 
+	/** Full ZoneExtent (cm) after ensure — keep modest on Mac (huge values break tiles). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float WaterZoneExtentCm = 2000000.f;
+	float WaterZoneExtentCm = 200000.f;
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
