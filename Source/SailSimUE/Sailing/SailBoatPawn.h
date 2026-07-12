@@ -8,13 +8,11 @@
 class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
+class USceneComponent;
 
 /**
- * Placeholder keelboat driven by FBoatDynamics (J/105 3-DOF VPP).
- * Heading 0° → world +X, 90° → +Y. Float Z from Water plugin when available.
- *
- * Default ocean maps often place a landscape island near origin; we spawn/relocate
- * into open water so PIE does not start stranded on land.
+ * Placeholder keelboat (primitive rig) driven by FBoatDynamics (J/105 3-DOF VPP).
+ * Root is at waterline; hull mesh hangs partly below. Heading 0° → +X, 90° → +Y.
  */
 UCLASS()
 class SAILSIMUE_API ASailBoatPawn : public APawn
@@ -45,7 +43,28 @@ public:
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> BoatRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> HullMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> CabinMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> KeelMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> MastMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BoomMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> MainSailMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> JibSailMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USpringArmComponent> SpringArm;
@@ -57,34 +76,31 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float WaterSurfaceZ = 0.f;
 
-	/** How far the mesh sits relative to sampled water (fraction of half-height). */
+	/**
+	 * Height of actor root (waterline) above sampled water surface (cm).
+	 * Keep small so the hull (which extends below root) sits in the water.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float FloatDraftFraction = 0.35f;
+	float WaterlineOffsetCm = 8.f;
 
 	/** Vertical blend toward water surface (1/s). */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float FloatSmoothRate = 4.f;
+	float FloatSmoothRate = 6.f;
 
 	/** Visual LOA (J/105 ~10.5 m → 1050 cm). */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float HullLengthCm = 1050.f;
 
-	/** Sample wave pitch from bow/stern water heights. */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	bool bSampleWavePitch = true;
 
-	/**
-	 * If the pawn starts within this XY distance of the world origin (cm), snap to
-	 * OpenWaterSpawnXY. Default ocean landscapes sit around 0,0.
-	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float OriginIslandRadiusCm = 25000.f;
 
-	/** Open-water spawn XY (cm). Default: 800 m east of origin, away from brush island. */
+	/** Open-water spawn XY (cm). ~800 m east of origin island. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	FVector2D OpenWaterSpawnXY = FVector2D(80000.f, 0.f);
 
-	/** If true, always force OpenWaterSpawnXY in BeginPlay (ignore placed actor XY). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
@@ -94,11 +110,10 @@ protected:
 	float SmoothedPitch = 0.f;
 	bool bFloatInit = false;
 
+	void BuildBoatMeshes();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
 	void EnsureOpenWaterSpawn();
-
-	/** Returns true if Water plugin gave a surface sample. Depth optional. */
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };
