@@ -12,6 +12,7 @@
 #include "ProceduralMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/InputComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -92,23 +93,30 @@ ASailBoatPawn::ASailBoatPawn()
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(BoatRoot);
-	// Higher / farther chase so ocean horizon is visible under dusk lighting.
-	SpringArm->TargetArmLength = 2200.f;
+	// Do not inherit boat pitch/roll — wave pitch was pulling the camera into the hull.
 	SpringArm->bUsePawnControlRotation = false;
-	SpringArm->bInheritPitch = true;
+	SpringArm->bInheritPitch = false;
 	SpringArm->bInheritYaw = true;
-	SpringArm->bInheritRoll = false; // keep horizon level when boat heels
+	SpringArm->bInheritRoll = false;
 	SpringArm->bDoCollisionTest = false;
-	SpringArm->bEnableCameraLag = true;
-	SpringArm->CameraLagSpeed = 10.f;
-	SpringArm->bEnableCameraRotationLag = false; // snappier orbit response
-	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 320.f));
-	OrbitYawDeg = -35.f;
-	OrbitPitchDeg = -22.f;
-	ApplyOrbitToSpringArm();
+	SpringArm->bEnableCameraLag = false; // enable after spawn frames (RefreshChaseCamera)
+	SpringArm->bEnableCameraRotationLag = false;
+	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 200.f));
+	SpringArm->SocketOffset = FVector(0.f, 0.f, 200.f);
+	SpringArm->TargetOffset = FVector(0.f, 0.f, 120.f);
+	OrbitYawDeg = 25.f;
+	OrbitPitchDeg = -20.f;
+	RefreshChaseCamera();
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+	// Explicit socket — if attachment misses SpringEndpoint, camera sits at boom = inside hull.
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+	Camera->bUsePawnControlRotation = false;
+	Camera->SetFieldOfView(72.f);
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationRoll = false;
+	bFindCameraComponentWhenViewTarget = true;
 }
 
 void ASailBoatPawn::OnConstruction(const FTransform& Transform)
@@ -122,6 +130,12 @@ void ASailBoatPawn::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	StartupSkipFrames = 3;
+	CameraLagEnableFrames = 8;
+	RefreshChaseCamera();
+	if (APlayerController* PC = Cast<APlayerController>(NewController))
+	{
+		PC->SetViewTarget(this);
+	}
 }
 
 void ASailBoatPawn::UpdateHullCollisionFromMesh()
@@ -201,10 +215,7 @@ void ASailBoatPawn::ApplyCachedSailingToDynamics()
 	if (S.LoaFt > 1.f)
 	{
 		HullLengthCm = S.LoaFt * 30.48f;
-		if (SpringArm)
-		{
-			SpringArm->TargetArmLength = FMath::Clamp(HullLengthCm * 1.5f, 900.f, 2800.f);
-		}
+		RefreshChaseCamera();
 	}
 	if (S.BeamFt > 1.f)
 	{
@@ -411,6 +422,14 @@ void ASailBoatPawn::BeginPlay()
 	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
 	SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 
+	// After open-water teleport: re-seat exterior chase cam (no lag during teleport).
+	CameraLagEnableFrames = 8;
+	RefreshChaseCamera();
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		PC->SetViewTarget(this);
+	}
+
 	FBoatDynamics::RunGoldenSelfCheck();
 }
 
@@ -440,9 +459,49 @@ void ASailBoatPawn::ApplyOrbitToSpringArm()
 {
 	if (!SpringArm) return;
 	OrbitPitchDeg = FMath::Clamp(OrbitPitchDeg, MinOrbitPitchDeg, MaxOrbitPitchDeg);
-	// Normalize yaw to keep values sane
 	OrbitYawDeg = FMath::UnwindDegrees(OrbitYawDeg);
+	// Pitch/Yaw only — never roll with the hull.
 	SpringArm->SetRelativeRotation(FRotator(OrbitPitchDeg, OrbitYawDeg, 0.f));
+}
+
+void ASailBoatPawn::RefreshChaseCamera()
+{
+	if (!SpringArm) return;
+
+	const float Arm = FMath::Clamp(
+		HullLengthCm * CameraArmLengthLoaScale,
+		FMath::Max(MinArmLengthCm, 2000.f),
+		MaxArmLengthCm);
+	SpringArm->TargetArmLength = Arm;
+	SpringArm->bInheritPitch = false;
+	SpringArm->bInheritYaw = true;
+	SpringArm->bInheritRoll = false;
+	SpringArm->bDoCollisionTest = false;
+	// Lag off until after teleport/spawn so we don't start at PlayerStart origin.
+	SpringArm->bEnableCameraLag = (CameraLagEnableFrames <= 0);
+	SpringArm->CameraLagSpeed = 8.f;
+	SpringArm->bEnableCameraRotationLag = false;
+	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 200.f));
+	SpringArm->SocketOffset = FVector(0.f, 0.f, 220.f);
+	SpringArm->TargetOffset = FVector(0.f, 0.f, 100.f);
+
+	// Default exterior chase: elevated, slightly off the stern quarter.
+	if (FMath::Abs(OrbitPitchDeg) < 1.f)
+	{
+		OrbitPitchDeg = -20.f;
+	}
+	OrbitPitchDeg = FMath::Clamp(OrbitPitchDeg, -55.f, -8.f);
+	ApplyOrbitToSpringArm();
+
+	if (Camera)
+	{
+		Camera->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+		Camera->bUsePawnControlRotation = false;
+		Camera->SetActive(true);
+	}
+
+	UE_LOG(LogSailSim, Log, TEXT("Chase cam arm=%.0f cm pitch=%.1f yaw=%.1f LOA=%.0f"),
+		Arm, OrbitPitchDeg, OrbitYawDeg, HullLengthCm);
 }
 
 void ASailBoatPawn::OnOrbitPressed()
@@ -806,7 +865,17 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 			Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
 			SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 		}
+		RefreshChaseCamera();
 		return;
+	}
+
+	if (CameraLagEnableFrames > 0)
+	{
+		--CameraLagEnableFrames;
+		if (CameraLagEnableFrames == 0 && SpringArm)
+		{
+			SpringArm->bEnableCameraLag = true;
+		}
 	}
 
 	const float Dt = FMath::Clamp(DeltaSeconds, 0.f, 1.f / 20.f);

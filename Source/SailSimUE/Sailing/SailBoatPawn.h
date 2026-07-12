@@ -212,19 +212,23 @@ protected:
 	float OrbitPitchSpeed = 1.8f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
-	float MinOrbitPitchDeg = -85.f;
+	float MinOrbitPitchDeg = -70.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
-	float MaxOrbitPitchDeg = -2.f;
+	float MaxOrbitPitchDeg = -8.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
 	float ZoomSpeedCm = 120.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
-	float MinArmLengthCm = 350.f;
+	float MinArmLengthCm = 1200.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
-	float MaxArmLengthCm = 6000.f;
+	float MaxArmLengthCm = 8000.f;
+
+	/** Chase arm length as multiple of LOA (cm). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float CameraArmLengthLoaScale = 2.4f;
 
 	/** If true, only orbit while holding RMB (recommended for PIE). If false, always-on mouse look. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
@@ -253,10 +257,11 @@ protected:
 	FSailClothSim MainCloth;
 	FSailClothSim JibCloth;
 
-	/** Spring-arm orbit (relative to boat). */
-	float OrbitYawDeg = -25.f;
-	float OrbitPitchDeg = -18.f;
+	/** Spring-arm orbit (relative to boat). Yaw≈0 = from astern; pitch negative = elevated. */
+	float OrbitYawDeg = 25.f;
+	float OrbitPitchDeg = -20.f;
 	bool bOrbitRMBHeld = false;
+	int32 CameraLagEnableFrames = 0;
 
 	/** Load procedural loft (+ spars). bApplyDynamics: wire sailing params into VPP. */
 	void LoadLoftMesh(bool bApplyDynamics = false);
@@ -268,6 +273,8 @@ protected:
 	void ApplyClothForceToDynamics();
 	void EnsureOceanCoverage();
 	void ApplyOrbitToSpringArm();
+	/** Reset arm length / orbit / lag so PIE never starts inside the hull. */
+	void RefreshChaseCamera();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void SampleMultiPointBuoyancy(const FVector& Loc, float CosH, float SinH,
 		float& OutTargetZ, float& OutWavePitchDeg, float& OutWaveRollDeg) const;
