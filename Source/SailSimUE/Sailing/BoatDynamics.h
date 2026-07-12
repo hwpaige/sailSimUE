@@ -112,6 +112,12 @@ struct FBoatDynamics
 	void SetSheetEase(float Ease01);
 	void Update(float Dt);
 
+	/**
+	 * Offline settle at fixed TWS/heading; logs SPD/HEEL vs rough ORC-ish bands.
+	 * Returns true if within loose Phase-2 golden band (~not a full polar cert).
+	 */
+	static bool RunGoldenSelfCheck(FString* OutReport = nullptr);
+
 	float GetSpeedKnots() const { return V / KnToFts; }
 	float GetApparentWindAngleDeg() const;
 	float GetApparentWindSpeedKn() const;

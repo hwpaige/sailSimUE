@@ -396,3 +396,37 @@ void FBoatDynamics::Update(float Dt)
 	if (!FMath::IsFinite(Beta)) Beta = 0.f;
 	if (!FMath::IsFinite(Phi)) Phi = 0.f;
 }
+
+bool FBoatDynamics::RunGoldenSelfCheck(FString* OutReport)
+{
+	// Settle close-hauled-ish at TWS 12 kn (wind from 225°, head ~185° → AWA ~40°).
+	FBoatDynamics D;
+	D.InitJ105();
+	D.TrueWindSpeedKn = 12.f;
+	D.TrueWindDirDeg = 225.f;
+	D.Heading = 185.f;
+	D.AutoTarget = 185.f;
+	D.bAutoHeading = true;
+	D.bSailing = true;
+	D.SheetEase = 0.12f;
+
+	constexpr float Dt = 0.05f;
+	for (int32 I = 0; I < 800; ++I)
+	{
+		D.Update(Dt);
+	}
+
+	const float Spd = D.GetSpeedKnots();
+	const float HeelAbs = FMath::Abs(D.Phi);
+	// Loose Phase-2 band (full ORC polar cert is later calibration work).
+	const bool bSpdOk = Spd >= 3.5f && Spd <= 9.5f;
+	const bool bHeelOk = HeelAbs >= 5.f && HeelAbs <= 32.f;
+	const bool bOk = bSpdOk && bHeelOk && FMath::IsFinite(Spd) && FMath::IsFinite(HeelAbs);
+
+	const FString Report = FString::Printf(
+		TEXT("VPP golden TWS12 HDG185: SPD=%.2f kn (want 3.5–9.5) HEEL=%.1f° (want 5–32) %s"),
+		Spd, HeelAbs, bOk ? TEXT("PASS") : TEXT("FAIL"));
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Report);
+	if (OutReport) *OutReport = Report;
+	return bOk;
+}

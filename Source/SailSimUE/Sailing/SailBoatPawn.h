@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Sailing/BoatDynamics.h"
 #include "Sailing/BoatMeshFromJson.h"
+#include "Sailing/SailClothSim.h"
 #include "SailBoatPawn.generated.h"
 
 class UStaticMeshComponent;
@@ -126,19 +127,45 @@ protected:
 	float WaterlineOffsetCm = 4.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float MaxWaterZSpeedCm = 100.f;
+	float MaxWaterZSpeedCm = 140.f;
 
-	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float PitchSmoothRate = 2.0f;
+	/** Soft buoyancy vertical spring (1/s-ish). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float BuoyancyStiffness = 6.0f;
 
-	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float WavePitchSampleInterval = 0.12f;
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float BuoyancyDamping = 4.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float WavePitchSmoothRate = 2.5f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float WaveRollSmoothRate = 2.0f;
+
+	/** How much wave slope adds to VPP heel (0 = pure VPP, 1 = full wave roll). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float WaveRollGain = 0.35f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float MaxWavePitchDeg = 10.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float MaxWaveRollDeg = 8.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	float WaveSampleInterval = 0.08f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float HullLengthCm = 1050.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	bool bSampleWavePitch = true;
+	float HullBeamCm = 335.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
+	bool bMultiPointBuoyancy = true;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Cloth")
+	bool bEnableSailCloth = true;
 
 	/** Content-relative path to boat3d export. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
@@ -207,14 +234,19 @@ protected:
 	bool bBoomEndpointsValid = false;
 	bool bMastPivotValid = false;
 	float SmoothedWaterZ = 0.f;
+	float VerticalVelZ = 0.f;
 	float SmoothedPitch = 0.f;
-	float WavePitchSampleTimer = 0.f;
+	float SmoothedWaveRoll = 0.f;
+	float WaveSampleTimer = 0.f;
 	float CachedWavePitch = 0.f;
+	float CachedWaveRoll = 0.f;
 	bool bFloatInit = false;
 	bool bLoftMeshLoaded = false;
 	FString LoadedLoftPath;
 	FBoatJsonSailingParams CachedSailingParams;
 	int32 StartupSkipFrames = 3;
+	FSailClothSim MainCloth;
+	FSailClothSim JibCloth;
 
 	/** Spring-arm orbit (relative to boat). */
 	float OrbitYawDeg = -25.f;
@@ -226,9 +258,12 @@ protected:
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
 	void ApplyCachedSailingToDynamics();
 	void UpdateBoomFromSheet();
+	void UpdateSailCloth(float DeltaSeconds);
 	void EnsureOceanCoverage();
 	void ApplyOrbitToSpringArm();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
+	void SampleMultiPointBuoyancy(const FVector& Loc, float CosH, float SinH,
+		float& OutTargetZ, float& OutWavePitchDeg, float& OutWaveRollDeg) const;
 	void OnMoveRight(float Value);
 	void OnSheetAxis(float Value);
 	void OnLookYaw(float Value);

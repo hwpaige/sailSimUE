@@ -143,11 +143,14 @@ void ASailBoatPawn::ApplyCachedSailingToDynamics()
 	if (S.LoaFt > 1.f)
 	{
 		HullLengthCm = S.LoaFt * 30.48f;
-		// Keep chase cam proportional to boat length
 		if (SpringArm)
 		{
 			SpringArm->TargetArmLength = FMath::Clamp(HullLengthCm * 1.5f, 900.f, 2800.f);
 		}
+	}
+	if (S.BeamFt > 1.f)
+	{
+		HullBeamCm = S.BeamFt * 30.48f;
 	}
 	UE_LOG(LogTemp, Log,
 		TEXT("SailBoatPawn: dynamics from JSON disp=%.0f lb SA=%.0f LOA=%.1f ft"),
@@ -241,6 +244,14 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 		bBoomEndpointsValid = false;
 	}
 	UpdateBoomFromSheet();
+
+	MainCloth.Clear();
+	JibCloth.Clear();
+	if (bEnableSailCloth)
+	{
+		if (MainSailMesh) MainCloth.BuildFromMesh(MainSailMesh, 0);
+		if (JibSailMesh) JibCloth.BuildFromMesh(JibSailMesh, 0);
+	}
 
 	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color)
 	{
@@ -342,8 +353,11 @@ void ASailBoatPawn::BeginPlay()
 			Loc.X, Loc.Y, SmoothedWaterZ);
 	}
 	bFloatInit = true;
+	VerticalVelZ = 0.f;
 	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
 	SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
+
+	FBoatDynamics::RunGoldenSelfCheck();
 }
 
 void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -446,7 +460,7 @@ void ASailBoatPawn::SetSheetEase(float Ease01)
 
 void ASailBoatPawn::UpdateBoomFromSheet()
 {
-	// Swing boom + sails out to leeward as sheet eases (placeholder until cloth)
+	// Rigid boom + sail-root yaw (cloth deforms on top when enabled)
 	const float SwingDeg = Dynamics.SheetEase * 55.f;
 	const float Sign = Dynamics.GetApparentWindAngleDeg() >= 0.f ? 1.f : -1.f;
 	const float Yaw = Sign * SwingDeg;
@@ -459,23 +473,133 @@ void ASailBoatPawn::UpdateBoomFromSheet()
 		PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc, Swung);
 	}
 
-	// Sails are pivoted at mast base in boat space
 	if (MainSailMesh)
 	{
-		if (bMastPivotValid)
-		{
-			MainSailMesh->SetRelativeLocation(MastBaseLoc);
-		}
-		MainSailMesh->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
+		if (bMastPivotValid) MainSailMesh->SetRelativeLocation(MastBaseLoc);
+		// When cloth is active, keep yaw small — cloth handles fill; else rigid sheet
+		const float RigidYaw = (bEnableSailCloth && MainCloth.bInitialized) ? Yaw * 0.25f : Yaw;
+		MainSailMesh->SetRelativeRotation(FRotator(0.f, RigidYaw, 0.f));
 	}
 	if (JibSailMesh)
 	{
+		if (bMastPivotValid) JibSailMesh->SetRelativeLocation(MastBaseLoc);
+		const float RigidYaw = (bEnableSailCloth && JibCloth.bInitialized) ? Yaw * 0.2f : Yaw * 0.9f;
+		JibSailMesh->SetRelativeRotation(FRotator(0.f, RigidYaw, 0.f));
+	}
+}
+
+void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
+{
+	if (!bEnableSailCloth) return;
+
+	const float SwingDeg = Dynamics.SheetEase * 55.f;
+	const float Sign = Dynamics.GetApparentWindAngleDeg() >= 0.f ? 1.f : -1.f;
+	const float Yaw = Sign * SwingDeg;
+
+	// Apparent wind in boat frame (approx): from AWA
+	const float Awa = Dynamics.GetApparentWindAngleDeg();
+	const FVector WindBoat(
+		FMath::Cos(FMath::DegreesToRadians(Awa)),
+		FMath::Sin(FMath::DegreesToRadians(Awa)),
+		0.f);
+
+	auto StepOne = [&](FSailClothSim& Cloth, UProceduralMeshComponent* Mesh, float YawScale)
+	{
+		if (!Cloth.bInitialized || !Mesh) return;
+		const FTransform SailRel(FRotator(0.f, Yaw * YawScale, 0.f),
+			bMastPivotValid ? MastBaseLoc : FVector::ZeroVector);
+		// Boom tip in boat space → sail local
+		FVector BoomTipBoat = BoomEndLoc;
+		if (bBoomEndpointsValid)
+		{
+			const FQuat Q(FVector::UpVector, FMath::DegreesToRadians(Yaw));
+			BoomTipBoat = BoomBaseLoc + Q.RotateVector(BoomEndLoc - BoomBaseLoc);
+		}
+		const FVector ClewLocal = SailRel.InverseTransformPosition(BoomTipBoat);
+		const FVector WindLocal = SailRel.InverseTransformVectorNoScale(WindBoat).GetSafeNormal();
+		Cloth.Step(DeltaSeconds, WindLocal, Dynamics.GetApparentWindSpeedKn(), ClewLocal, Dynamics.SheetEase);
+		Cloth.PushToMesh(Mesh);
+	};
+
+	StepOne(MainCloth, MainSailMesh, 0.25f);
+	// Jib: aim clew slightly forward of boom base
+	if (JibCloth.bInitialized && JibSailMesh)
+	{
+		const FTransform SailRel(FRotator(0.f, Yaw * 0.2f, 0.f),
+			bMastPivotValid ? MastBaseLoc : FVector::ZeroVector);
+		FVector JibClewBoat = MastBaseLoc + FVector(-HullLengthCm * 0.15f, Sign * HullBeamCm * 0.35f * Dynamics.SheetEase, HullLengthCm * 0.08f);
 		if (bMastPivotValid)
 		{
-			JibSailMesh->SetRelativeLocation(MastBaseLoc);
+			JibClewBoat = MastBaseLoc + FVector(-200.f, Sign * (80.f + Dynamics.SheetEase * 220.f), 250.f);
 		}
-		// Jib opens a bit less than main
-		JibSailMesh->SetRelativeRotation(FRotator(0.f, Yaw * 0.9f, 0.f));
+		const FVector ClewLocal = SailRel.InverseTransformPosition(JibClewBoat);
+		const FVector WindLocal = SailRel.InverseTransformVectorNoScale(WindBoat).GetSafeNormal();
+		JibCloth.Step(DeltaSeconds, WindLocal, Dynamics.GetApparentWindSpeedKn(), ClewLocal, Dynamics.SheetEase);
+		JibCloth.PushToMesh(JibSailMesh);
+	}
+}
+
+void ASailBoatPawn::SampleMultiPointBuoyancy(
+	const FVector& Loc, float CosH, float SinH,
+	float& OutTargetZ, float& OutWavePitchDeg, float& OutWaveRollDeg) const
+{
+	OutTargetZ = bFloatInit ? SmoothedWaterZ : WaterSurfaceZ;
+	OutWavePitchDeg = 0.f;
+	OutWaveRollDeg = 0.f;
+
+	const FVector Fwd(CosH, SinH, 0.f);
+	const FVector Right(-SinH, CosH, 0.f);
+	const float HalfLoa = HullLengthCm * 0.42f;
+	const float HalfBeam = HullBeamCm * 0.42f;
+
+	struct FProbe { FVector Offset; float W; };
+	const FProbe Probes[] = {
+		{ FVector::ZeroVector, 1.0f },
+		{ Fwd * HalfLoa, 0.9f },
+		{ -Fwd * HalfLoa, 0.9f },
+		{ Right * HalfBeam, 0.75f },
+		{ -Right * HalfBeam, 0.75f },
+		{ Fwd * HalfLoa * 0.5f + Right * HalfBeam * 0.5f, 0.5f },
+		{ Fwd * HalfLoa * 0.5f - Right * HalfBeam * 0.5f, 0.5f },
+	};
+
+	float SumZ = 0.f;
+	float SumW = 0.f;
+	FVector BowS = FVector::ZeroVector, SternS = FVector::ZeroVector;
+	FVector PortS = FVector::ZeroVector, StbdS = FVector::ZeroVector;
+	bool bBow = false, bStern = false, bPort = false, bStbd = false;
+
+	for (int32 I = 0; I < UE_ARRAY_COUNT(Probes); ++I)
+	{
+		FVector Surf, Norm;
+		if (!SampleWaterSurface(Loc + Probes[I].Offset, Surf, Norm)) continue;
+		SumZ += Surf.Z * Probes[I].W;
+		SumW += Probes[I].W;
+		if (I == 1) { BowS = Surf; bBow = true; }
+		if (I == 2) { SternS = Surf; bStern = true; }
+		if (I == 3) { StbdS = Surf; bStbd = true; }
+		if (I == 4) { PortS = Surf; bPort = true; }
+	}
+
+	if (SumW > 0.f)
+	{
+		OutTargetZ = SumZ / SumW;
+	}
+
+	if (bBow && bStern)
+	{
+		const float Span = FMath::Max(HalfLoa * 2.f, 1.f);
+		OutWavePitchDeg = FMath::Clamp(
+			FMath::RadiansToDegrees(FMath::Atan2(BowS.Z - SternS.Z, Span)),
+			-MaxWavePitchDeg, MaxWavePitchDeg);
+	}
+	if (bPort && bStbd)
+	{
+		const float Span = FMath::Max(HalfBeam * 2.f, 1.f);
+		// +roll = starboard down (UE roll)
+		OutWaveRollDeg = FMath::Clamp(
+			FMath::RadiansToDegrees(FMath::Atan2(StbdS.Z - PortS.Z, Span)),
+			-MaxWaveRollDeg, MaxWaveRollDeg);
 	}
 }
 
@@ -610,13 +734,14 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	}
 	Dynamics.Update(Dt);
 	ApplyDynamicsToTransform(Dt);
+	UpdateSailCloth(Dt);
 	// Instruments drawn by ASailSimHUD
 }
 
 void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 {
 	const float Yaw = Dynamics.Heading;
-	const float Heel = Dynamics.Phi;
+	const float VppHeel = Dynamics.Phi;
 	constexpr float FtToCm = 30.48f;
 	const float CosH = FMath::Cos(FMath::DegreesToRadians(Dynamics.Heading));
 	const float SinH = FMath::Sin(FMath::DegreesToRadians(Dynamics.Heading));
@@ -627,44 +752,65 @@ void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 	Loc.X += Vx * DeltaSeconds;
 	Loc.Y += Vy * DeltaSeconds;
 
-	const float HalfLoa = HullLengthCm * 0.45f;
-	FVector CenterSurf, CenterN;
 	float TargetZ = bFloatInit ? SmoothedWaterZ : WaterSurfaceZ;
-	if (SampleWaterSurface(Loc, CenterSurf, CenterN))
+	float WavePitch = CachedWavePitch;
+	float WaveRoll = CachedWaveRoll;
+
+	WaveSampleTimer -= DeltaSeconds;
+	if (bMultiPointBuoyancy && WaveSampleTimer <= 0.f)
 	{
-		TargetZ = CenterSurf.Z;
+		WaveSampleTimer = WaveSampleInterval;
+		SampleMultiPointBuoyancy(Loc, CosH, SinH, TargetZ, WavePitch, WaveRoll);
+		CachedWavePitch = WavePitch;
+		CachedWaveRoll = WaveRoll;
 	}
+	else if (!bMultiPointBuoyancy)
+	{
+		FVector CenterSurf, CenterN;
+		if (SampleWaterSurface(Loc, CenterSurf, CenterN))
+		{
+			TargetZ = CenterSurf.Z;
+		}
+	}
+	else
+	{
+		// Keep last wave samples; still track mean Z cheaply at center
+		FVector CenterSurf, CenterN;
+		if (SampleWaterSurface(Loc, CenterSurf, CenterN))
+		{
+			TargetZ = FMath::Lerp(TargetZ, CenterSurf.Z, 0.35f);
+		}
+	}
+
+	const float DesiredZ = TargetZ + WaterlineOffsetCm;
 
 	if (!bFloatInit)
 	{
 		SmoothedWaterZ = TargetZ;
+		Loc.Z = DesiredZ;
+		VerticalVelZ = 0.f;
 		bFloatInit = true;
 	}
 	else
 	{
-		const float MaxStep = MaxWaterZSpeedCm * DeltaSeconds;
-		SmoothedWaterZ += FMath::Clamp(TargetZ - SmoothedWaterZ, -MaxStep, MaxStep);
+		// Soft spring buoyancy (critically-ish damped toward DesiredZ)
+		const float Err = DesiredZ - Loc.Z;
+		const float Accel = Err * BuoyancyStiffness - VerticalVelZ * BuoyancyDamping;
+		VerticalVelZ += Accel * DeltaSeconds;
+		const float MaxV = MaxWaterZSpeedCm;
+		VerticalVelZ = FMath::Clamp(VerticalVelZ, -MaxV, MaxV);
+		Loc.Z += VerticalVelZ * DeltaSeconds;
+		SmoothedWaterZ = Loc.Z - WaterlineOffsetCm;
 	}
 
-	WavePitchSampleTimer -= DeltaSeconds;
-	if (bSampleWavePitch && WavePitchSampleTimer <= 0.f)
-	{
-		WavePitchSampleTimer = WavePitchSampleInterval;
-		const FVector Fwd(CosH, SinH, 0.f);
-		FVector BowS, BowN, SternS, SternN;
-		if (SampleWaterSurface(Loc + Fwd * HalfLoa, BowS, BowN) &&
-			SampleWaterSurface(Loc - Fwd * HalfLoa, SternS, SternN))
-		{
-			const float DZ = BowS.Z - SternS.Z;
-			CachedWavePitch = FMath::Clamp(
-				FMath::RadiansToDegrees(FMath::Atan2(DZ, HalfLoa * 2.f)), -8.f, 8.f);
-		}
-	}
 	SmoothedPitch = FMath::Lerp(SmoothedPitch, CachedWavePitch,
-		1.f - FMath::Exp(-PitchSmoothRate * DeltaSeconds));
+		1.f - FMath::Exp(-WavePitchSmoothRate * DeltaSeconds));
+	SmoothedWaveRoll = FMath::Lerp(SmoothedWaveRoll, CachedWaveRoll,
+		1.f - FMath::Exp(-WaveRollSmoothRate * DeltaSeconds));
 
-	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
-	SetActorLocationAndRotation(Loc, FRotator(SmoothedPitch, Yaw, Heel), false, nullptr, ETeleportType::None);
+	// VPP heel is authoritative; waves add high-frequency roll
+	const float Roll = VppHeel + SmoothedWaveRoll * WaveRollGain;
+	SetActorLocationAndRotation(Loc, FRotator(SmoothedPitch, Yaw, Roll), false, nullptr, ETeleportType::None);
 }
 
 
