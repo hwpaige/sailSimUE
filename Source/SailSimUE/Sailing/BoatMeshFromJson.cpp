@@ -254,7 +254,19 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 			}
 		}
 
-		const bool bDouble = M->HasField(TEXT("double_sided")) && M->GetBoolField(TEXT("double_sided"));
+		FString SectionName;
+		M->TryGetStringField(TEXT("name"), SectionName);
+		const bool bIsSail = SectionName.Contains(TEXT("sail"), ESearchCase::IgnoreCase);
+		const bool bIsKeel = SectionName.Contains(TEXT("keel"), ESearchCase::IgnoreCase)
+			|| SectionName.Contains(TEXT("rudder"), ESearchCase::IgnoreCase);
+		const bool bIsWindow = SectionName.Contains(TEXT("window"), ESearchCase::IgnoreCase);
+		const bool bIsHull = SectionName.Equals(TEXT("hull"), ESearchCase::IgnoreCase);
+
+		// The hull is exported single-sided AND inward-wound (2968/2970 tris face inward):
+		// its normals point into the hull, so the lit exterior renders dark. Fix is two parts —
+		// draw double-sided for robustness (here) + flip its normals outward (below).
+		const bool bDouble = bIsHull
+			|| (M->HasField(TEXT("double_sided")) && M->GetBoolField(TEXT("double_sided")));
 		if (bDouble)
 		{
 			// Copy indices first — TArray::Add(Array[i]) asserts in UE when the
@@ -274,13 +286,14 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 			Triangles.Append(Back);
 		}
 
-		FString SectionName;
-		M->TryGetStringField(TEXT("name"), SectionName);
-		const bool bIsSail = SectionName.Contains(TEXT("sail"), ESearchCase::IgnoreCase);
-		const bool bIsKeel = SectionName.Contains(TEXT("keel"), ESearchCase::IgnoreCase)
-			|| SectionName.Contains(TEXT("rudder"), ESearchCase::IgnoreCase);
-		const bool bIsWindow = SectionName.Contains(TEXT("window"), ESearchCase::IgnoreCase);
-		const bool bIsHull = SectionName.Equals(TEXT("hull"), ESearchCase::IgnoreCase);
+		// Hull normals point inward (see above) -> flip them so the lit exterior reads correctly.
+		if (bIsHull)
+		{
+			for (FVector& N : Normals)
+			{
+				N = -N;
+			}
+		}
 
 		FLinearColor Col(0.95f, 0.96f, 0.98f, 1.f);
 		const TArray<TSharedPtr<FJsonValue>>* ColJ = nullptr;

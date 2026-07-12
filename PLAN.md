@@ -35,10 +35,21 @@ Phases 0–1 done (bootstrap, MCP). **Phase 2 vertical slice is essentially comp
 |---|------|-------|------|--------|
 | 1 | ✅ **DONE** — Env dedup: deleted 7 duplicate DirectionalLight/SkyAtmosphere/SkyLight/Fog actors, kept one coherent set, saved | MCP (map) | done | ✅ warning gone, exposure clean, 7 external-actors removed |
 | 2 | Review + commit in-flight `SailBoatPawn.cpp/.h` + this session's `.mcp.json` / config INIs | git | low | `git status` clean; editor build OK |
-| 3 | **P3 materials** — cream two-sided sail + brighter hull master/instances (currently set in C++) | `BoatMeshFromJson.cpp` | med (recompile) | Viewport: sails read cream, no normal cancel |
+| 3 | ✅ **Hull mesh shading fixed** — flipped inward normals outward + double-sided; compiled & verified (Unlit shows correct light base color). PBR master (glossy hull gelcoat + matte two-sided sail) still TODO beyond flat BasicShapeMaterial | `BoatMeshFromJson.cpp` | done | ✅ Unlit capture |
 | 4 | **P3 HUD** — replace `DrawHud` debug text with a UMG widget (speed/heel/heading/AWA/sheet) | UMG + C++ bind | med | PIE: widget shows live values |
-| 5 | **P2.5 sign-off** — PIE feel check: A/D helm, W/S sheet, speed builds under wind, heel responds, no NaNs, ~60 FPS | PIE | low | drive inputs, read HUD/log |
-| 6 | Dynamics calibration — steady-state speed/leeway/heel vs web + `tools/j105-*-calibrate.mjs` (~10% band) | C++ + oracle | med | golden compare |
+| 5 | ✅ **P2.5 sign-off (partial)** — PIE ran clean: no NaN/crash, J/105 dynamics loaded from JSON, deduped env confirmed in outliner. Still want an input-driven helm/sheet feel check | PIE | done | ✅ log + capture |
+| 6 | **Chase camera framing** — PIE cam sits low/close/backlit; raise orbit pitch + pull back for a readable sailing view | `SailBoatPawn.cpp` | low (recompile) | PIE capture |
+| 7 | Dynamics calibration — steady-state speed/leeway/heel vs web + `tools/j105-*-calibrate.mjs` (~10% band) | C++ + oracle | med | golden compare |
+| 8 | **Lighting / mood** — hull reads dark under low dusk sun + modest ambient. Decide: brighter ambient (boost SkyLight_Main) + higher sun for a "readable" look, or keep the dusk mood. Real lever for "brighter hull" | map actors (MCP) | low | Lit capture |
+
+### C++ recompile loop — SOLVED ✅
+Editor MCP can't trigger a C++ build, so Claude drives it via **computer-use**:
+1. Focus editor → click the **viewport** (must have focus) → press **`Cmd+Option+Shift+P`** ("Recompile Game Code" — the Mac binding; `Ctrl+Alt+F11` is eaten by macOS and there's no toolbar Compile button in 5.8).
+2. Wait for the "Compiling C++ Code" toast to clear (~30–90 s; slow under memory pressure). Confirm a new `Binaries/Mac/libUnrealEditor-SailSimUE-*.dylib` appeared.
+3. MCP `load_level /Game/Maps/SailSim_Ocean` to re-run `OnConstruction` and apply the patch, then `CaptureViewport` to verify.
+
+### Hull "darkness" — diagnosed (NOT a mesh bug)
+Unlit view shows the hull is correctly **light cream** (base color fine). It looks near-black in **Lit** only because the dusk sun is low and its topsides face away, with modest sky ambient (the env dedup removed the old excess-ambient wash). Fixed a real **inward-normal defect** in the hull mesh (2968/2970 tris were inward-wound → flipped outward, so it shades correctly *when* sun-lit). Making it read bright in the Lit dusk view is a **lighting choice**, not a mesh fix — see Task 8.
 
 ## Roadmap after the vertical slice (from Grok, condensed)
 
