@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Landscape.h"
+#include "SailSimUE.h"
 
 ASailSimGameMode::ASailSimGameMode()
 {
@@ -18,10 +19,15 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// Only destroy *level-placed* boats that are not player-possessed.
+	// Spawning a new default pawn must not race with an already-possessed boat.
 	TArray<ASailBoatPawn*> ToDestroy;
 	for (TActorIterator<ASailBoatPawn> It(World); It; ++It)
 	{
-		ToDestroy.Add(*It);
+		if (!It->IsPlayerControlled())
+		{
+			ToDestroy.Add(*It);
+		}
 	}
 	for (ASailBoatPawn* Boat : ToDestroy)
 	{
@@ -31,9 +37,7 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 		}
 	}
 
-	// Hide the OpenWorld checkerboard landscape (M_ProcGrid) so it doesn't
-	// cover the ocean — but only disable collision; keep as last-resort ground
-	// if water fails to tessellate (spawn is now near zone center so ocean should show).
+	// Hide the OpenWorld checkerboard landscape (M_ProcGrid).
 	for (TActorIterator<ALandscape> It(World); It; ++It)
 	{
 		It->SetActorHiddenInGame(true);
@@ -49,10 +53,37 @@ void ASailSimGameMode::InitGame(const FString& MapName, const FString& Options, 
 
 void ASailSimGameMode::RestartPlayer(AController* NewPlayer)
 {
-	// Remove any boats already in the map (placed for editing / previous MCP spawn)
-	// before Super spawns the one DefaultPawn for this player.
+	// Remove level-placed boats before Super spawns the DefaultPawn.
 	DestroyLevelPlacedBoats();
 	Super::RestartPlayer(NewPlayer);
+	if (NewPlayer && !NewPlayer->GetPawn())
+	{
+		UE_LOG(LogSailSim, Error, TEXT("RestartPlayer: still no pawn after spawn — check collision / DefaultPawnClass"));
+	}
+}
+
+APawn* ASailSimGameMode::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
+{
+	// Always spawn; open-water relocate happens in SailBoatPawn::BeginPlay.
+	FActorSpawnParameters Params;
+	Params.Instigator = GetInstigator();
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (UClass* PawnClass = GetDefaultPawnClassForController(NewPlayer))
+	{
+		APawn* Pawn = GetWorld()->SpawnActor<APawn>(PawnClass, SpawnTransform, Params);
+		if (Pawn)
+		{
+			UE_LOG(LogSailSim, Log, TEXT("Spawned default pawn %s at %s"),
+				*GetNameSafe(Pawn), *SpawnTransform.GetLocation().ToCompactString());
+		}
+		else
+		{
+			UE_LOG(LogSailSim, Error, TEXT("Failed to spawn default pawn of class %s"), *GetNameSafe(PawnClass));
+		}
+		return Pawn;
+	}
+	return nullptr;
 }
 
 AActor* ASailSimGameMode::ChoosePlayerStart_Implementation(AController* Player)

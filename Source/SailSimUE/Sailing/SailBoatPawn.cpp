@@ -21,6 +21,8 @@ ASailBoatPawn::ASailBoatPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessPlayer = EAutoReceiveInput::Disabled;
+	// Hull box is large; never abort spawn on world overlap (was: empty PIE = sky only).
+	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	BoatRoot = CreateDefaultSubobject<USceneComponent>(TEXT("BoatRoot"));
 	RootComponent = BoatRoot;
@@ -52,12 +54,18 @@ ASailBoatPawn::ASailBoatPawn()
 
 	HullCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("HullCollision"));
 	HullCollision->SetupAttachment(BoatRoot);
-	HullCollision->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
-	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	// Query-only: kinematic float does not need physics blocking, and BlockAll
+	// made SpawnDefaultPawnAtTransform fail ("collision at the spawn location").
+	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	HullCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HullCollision->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
+	HullCollision->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
+	HullCollision->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	HullCollision->SetGenerateOverlapEvents(false);
 	HullCollision->SetBoxExtent(FVector(500.f, 160.f, 120.f));
 	HullCollision->SetRelativeLocation(FVector(0.f, 0.f, -40.f));
 	HullCollision->SetCanEverAffectNavigation(false);
+	HullCollision->SetHiddenInGame(true);
 
 	MastMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mast"));
 	MastMesh->SetupAttachment(BoatRoot);
@@ -154,7 +162,8 @@ void ASailBoatPawn::UpdateHullCollisionFromMesh()
 
 	HullCollision->SetBoxExtent(FVector(HalfX, HalfY, HalfZ));
 	HullCollision->SetRelativeLocation(Center);
-	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	// Keep query-only (see constructor) — never re-enable blocking physics here.
+	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	UE_LOG(LogSailSim, Log, TEXT("HullCollision box half-ext (%.0f, %.0f, %.0f) at Z=%.0f"),
 		HalfX, HalfY, HalfZ, Center.Z);
 }
