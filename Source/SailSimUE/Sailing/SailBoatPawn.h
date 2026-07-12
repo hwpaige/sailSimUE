@@ -31,6 +31,11 @@ public:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void UnPossessed() override;
+
+	/** True once GameMode has spawned/possessed this as the player boat. */
+	UPROPERTY(BlueprintReadOnly, Category = "Sailing|Spawn")
+	bool bPlayerSessionBoat = false;
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing")
 	void SetHelmInput(float StarboardPositive);
@@ -93,6 +98,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
 	FString GetBoatDisplayName() const;
+
+	/** Open-water spawn used by GameMode (XY cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sailing|Spawn")
+	FVector2D OpenWaterSpawnXY = FVector2D(6000.f, 8000.f);
+
+	/** Snap hull waterline to ocean surface; optionally force open-water XY. */
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spawn")
+	void SnapToWaterSurface(bool bForceXY);
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -187,13 +200,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float OriginIslandRadiusCm = 5000.f;
 
-	/**
-	 * Spawn just outside the island, still well inside a normal WaterZone
-	 * (default zone is ~512 m full extent; stay near origin so the mesh draws).
-	 */
-	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(6000.f, 8000.f);
-
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
@@ -255,6 +261,9 @@ protected:
 	FString LoadedLoftPath;
 	FBoatJsonSailingParams CachedSailingParams;
 	int32 StartupSkipFrames = 3;
+	/** Frames to wait before destroying unpossessed level/WP boats. */
+	int32 OrphanGraceFrames = 8;
+	int32 WaterSnapFrames = 0;
 	FSailClothSim MainCloth;
 	FSailClothSim JibCloth;
 

@@ -19,12 +19,13 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// Only destroy *level-placed* boats that are not player-possessed.
-	// Spawning a new default pawn must not race with an already-possessed boat.
+	// Destroy every boat that is not the currently possessed player pawn.
+	// World Partition may re-stream map-placed SailBoatPawns after this; those
+	// self-destroy in SailBoatPawn::Tick when unpossessed.
 	TArray<ASailBoatPawn*> ToDestroy;
 	for (TActorIterator<ASailBoatPawn> It(World); It; ++It)
 	{
-		if (!It->IsPlayerControlled())
+		if (!It->IsPlayerControlled() && !It->bPlayerSessionBoat)
 		{
 			ToDestroy.Add(*It);
 		}
@@ -33,12 +34,11 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	{
 		if (IsValid(Boat))
 		{
+			UE_LOG(LogSailSim, Log, TEXT("GameMode destroying level boat %s"), *GetNameSafe(Boat));
 			Boat->Destroy();
 		}
 	}
 
-	// Hide checkerboard OpenWorld landscape so it doesn't cover the ocean mesh.
-	// Keep it non-colliding; water still tessellates without it.
 	for (TActorIterator<ALandscape> It(World); It; ++It)
 	{
 		It->SetActorHiddenInGame(true);
@@ -54,37 +54,62 @@ void ASailSimGameMode::InitGame(const FString& MapName, const FString& Options, 
 
 void ASailSimGameMode::RestartPlayer(AController* NewPlayer)
 {
-	// Remove level-placed boats before Super spawns the DefaultPawn.
 	DestroyLevelPlacedBoats();
 	Super::RestartPlayer(NewPlayer);
+	// Clean again after spawn — catches any WP race.
+	DestroyLevelPlacedBoats();
 	if (NewPlayer && !NewPlayer->GetPawn())
 	{
 		UE_LOG(LogSailSim, Error, TEXT("RestartPlayer: still no pawn after spawn — check collision / DefaultPawnClass"));
+	}
+	else if (ASailBoatPawn* Boat = Cast<ASailBoatPawn>(NewPlayer ? NewPlayer->GetPawn() : nullptr))
+	{
+		Boat->bPlayerSessionBoat = true;
+		Boat->SnapToWaterSurface(true);
 	}
 }
 
 APawn* ASailSimGameMode::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
 {
-	// Always spawn; open-water relocate happens in SailBoatPawn::BeginPlay.
-	FActorSpawnParameters Params;
-	Params.Instigator = GetInstigator();
-	Params.ObjectFlags |= RF_Transient;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	if (UClass* PawnClass = GetDefaultPawnClassForController(NewPlayer))
+	// Spawn already at open-water XY so we never start on the island PlayerStart.
+	FTransform SpawnXf = SpawnTransform;
+	if (const ASailBoatPawn* CDO = GetDefault<ASailBoatPawn>())
 	{
-		APawn* Pawn = GetWorld()->SpawnActor<APawn>(PawnClass, SpawnTransform, Params);
-		if (Pawn)
-		{
-			UE_LOG(LogSailSim, Log, TEXT("Spawned default pawn %s at %s"),
-				*GetNameSafe(Pawn), *SpawnTransform.GetLocation().ToCompactString());
-		}
-		else
+		FVector Loc = SpawnXf.GetLocation();
+		Loc.X = CDO->OpenWaterSpawnXY.X;
+		Loc.Y = CDO->OpenWaterSpawnXY.Y;
+		// Z will be corrected in SnapToWaterSurface; start slightly above plane.
+		Loc.Z = FMath::Max(Loc.Z, 50.f);
+		SpawnXf.SetLocation(Loc);
+	}
+
+	UClass* PawnClass = GetDefaultPawnClassForController(NewPlayer);
+	if (!PawnClass) return nullptr;
+
+	// Deferred spawn so we mark player-session before BeginPlay.
+	ASailBoatPawn* Boat = GetWorld()->SpawnActorDeferred<ASailBoatPawn>(
+		PawnClass, SpawnXf, nullptr, GetInstigator(),
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Boat)
+	{
+		// Fallback for non-SailBoatPawn default classes
+		FActorSpawnParameters Params;
+		Params.Instigator = GetInstigator();
+		Params.ObjectFlags |= RF_Transient;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		APawn* Pawn = GetWorld()->SpawnActor<APawn>(PawnClass, SpawnXf, Params);
+		if (!Pawn)
 		{
 			UE_LOG(LogSailSim, Error, TEXT("Failed to spawn default pawn of class %s"), *GetNameSafe(PawnClass));
 		}
 		return Pawn;
 	}
-	return nullptr;
+
+	Boat->bPlayerSessionBoat = true;
+	UGameplayStatics::FinishSpawningActor(Boat, SpawnXf);
+	UE_LOG(LogSailSim, Log, TEXT("Spawned default pawn %s at %s"),
+		*GetNameSafe(Boat), *SpawnXf.GetLocation().ToCompactString());
+	return Boat;
 }
 
 AActor* ASailSimGameMode::ChoosePlayerStart_Implementation(AController* Player)

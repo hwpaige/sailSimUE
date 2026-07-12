@@ -132,13 +132,25 @@ void ASailBoatPawn::OnConstruction(const FTransform& Transform)
 void ASailBoatPawn::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
-	StartupSkipFrames = 3;
+	bPlayerSessionBoat = true;
+	OrphanGraceFrames = 0;
+	StartupSkipFrames = 5;
+	WaterSnapFrames = 12;
 	CameraLagEnableFrames = 8;
+	SnapToWaterSurface(/*bForceXY*/ true);
 	RefreshChaseCamera();
 	if (APlayerController* PC = Cast<APlayerController>(NewController))
 	{
 		PC->SetViewTarget(this);
 	}
+	UE_LOG(LogSailSim, Log, TEXT("Possessed player boat %s at %s"),
+		*GetName(), *GetActorLocation().ToCompactString());
+}
+
+void ASailBoatPawn::UnPossessed()
+{
+	Super::UnPossessed();
+	// Don't clear bPlayerSessionBoat — still the session boat if briefly unpossessed.
 }
 
 void ASailBoatPawn::UpdateHullCollisionFromMesh()
@@ -347,14 +359,33 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 
 void ASailBoatPawn::EnsureOpenWaterSpawn()
 {
+	SnapToWaterSurface(/*bForceXY*/ bForceOpenWaterSpawn ||
+		FVector2D(GetActorLocation().X, GetActorLocation().Y).Size() < OriginIslandRadiusCm);
+}
+
+void ASailBoatPawn::SnapToWaterSurface(bool bForceXY)
+{
 	FVector Loc = GetActorLocation();
-	const float Dist2D = FVector2D(Loc.X, Loc.Y).Size();
-	if (bForceOpenWaterSpawn || Dist2D < OriginIslandRadiusCm)
+	if (bForceXY)
 	{
 		Loc.X = OpenWaterSpawnXY.X;
 		Loc.Y = OpenWaterSpawnXY.Y;
-		SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 	}
+
+	FVector Surf, Norm;
+	if (SampleWaterSurface(Loc, Surf, Norm))
+	{
+		SmoothedWaterZ = Surf.Z;
+		Loc.Z = Surf.Z + WaterlineOffsetCm;
+		bFloatInit = true;
+		VerticalVelZ = 0.f;
+	}
+	else
+	{
+		SmoothedWaterZ = WaterSurfaceZ;
+		Loc.Z = WaterSurfaceZ + WaterlineOffsetCm;
+	}
+	SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
 void ASailBoatPawn::EnsureOceanCoverage()
@@ -432,6 +463,21 @@ void ASailBoatPawn::EnsureOceanCoverage()
 void ASailBoatPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// BeginPlay runs before Possess for default pawns — never destroy here.
+	// Orphans (map/WP) self-destroy in Tick after OrphanGraceFrames if still unpossessed.
+	const bool bGame = GetWorld() && GetWorld()->IsGameWorld() && !GetWorld()->IsPreviewWorld();
+	if (bGame && !bPlayerSessionBoat && !IsPlayerControlled())
+	{
+		OrphanGraceFrames = 10;
+		// Light path: still load mesh so brief WP flash is consistent, but hide until destroyed.
+		LoadLoftMesh(/*bApplyDynamics*/ false);
+		SetActorHiddenInGame(true);
+		SetActorEnableCollision(false);
+		UE_LOG(LogSailSim, Log, TEXT("Pending orphan boat %s (destroy if never possessed)"), *GetName());
+		return;
+	}
+
 	// Defaults first; LoadLoftMesh may override from boat3d sailing block.
 	Dynamics.InitJ105();
 	Dynamics.Heading = 90.f;
@@ -439,36 +485,25 @@ void ASailBoatPawn::BeginPlay()
 
 	LoadLoftMesh(/*bApplyDynamics*/ true);
 
-	EnsureOpenWaterSpawn();
-	EnsureOceanCoverage();
+	EnsureOceanCoverage(); // resize zone before sampling height
+	SnapToWaterSurface(/*bForceXY*/ true);
+	WaterSnapFrames = 12;
 
-	FVector Loc = GetActorLocation();
-	FVector Surf, Norm;
-	if (SampleWaterSurface(Loc, Surf, Norm))
 	{
-		SmoothedWaterZ = Surf.Z;
-		// Sample a second point to log whether wave height varies (buoyancy diagnostic)
-		FVector Surf2, Norm2;
-		const bool b2 = SampleWaterSurface(Loc + FVector(400.f, 0.f, 0.f), Surf2, Norm2);
-		UE_LOG(LogSailSim, Log,
-			TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f  neighbor dZ=%.1f (waves %s)"),
-			Loc.X, Loc.Y, Surf.Z,
-			b2 ? (Surf2.Z - Surf.Z) : 0.f,
-			(b2 && FMath::Abs(Surf2.Z - Surf.Z) > 0.5f) ? TEXT("OK") : TEXT("flat/fallback"));
+		const FVector Loc = GetActorLocation();
+		FVector Surf, Norm;
+		if (SampleWaterSurface(Loc, Surf, Norm))
+		{
+			FVector Surf2, Norm2;
+			const bool b2 = SampleWaterSurface(Loc + FVector(400.f, 0.f, 0.f), Surf2, Norm2);
+			UE_LOG(LogSailSim, Log,
+				TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f  neighbor dZ=%.1f (waves %s)"),
+				Loc.X, Loc.Y, Surf.Z,
+				b2 ? (Surf2.Z - Surf.Z) : 0.f,
+				(b2 && FMath::Abs(Surf2.Z - Surf.Z) > 0.5f) ? TEXT("OK") : TEXT("flat/fallback"));
+		}
 	}
-	else
-	{
-		SmoothedWaterZ = WaterSurfaceZ;
-		UE_LOG(LogSailSim, Warning,
-			TEXT("SailBoatPawn: NO water surface at XY(%.0f,%.0f) — floating at Z=%.1f (void risk)"),
-			Loc.X, Loc.Y, SmoothedWaterZ);
-	}
-	bFloatInit = true;
-	VerticalVelZ = 0.f;
-	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
-	SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 
-	// After open-water teleport: re-seat exterior chase cam (no lag during teleport).
 	CameraLagEnableFrames = 8;
 	RefreshChaseCamera();
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
@@ -476,7 +511,12 @@ void ASailBoatPawn::BeginPlay()
 		PC->SetViewTarget(this);
 	}
 
-	FBoatDynamics::RunGoldenSelfCheck();
+	static bool bGoldenRan = false;
+	if (!bGoldenRan && bPlayerSessionBoat)
+	{
+		bGoldenRan = true;
+		FBoatDynamics::RunGoldenSelfCheck();
+	}
 }
 
 void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -889,6 +929,22 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// World-Partition can re-stream the map SailBoatPawn after GameMode cleanup.
+	// Kill any boat that never became the player session boat.
+	if (!IsPlayerControlled() && !bPlayerSessionBoat)
+	{
+		if (OrphanGraceFrames > 0)
+		{
+			--OrphanGraceFrames;
+		}
+		else
+		{
+			UE_LOG(LogSailSim, Log, TEXT("Destroying orphan/level boat %s"), *GetName());
+			Destroy();
+		}
+		return;
+	}
+
 	if (!IsPlayerControlled())
 	{
 		return;
@@ -897,22 +953,20 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	if (StartupSkipFrames > 0)
 	{
 		--StartupSkipFrames;
-		// Re-assert open water on first frames (PlayerStart may reset XY)
-		EnsureOpenWaterSpawn();
-		if (StartupSkipFrames == 2)
+		SnapToWaterSurface(/*bForceXY*/ true);
+		if (StartupSkipFrames == 3)
 		{
-			EnsureOceanCoverage(); // diagnostic only when enabled
-		}
-		FVector Loc = GetActorLocation();
-		FVector Surf, Norm;
-		if (SampleWaterSurface(Loc, Surf, Norm))
-		{
-			SmoothedWaterZ = Surf.Z;
-			Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
-			SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
+			EnsureOceanCoverage();
 		}
 		RefreshChaseCamera();
 		return;
+	}
+
+	// Re-snap Z for a few frames after zone rebuild (height field may lag one frame).
+	if (WaterSnapFrames > 0)
+	{
+		--WaterSnapFrames;
+		SnapToWaterSurface(/*bForceXY*/ WaterSnapFrames > 8);
 	}
 
 	if (CameraLagEnableFrames > 0)
