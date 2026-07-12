@@ -29,6 +29,14 @@ Phases 0–1 done (bootstrap, MCP). **Phase 2 vertical slice is essentially comp
 2. **In-flight uncommitted work** in the tree from the prior session: `Source/SailSimUE/Sailing/SailBoatPawn.cpp/.h` modified, plus one map external-actor `.uasset`. Review + commit before layering new changes so history stays clean. (Task 2.)
 3. Cosmetic: the pawn's **editor** placement sits near origin on the checkerboard (no water there); harmless because BeginPlay teleports it to open water. Optionally move the editor placement onto the ocean for a nicer non-play view.
 
+### Ocean water — diagnosed; zone enlarged (2026-07-12)
+The "broken water" is **not** the ocean: `WaterBodyOcean_Main` has all the correct Water-plugin materials (`Water_Material_Ocean`, etc.). The problems:
+1. **Placeholder OpenWorld landscape covers the ocean.** The checkerboard everywhere is `Landscape` using **`M_ProcGrid`** (the OpenWorld-template grid material), a flat sea-level terrain rendered by 64 WP streaming proxies (+ HLOD). It's hidden in *game* (boat code) but blankets the *editor* view and is why the boat needed the "spawn 2 km offshore" hack. Deleting it via MCP is impractical (100+ streaming/HLOD actors) — **best deleted in-editor**: select `Landscape` in the Outliner → Delete (removes all proxies at once).
+2. **WaterZone was far too small.** `ZoneExtent` was ±256 m at origin while the boat spawns at (200000,150000) ≈ 2.5 km out → spawned outside the ocean entirely. **FIXED:** enlarged `ZoneExtent` to (1000000,1000000) ≈ ±5 km and saved, so the ocean now covers the spawn + sailing area.
+3. Once the landscape is gone, simplify `SailBoatPawn` open-water spawn to ~origin (zone center) and drop the landscape-hide hack.
+
+Verification was hampered by the dusk lighting + the low chase camera — fixing the camera (Task 6) is the fastest way to actually see the boat on the water.
+
 ## Immediate backlog (execution queue)
 
 | # | Task | Where | Risk | Verify |
