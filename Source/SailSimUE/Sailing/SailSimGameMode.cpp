@@ -1,5 +1,6 @@
 #include "Sailing/SailSimGameMode.h"
 #include "Sailing/SailBoatPawn.h"
+#include "Sailing/SailSimHUD.h"
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
@@ -9,6 +10,7 @@
 ASailSimGameMode::ASailSimGameMode()
 {
 	DefaultPawnClass = ASailBoatPawn::StaticClass();
+	HUDClass = ASailSimHUD::StaticClass();
 }
 
 void ASailSimGameMode::DestroyLevelPlacedBoats()

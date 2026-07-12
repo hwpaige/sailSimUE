@@ -1,5 +1,7 @@
 #include "Sailing/SailBoatPawn.h"
 #include "Sailing/BoatMeshFromJson.h"
+#include "Sailing/BoatPresets.h"
+#include "Sailing/OceanHeightSample.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
@@ -7,12 +9,8 @@
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "UObject/ConstructorHelpers.h"
-#include "Engine/Engine.h"
 #include "Components/InputComponent.h"
-#include "EngineUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "WaterBodyActor.h"
-#include "WaterBodyComponent.h"
 #include "Misc/Paths.h"
 
 ASailBoatPawn::ASailBoatPawn()
@@ -272,6 +270,15 @@ void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	PlayerInputComponent->BindAxis(TEXT("CameraZoom"), this, &ASailBoatPawn::OnCameraZoom);
 	PlayerInputComponent->BindAction(TEXT("OrbitCamera"), IE_Pressed, this, &ASailBoatPawn::OnOrbitPressed);
 	PlayerInputComponent->BindAction(TEXT("OrbitCamera"), IE_Released, this, &ASailBoatPawn::OnOrbitReleased);
+	PlayerInputComponent->BindAction(TEXT("ToggleSailing"), IE_Pressed, this, &ASailBoatPawn::OnToggleSailing);
+	PlayerInputComponent->BindAction(TEXT("WindSpeedUp"), IE_Pressed, this, &ASailBoatPawn::OnWindSpeedUp);
+	PlayerInputComponent->BindAction(TEXT("WindSpeedDown"), IE_Pressed, this, &ASailBoatPawn::OnWindSpeedDown);
+	PlayerInputComponent->BindAction(TEXT("WindDirLeft"), IE_Pressed, this, &ASailBoatPawn::OnWindDirLeft);
+	PlayerInputComponent->BindAction(TEXT("WindDirRight"), IE_Pressed, this, &ASailBoatPawn::OnWindDirRight);
+	PlayerInputComponent->BindAction(TEXT("Preset1"), IE_Pressed, this, &ASailBoatPawn::OnPreset1);
+	PlayerInputComponent->BindAction(TEXT("Preset2"), IE_Pressed, this, &ASailBoatPawn::OnPreset2);
+	PlayerInputComponent->BindAction(TEXT("Preset3"), IE_Pressed, this, &ASailBoatPawn::OnPreset3);
+	PlayerInputComponent->BindAction(TEXT("Preset4"), IE_Pressed, this, &ASailBoatPawn::OnPreset4);
 }
 
 void ASailBoatPawn::ApplyOrbitToSpringArm()
@@ -364,41 +371,94 @@ void ASailBoatPawn::UpdateBoomFromSheet()
 
 void ASailBoatPawn::SetTrueWind(float SpeedKn, float DirDeg)
 {
-	Dynamics.TrueWindSpeedKn = SpeedKn;
-	Dynamics.TrueWindDirDeg = DirDeg;
+	Dynamics.TrueWindSpeedKn = FMath::Clamp(SpeedKn, 0.f, 60.f);
+	float Dir = FMath::Fmod(DirDeg, 360.f);
+	if (Dir < 0.f) Dir += 360.f;
+	Dynamics.TrueWindDirDeg = Dir;
 }
+
+void ASailBoatPawn::SetSailing(bool bEnabled)
+{
+	Dynamics.bSailing = bEnabled;
+}
+
+void ASailBoatPawn::AdjustTrueWindSpeed(float DeltaKn)
+{
+	SetTrueWind(Dynamics.TrueWindSpeedKn + DeltaKn, Dynamics.TrueWindDirDeg);
+}
+
+void ASailBoatPawn::AdjustTrueWindDir(float DeltaDeg)
+{
+	SetTrueWind(Dynamics.TrueWindSpeedKn, Dynamics.TrueWindDirDeg + DeltaDeg);
+}
+
+void ASailBoatPawn::OnToggleSailing()
+{
+	SetSailing(!Dynamics.bSailing);
+}
+
+void ASailBoatPawn::OnWindSpeedUp()
+{
+	AdjustTrueWindSpeed(1.f);
+}
+
+void ASailBoatPawn::OnWindSpeedDown()
+{
+	AdjustTrueWindSpeed(-1.f);
+}
+
+void ASailBoatPawn::OnWindDirLeft()
+{
+	// Counter-clockwise wind direction (met from)
+	AdjustTrueWindDir(-5.f);
+}
+
+void ASailBoatPawn::OnWindDirRight()
+{
+	AdjustTrueWindDir(5.f);
+}
+
+FString ASailBoatPawn::GetBoatDisplayName() const
+{
+	if (const FBoatPreset* P = FBoatPresets::Find(ActivePresetId))
+	{
+		return P->DisplayName;
+	}
+	return ActivePresetId.IsEmpty() ? TEXT("Boat") : ActivePresetId;
+}
+
+bool ASailBoatPawn::SetBoatPreset(const FString& PresetId)
+{
+	const FBoatPreset* P = FBoatPresets::Find(PresetId);
+	if (!P)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: unknown preset '%s'"), *PresetId);
+		return false;
+	}
+	ActivePresetId = P->Id;
+	BoatJsonRelativePath = P->JsonRelativePath;
+	// Force mesh rebuild even if previous path cached
+	bLoftMeshLoaded = false;
+	LoadedLoftPath.Reset();
+	LoadLoftMesh(/*bApplyDynamics*/ true);
+	UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: switched preset to %s (%s)"), *P->DisplayName, *P->JsonRelativePath);
+	return bLoftMeshLoaded;
+}
+
+void ASailBoatPawn::OnPreset1() { SetBoatPreset(TEXT("j105")); }
+void ASailBoatPawn::OnPreset2() { SetBoatPreset(TEXT("endeavour")); }
+void ASailBoatPawn::OnPreset3() { SetBoatPreset(TEXT("melges24")); }
+void ASailBoatPawn::OnPreset4() { SetBoatPreset(TEXT("cruiser36")); }
 
 bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth) const
 {
-	UWorld* World = GetWorld();
-	if (!World) return false;
-
-	const FVector Query(WorldXY.X, WorldXY.Y, 50000.f);
-	bool bAny = false;
-	float BestAbsDZ = TNumericLimits<float>::Max();
-	float BestDepth = 0.f;
-
-	for (TActorIterator<AWaterBody> It(World); It; ++It)
-	{
-		UWaterBodyComponent* Comp = It->GetWaterBodyComponent();
-		if (!Comp) continue;
-		FVector Surf, Norm, Vel;
-		float Depth = 0.f;
-		if (Comp->GetWaterSurfaceInfoAtLocation(Query, Surf, Norm, Vel, Depth, false))
-		{
-			const float Dz = FMath::Abs(Surf.Z - (bFloatInit ? SmoothedWaterZ : 0.f));
-			if (!bAny || Dz < BestAbsDZ)
-			{
-				BestAbsDZ = Dz;
-				BestDepth = Depth;
-				OutSurface = Surf;
-				OutNormal = Norm;
-				bAny = true;
-			}
-		}
-	}
-	if (bAny && OutDepth) *OutDepth = BestDepth;
-	return bAny;
+	const FOceanSample S = FOceanHeightSample::SampleAt(
+		GetWorld(), WorldXY, bFloatInit ? SmoothedWaterZ : 0.f, bFloatInit);
+	if (!S.bValid) return false;
+	OutSurface = S.Surface;
+	OutNormal = S.Normal;
+	if (OutDepth) *OutDepth = S.Depth;
+	return true;
 }
 
 void ASailBoatPawn::Tick(float DeltaSeconds)
@@ -436,7 +496,7 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	}
 	Dynamics.Update(Dt);
 	ApplyDynamicsToTransform(Dt);
-	DrawHud();
+	// Instruments drawn by ASailSimHUD
 }
 
 void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
@@ -493,22 +553,4 @@ void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 	SetActorLocationAndRotation(Loc, FRotator(SmoothedPitch, Yaw, Heel), false, nullptr, ETeleportType::None);
 }
 
-void ASailBoatPawn::DrawHud() const
-{
-	if (!GEngine || !IsPlayerControlled()) return;
-	const FString Line = FString::Printf(
-		TEXT("SPD %.1f kn   HEEL %.0f°   HDG %.0f°   RUD %.0f°   SHEET %.0f%%   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   %s"),
-		Dynamics.GetSpeedKnots(),
-		Dynamics.Phi,
-		Dynamics.Heading,
-		-Dynamics.Rudder,
-		Dynamics.SheetEase * 100.f,
-		Dynamics.GetApparentWindAngleDeg(),
-		Dynamics.GetApparentWindSpeedKn(),
-		Dynamics.TrueWindSpeedKn,
-		Dynamics.TrueWindDirDeg,
-		Dynamics.bAutoHeading ? TEXT("AUTO") : TEXT("HELM"));
-	GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Cyan, Line);
-	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White,
-		TEXT("A/D helm | W/S sheet | RMB+drag orbit | scroll zoom"));
-}
+

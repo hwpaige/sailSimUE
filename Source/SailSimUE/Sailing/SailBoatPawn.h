@@ -50,7 +50,47 @@ public:
 	float GetHeadingDeg() const { return Dynamics.Heading; }
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetRudderStarboardDeg() const { return -Dynamics.Rudder; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetApparentWindAngleDeg() const { return Dynamics.GetApparentWindAngleDeg(); }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetApparentWindSpeedKn() const { return Dynamics.GetApparentWindSpeedKn(); }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetTrueWindSpeedKn() const { return Dynamics.TrueWindSpeedKn; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetTrueWindDirDeg() const { return Dynamics.TrueWindDirDeg; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	bool IsAutoHeading() const { return Dynamics.bAutoHeading; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	bool IsSailing() const { return Dynamics.bSailing; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	void SetSailing(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
 	void SetTrueWind(float SpeedKn, float DirDeg);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	void AdjustTrueWindSpeed(float DeltaKn);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	void AdjustTrueWindDir(float DeltaDeg);
+
+	/** Load catalog preset by id (j105, endeavour, melges24, cruiser36). */
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
+	bool SetBoatPreset(const FString& PresetId);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
+	FString GetBoatPresetId() const { return ActivePresetId; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
+	FString GetBoatDisplayName() const;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -97,6 +137,9 @@ protected:
 	/** Content-relative path to boat3d export. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
 	FString BoatJsonRelativePath = TEXT("Data/j105_boat3d.json");
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
+	FString ActivePresetId = TEXT("j105");
 
 	/** Apply JSON sailing/dims into FBoatDynamics (BeginPlay only). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
@@ -166,7 +209,6 @@ protected:
 	void UpdateBoomFromSheet();
 	void ApplyOrbitToSpringArm();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
-	void DrawHud() const;
 	void OnMoveRight(float Value);
 	void OnSheetAxis(float Value);
 	void OnLookYaw(float Value);
@@ -174,6 +216,15 @@ protected:
 	void OnCameraZoom(float Value);
 	void OnOrbitPressed();
 	void OnOrbitReleased();
+	void OnToggleSailing();
+	void OnWindSpeedUp();
+	void OnWindSpeedDown();
+	void OnWindDirLeft();
+	void OnWindDirRight();
+	void OnPreset1();
+	void OnPreset2();
+	void OnPreset3();
+	void OnPreset4();
 	void EnsureOpenWaterSpawn();
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };
