@@ -17,7 +17,8 @@ public class SailSimUE : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"EnhancedInput"
+			"EnhancedInput",
+			"Water"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
