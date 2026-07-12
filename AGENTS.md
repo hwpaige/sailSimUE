@@ -18,4 +18,5 @@ Port of [sail-sim](../sail-sim) sailing simulator to Unreal Engine 5.8.
 
 ## Current phase
 
-Bootstrap complete when MCP doctor works. Next: Phase 2 vertical slice (VPP + water + J/105 HUD).
+Phase 2 vertical slice largely in place: Water float, J/105 loft mesh, 3-DOF VPP, sheet trim, debug HUD.  
+Next: materials/UMG polish, cloth sails, FFT ocean (not water-pro code). Tracker: `../sail-sim/unreal-port/PROGRESS.md`.

@@ -14,9 +14,6 @@
 #include "WaterBodyActor.h"
 #include "WaterBodyComponent.h"
 #include "Misc/Paths.h"
-#include "Misc/FileHelper.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
 
 ASailBoatPawn::ASailBoatPawn()
 {
@@ -32,6 +29,10 @@ ASailBoatPawn::ASailBoatPawn()
 	LoftMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	LoftMesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 	LoftMesh->SetGenerateOverlapEvents(false);
+	LoftMesh->SetMobility(EComponentMobility::Movable);
+	LoftMesh->SetCastShadow(true);
+	LoftMesh->bNeverDistanceCull = true;
+	LoftMesh->SetReceivesDecals(false);
 
 	MastMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mast"));
 	MastMesh->SetupAttachment(BoatRoot);
@@ -58,18 +59,26 @@ ASailBoatPawn::ASailBoatPawn()
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(BoatRoot);
-	SpringArm->TargetArmLength = 2400.f;
+	// Closer chase cam so ~10 m LOA loft fills the frame (was 24 m arm).
+	SpringArm->TargetArmLength = 1600.f;
 	SpringArm->bUsePawnControlRotation = false;
 	SpringArm->bDoCollisionTest = false;
 	SpringArm->bEnableCameraLag = true;
 	SpringArm->CameraLagSpeed = 10.f;
 	SpringArm->bEnableCameraRotationLag = true;
 	SpringArm->CameraRotationLagSpeed = 12.f;
-	SpringArm->SetRelativeRotation(FRotator(-12.f, 0.f, 0.f));
-	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 180.f));
+	SpringArm->SetRelativeRotation(FRotator(-18.f, -25.f, 0.f));
+	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 220.f));
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+}
+
+void ASailBoatPawn::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	// Editor viewport + construction script: load loft so boat is visible without PIE.
+	LoadLoftMesh(/*bApplyDynamics*/ false);
 }
 
 void ASailBoatPawn::PossessedBy(AController* NewController)
@@ -78,64 +87,134 @@ void ASailBoatPawn::PossessedBy(AController* NewController)
 	StartupSkipFrames = 3;
 }
 
-void ASailBoatPawn::LoadLoftMesh()
+void ASailBoatPawn::PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B)
 {
-	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(
-		nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (!Comp) return;
+	const FVector Mid = (A + B) * 0.5f;
+	const FVector Dir = B - A;
+	const float Len = Dir.Size();
+	if (Len < 1.f) return;
+	Comp->SetVisibility(true);
+	Comp->SetHiddenInGame(false);
+	Comp->SetRelativeLocation(Mid);
+	// BasicShapes Cylinder is Z-up. Scale Z = length/100 (default cyl height 100).
+	Comp->SetRelativeScale3D(FVector(0.10f, 0.10f, Len / 100.f));
+	Comp->SetRelativeRotation(FRotationMatrix::MakeFromZ(Dir.GetSafeNormal()).Rotator());
+}
+
+void ASailBoatPawn::ApplyCachedSailingToDynamics()
+{
+	if (!bApplyJsonSailingParams || !CachedSailingParams.bValid)
+	{
+		return;
+	}
+	const FBoatJsonSailingParams& S = CachedSailingParams;
+	Dynamics.ApplySailingParams(
+		S.DispLb, S.BallastLb, S.BeamFt, S.LwlFt,
+		S.DraftFt, S.TcFt, S.LateralArea, S.KeelArea,
+		S.RudderArea, S.KeelSpan, S.ClrX, S.ClrZ,
+		S.SaTotal, S.HullSpeedKn, S.GmFt,
+		S.LoaFt, S.MastTopFt);
+	Dynamics.Heading = 90.f;
+	Dynamics.AutoTarget = Dynamics.Heading;
+	if (S.LoaFt > 1.f)
+	{
+		HullLengthCm = S.LoaFt * 30.48f;
+		// Keep chase cam proportional to boat length
+		if (SpringArm)
+		{
+			SpringArm->TargetArmLength = FMath::Clamp(HullLengthCm * 1.5f, 900.f, 2800.f);
+		}
+	}
+	UE_LOG(LogTemp, Log,
+		TEXT("SailBoatPawn: dynamics from JSON disp=%.0f lb SA=%.0f LOA=%.1f ft"),
+		S.DispLb, S.SaTotal, S.LoaFt);
+}
+
+void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
+{
+	if (!LoftMesh)
+	{
+		return;
+	}
 
 	const FString Path = FPaths::ProjectContentDir() / BoatJsonRelativePath;
-	const bool bOk = FBoatMeshFromJson::LoadIntoProceduralMesh(LoftMesh, Path, BaseMat);
+
+	// Skip full mesh rebuild if already loaded for this path (PIE: OnConstruction then BeginPlay)
+	if (bLoftMeshLoaded && LoadedLoftPath == Path)
+	{
+		if (bApplyDynamics)
+		{
+			if (!CachedSailingParams.bValid)
+			{
+				FBoatJsonLoadResult Meta;
+				if (FBoatMeshFromJson::LoadMetadataOnly(Path, Meta))
+				{
+					CachedSailingParams = Meta.Sailing;
+				}
+			}
+			ApplyCachedSailingToDynamics();
+		}
+		return;
+	}
+
+	UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	if (!BaseMat)
+	{
+		BaseMat = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+	}
+
+	FBoatJsonLoadResult Result;
+	const bool bOk = FBoatMeshFromJson::LoadIntoProceduralMesh(LoftMesh, Path, BaseMat, &Result);
 	if (!bOk)
 	{
+		bLoftMeshLoaded = false;
+		LoadedLoftPath.Reset();
 		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: loft JSON failed (%s) — no hull mesh"), *Path);
 		return;
 	}
 
-	// Spars from JSON endpoints
-	FString JsonStr;
-	if (FFileHelper::LoadFileToString(JsonStr, *Path))
-	{
-		TSharedPtr<FJsonObject> Root;
-		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
-		if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())
-		{
-			const TSharedPtr<FJsonObject>* Spars = nullptr;
-			if (Root->TryGetObjectField(TEXT("spars"), Spars) && Spars && (*Spars).IsValid())
-			{
-				auto PlaceSpar = [](UStaticMeshComponent* Comp, const TSharedPtr<FJsonObject>& Spar,
-					const TCHAR* AName, const TCHAR* BName)
-				{
-					if (!Comp || !Spar.IsValid()) return;
-					const TArray<TSharedPtr<FJsonValue>>* A = nullptr;
-					const TArray<TSharedPtr<FJsonValue>>* B = nullptr;
-					if (!Spar->TryGetArrayField(AName, A) || !Spar->TryGetArrayField(BName, B)) return;
-					if (A->Num() < 3 || B->Num() < 3) return;
-					const FVector PA((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber());
-					const FVector PB((*B)[0]->AsNumber(), (*B)[1]->AsNumber(), (*B)[2]->AsNumber());
-					const FVector Mid = (PA + PB) * 0.5f;
-					const FVector Dir = (PB - PA);
-					const float Len = Dir.Size();
-					if (Len < 1.f) return;
-					Comp->SetVisibility(true);
-					Comp->SetRelativeLocation(Mid);
-					// Cylinder default axis is +Z in UE? Actually UE cylinder is Z-up height.
-					// BasicShapes Cylinder is along Z. Scale Z = length/100.
-					Comp->SetRelativeScale3D(FVector(0.12f, 0.12f, Len / 100.f));
-					Comp->SetRelativeRotation(FRotationMatrix::MakeFromZ(Dir.GetSafeNormal()).Rotator());
-				};
+	bLoftMeshLoaded = true;
+	LoadedLoftPath = Path;
+	CachedSailingParams = Result.Sailing;
+	LoftMesh->SetVisibility(true);
+	LoftMesh->SetHiddenInGame(false);
+	LoftMesh->MarkRenderStateDirty();
 
-				const TSharedPtr<FJsonObject>* Mast = nullptr;
-				const TSharedPtr<FJsonObject>* Boom = nullptr;
-				if ((*Spars)->TryGetObjectField(TEXT("mast"), Mast) && Mast)
-				{
-					PlaceSpar(MastMesh, *Mast, TEXT("base"), TEXT("top"));
-				}
-				if ((*Spars)->TryGetObjectField(TEXT("boom"), Boom) && Boom)
-				{
-					PlaceSpar(BoomMesh, *Boom, TEXT("base"), TEXT("end"));
-				}
-			}
-		}
+	if (Result.Spars.bMastValid)
+	{
+		PlaceSparFromEndpoints(MastMesh, Result.Spars.MastBase, Result.Spars.MastTop);
+	}
+	if (Result.Spars.bBoomValid)
+	{
+		BoomBaseLoc = Result.Spars.BoomBase;
+		BoomEndLoc = Result.Spars.BoomEnd;
+		bBoomEndpointsValid = true;
+		PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc, BoomEndLoc);
+	}
+	else
+	{
+		bBoomEndpointsValid = false;
+	}
+
+	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color)
+	{
+		if (!Comp || !Comp->IsVisible()) return;
+		UMaterialInterface* Base = Comp->GetMaterial(0);
+		if (!Base) return;
+		UMaterialInstanceDynamic* Mid = Comp->CreateAndSetMaterialInstanceDynamic(0);
+		if (!Mid) return;
+		Mid->SetVectorParameterValue(TEXT("Color"), Color);
+		Mid->SetVectorParameterValue(TEXT("BaseColor"), Color);
+	};
+	Tint(MastMesh, FLinearColor(0.55f, 0.56f, 0.58f));
+	Tint(BoomMesh, FLinearColor(0.55f, 0.56f, 0.58f));
+
+	if (bApplyDynamics)
+	{
+		ApplyCachedSailingToDynamics();
 	}
 }
 
@@ -154,25 +233,12 @@ void ASailBoatPawn::EnsureOpenWaterSpawn()
 void ASailBoatPawn::BeginPlay()
 {
 	Super::BeginPlay();
+	// Defaults first; LoadLoftMesh may override from boat3d sailing block.
 	Dynamics.InitJ105();
 	Dynamics.Heading = 90.f;
 	Dynamics.AutoTarget = Dynamics.Heading;
 
-	LoadLoftMesh();
-
-	// Tint spars
-	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color)
-	{
-		if (!Comp || !Comp->IsVisible()) return;
-		UMaterialInterface* Base = Comp->GetMaterial(0);
-		if (!Base) return;
-		UMaterialInstanceDynamic* Mid = Comp->CreateAndSetMaterialInstanceDynamic(0);
-		if (!Mid) return;
-		Mid->SetVectorParameterValue(TEXT("Color"), Color);
-		Mid->SetVectorParameterValue(TEXT("BaseColor"), Color);
-	};
-	Tint(MastMesh, FLinearColor(0.7f, 0.7f, 0.72f));
-	Tint(BoomMesh, FLinearColor(0.7f, 0.7f, 0.72f));
+	LoadLoftMesh(/*bApplyDynamics*/ true);
 
 	EnsureOpenWaterSpawn();
 
@@ -196,12 +262,19 @@ void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &ASailBoatPawn::OnMoveRight);
 	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &ASailBoatPawn::OnMoveRight);
+	PlayerInputComponent->BindAxis(TEXT("Sheet"), this, &ASailBoatPawn::OnSheetAxis);
 }
 
 void ASailBoatPawn::OnMoveRight(float Value)
 {
 	HelmAxis = FMath::Clamp(Value, -1.f, 1.f);
 	SetHelmInput(HelmAxis * 35.f);
+}
+
+void ASailBoatPawn::OnSheetAxis(float Value)
+{
+	// Hold W to sheet in, S to ease (rate-limited via continuous axis)
+	SheetAxis = FMath::Clamp(Value, -1.f, 1.f);
 }
 
 void ASailBoatPawn::SetHelmInput(float StarboardPositive)
@@ -214,6 +287,24 @@ void ASailBoatPawn::SetHelmInput(float StarboardPositive)
 		Dynamics.AutoTarget = Dynamics.Heading;
 		Dynamics.AutoI = 0.f;
 	}
+}
+
+void ASailBoatPawn::SetSheetEase(float Ease01)
+{
+	Dynamics.SetSheetEase(Ease01);
+	UpdateBoomFromSheet();
+}
+
+void ASailBoatPawn::UpdateBoomFromSheet()
+{
+	if (!bBoomEndpointsValid || !BoomMesh) return;
+	// Swing boom out to leeward as sheet eases (visual only until cloth)
+	const float SwingDeg = Dynamics.SheetEase * 55.f;
+	const float Sign = Dynamics.GetApparentWindAngleDeg() >= 0.f ? 1.f : -1.f;
+	const FVector LocalEnd = BoomEndLoc - BoomBaseLoc;
+	const FQuat Q(FVector::UpVector, FMath::DegreesToRadians(Sign * SwingDeg));
+	const FVector Swung = BoomBaseLoc + Q.RotateVector(LocalEnd);
+	PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc, Swung);
 }
 
 void ASailBoatPawn::SetTrueWind(float SpeedKn, float DirDeg)
@@ -282,6 +373,12 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	}
 
 	const float Dt = FMath::Clamp(DeltaSeconds, 0.f, 1.f / 20.f);
+	if (FMath::Abs(SheetAxis) > 0.05f)
+	{
+		// W (+1) sheets in, S (−1) eases out
+		Dynamics.SetSheetEase(Dynamics.SheetEase - SheetAxis * 0.45f * Dt);
+		UpdateBoomFromSheet();
+	}
 	Dynamics.Update(Dt);
 	ApplyDynamicsToTransform(Dt);
 	DrawHud();
@@ -345,19 +442,18 @@ void ASailBoatPawn::DrawHud() const
 {
 	if (!GEngine || !IsPlayerControlled()) return;
 	const FString Line = FString::Printf(
-		TEXT("SPD %.1f kn   HEEL %.0f°   HDG %.0f°   RUD %.0f°   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   XY(%.0f,%.0f)   %s"),
+		TEXT("SPD %.1f kn   HEEL %.0f°   HDG %.0f°   RUD %.0f°   SHEET %.0f%%   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   %s"),
 		Dynamics.GetSpeedKnots(),
 		Dynamics.Phi,
 		Dynamics.Heading,
 		-Dynamics.Rudder,
+		Dynamics.SheetEase * 100.f,
 		Dynamics.GetApparentWindAngleDeg(),
 		Dynamics.GetApparentWindSpeedKn(),
 		Dynamics.TrueWindSpeedKn,
 		Dynamics.TrueWindDirDeg,
-		GetActorLocation().X,
-		GetActorLocation().Y,
 		Dynamics.bAutoHeading ? TEXT("AUTO") : TEXT("HELM"));
 	GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Cyan, Line);
 	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White,
-		TEXT("A/D helm | center=AUTO | mesh = sail_geom J/105 loft"));
+		TEXT("A/D helm | W/S sheet in/out | mesh = sail_geom J/105 loft"));
 }

@@ -38,6 +38,8 @@ struct FBoatDynamics
 	float AutoI = 0.f;
 	float ManualRudderTarget = 0.f; // user tiller (starboard +) before model sign flip
 	bool bManualHelm = false;
+	/** 0 = sheeted hard, 1 = fully eased. Affects stub sail force until cloth measure lands. */
+	float SheetEase = 0.20f;
 
 	// J/105 defaults (imperial)
 	float Xudot = 0.07f;
@@ -69,6 +71,7 @@ struct FBoatDynamics
 	float Disp = 7750.f;
 	float LOA = 34.4f;
 	float LWL = 29.5f;
+	float Beam = 11.f;
 	float Ballast = 3340.f;
 	float LateralArea = 70.f;
 	float KeelArea = 50.f;
@@ -97,8 +100,16 @@ struct FBoatDynamics
 	static constexpr float RudSlewRate = 45.f; // deg/s
 
 	void InitJ105();
+	/** Apply sail_geom.boat3d `sailing` + `dims_ft` block (imperial). */
+	void ApplySailingParams(
+		float InDispLb, float InBallastLb, float InBeamFt, float InLwlFt, float InDraftFt, float InTcFt,
+		float InLatArea, float InKeelArea, float InRudArea, float InKeelSpan,
+		float InClrX, float InClrZ, float InSaTotal, float InHullSpeedKn, float InGmFt,
+		float InLoaFt, float InMastTopFt);
 	void Reset();
 	void SetRudderStarboardPositive(float Deg);
+	/** Sheet ease 0..1 (hard → eased). */
+	void SetSheetEase(float Ease01);
 	void Update(float Dt);
 
 	float GetSpeedKnots() const { return V / KnToFts; }

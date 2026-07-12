@@ -3,27 +3,47 @@
 
 void FBoatDynamics::InitJ105()
 {
-	Disp = 7750.f;
-	LOA = 34.4f;
-	LWL = 29.5f;
-	Ballast = 3340.f;
-	LateralArea = 70.f;
-	KeelArea = 50.f;
-	KeelSpan = 6.f;
-	Draft = 6.5f;
-	Tc = 1.2f;
-	SATotal = 545.f;
-	CoeRef = 18.f;
-	ClrDepth = 3.f;
-	GM = 4.6f;
-	HullSpeedKn = 7.0f;
-	CFMax = 1.66f;
-	CrS = 0.71f;
-	RudArea = 4.8f;
-	RudSpan = 4.0f;
-	XCLR = -1.0f;
-	XRud = -14.5f;
+	ApplySailingParams(
+		7750.f, 3340.f, 11.f, 29.5f, 6.5f, 1.2f,
+		70.f, 50.f, 4.8f, 6.f,
+		-1.f, -3.f, 545.f, 7.f, 4.6f,
+		34.4f, 44.f);
+	TrueWindSpeedKn = 18.f;
+	TrueWindDirDeg = 225.f;
+}
+
+void FBoatDynamics::ApplySailingParams(
+	float InDispLb, float InBallastLb, float InBeamFt, float InLwlFt, float InDraftFt, float InTcFt,
+	float InLatArea, float InKeelArea, float InRudArea, float InKeelSpan,
+	float InClrX, float InClrZ, float InSaTotal, float InHullSpeedKn, float InGmFt,
+	float InLoaFt, float InMastTopFt)
+{
+	Disp = InDispLb > 0.f ? InDispLb : Disp;
+	Ballast = InBallastLb;
+	Beam = InBeamFt > 0.f ? InBeamFt : Beam;
+	LWL = InLwlFt > 0.f ? InLwlFt : LWL;
+	Draft = InDraftFt > 0.f ? InDraftFt : Draft;
+	Tc = InTcFt > 0.f ? InTcFt : Tc;
+	LateralArea = InLatArea > 0.f ? InLatArea : LateralArea;
+	KeelArea = InKeelArea > 0.f ? InKeelArea : KeelArea;
+	RudArea = InRudArea > 0.f ? InRudArea : RudArea;
+	KeelSpan = InKeelSpan > 0.f ? InKeelSpan : KeelSpan;
+	XCLR = InClrX;
+	ClrDepth = FMath::Abs(InClrZ) > 0.1f ? FMath::Abs(InClrZ) : ClrDepth;
+	SATotal = InSaTotal > 0.f ? InSaTotal : SATotal;
+	HullSpeedKn = InHullSpeedKn > 0.f ? InHullSpeedKn : HullSpeedKn;
+	GM = InGmFt > 0.f ? InGmFt : GM;
+	if (GM > 5.5f) GM = FMath::Clamp(GM * 0.25f + 3.5f, 4.0f, 5.0f);
+	else if (GM < 3.5f) GM = 4.6f;
+	LOA = InLoaFt > 0.f ? InLoaFt : LOA;
+	CoeRef = InMastTopFt > 0.f ? 0.40f * InMastTopFt : CoeRef;
+	// J/105-ish rudder span if not in JSON
+	RudSpan = FMath::Max(3.5f, KeelSpan * 0.65f);
+	XRud = -0.42f * LOA;
 	SailLead = -3.0f;
+	CrS = 0.71f;
+	CFMax = 1.66f;
+
 	Mass = Disp / G;
 	Iz = Mass * FMath::Square(KzFrac * LOA);
 	Mu = Mass * (1.f + Xudot);
@@ -33,11 +53,10 @@ void FBoatDynamics::InitJ105()
 	AKeel = 2.f * PI * ARKeel / (ARKeel + 2.f);
 	ARRud = 2.f * RudSpan * RudSpan / FMath::Max(RudArea, 1e-3f);
 	ARud = 2.f * PI * ARRud / (ARRud + 2.f);
+
 	Reset();
-	Heading = 90.f; // leave harbor east
+	Heading = 90.f;
 	AutoTarget = Heading;
-	TrueWindSpeedKn = 18.f;
-	TrueWindDirDeg = 225.f;
 }
 
 void FBoatDynamics::Reset()
@@ -64,6 +83,11 @@ void FBoatDynamics::SetRudderStarboardPositive(float Deg)
 		bAutoHeading = false;
 		bManualHelm = true;
 	}
+}
+
+void FBoatDynamics::SetSheetEase(float Ease01)
+{
+	SheetEase = FMath::Clamp(Ease01, 0.f, 1.f);
 }
 
 float FBoatDynamics::Wrap180(float Deg)
@@ -204,27 +228,35 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 	const float Aws = GetApparentWindSpeedKn();
 	const float Awa = GetApparentWindAngleDeg();
 	const float AwaAbs = FMath::Abs(Awa);
+	// Ideal sheet ease vs AWA: tight upwind, freer reaching/running
+	float IdealEase = 0.12f;
+	if (AwaAbs < 40.f) IdealEase = 0.08f;
+	else if (AwaAbs < 70.f) IdealEase = 0.12f + 0.25f * ((AwaAbs - 40.f) / 30.f);
+	else if (AwaAbs < 120.f) IdealEase = 0.37f + 0.35f * ((AwaAbs - 70.f) / 50.f);
+	else IdealEase = 0.72f + 0.25f * FMath::Clamp((AwaAbs - 120.f) / 60.f, 0.f, 1.f);
+	const float SheetErr = FMath::Abs(SheetEase - IdealEase);
+	// Full power near ideal; falls to ~25% when badly over/under sheeted
+	const float SheetEff = FMath::Clamp(1.f - 1.6f * SheetErr, 0.25f, 1.f);
+
 	// No-go / irons
 	float Cl = 0.f;
 	if (AwaAbs > 28.f && AwaAbs < 160.f)
 	{
-		// Peak near ~40–50°, fall to zero at 180
+		// Peak near ~40–50°, fall toward 180
 		const float T = (AwaAbs - 28.f) / (50.f - 28.f);
 		const float Peak = FMath::Clamp(T, 0.f, 1.f);
 		const float Fall = FMath::Clamp(1.f - (AwaAbs - 90.f) / 90.f, 0.f, 1.f);
-		Cl = CFMax * Peak * Fall;
+		Cl = CFMax * Peak * Fall * SheetEff;
 	}
 	// Air density slug/ft³ ~0.00237; convert kn→ft/s
 	const float Va = Aws * KnToFts;
 	const float Q = 0.5f * 0.00237f * Va * Va;
 	const float Mag = Q * SATotal * Cl;
 	const float Sign = (Awa >= 0.f) ? 1.f : -1.f;
-	// Resolve into drive (along boat) and side: at AWA, force roughly ⊥ to apparent wind
 	const float AwaRad = FMath::DegreesToRadians(AwaAbs);
 	FSailForceInput Out;
-	Out.DriveLb = Mag * FMath::Sin(AwaRad);           // forward component
-	Out.SideLb = Sign * Mag * FMath::Cos(AwaRad * 0.85f); // side to leeward
-	// In no-go, lightly drag
+	Out.DriveLb = Mag * FMath::Sin(AwaRad);
+	Out.SideLb = Sign * Mag * FMath::Cos(AwaRad * 0.85f);
 	if (AwaAbs < 28.f)
 	{
 		Out.DriveLb = -0.02f * Q * SATotal;

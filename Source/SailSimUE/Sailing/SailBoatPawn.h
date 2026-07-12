@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Sailing/BoatDynamics.h"
+#include "Sailing/BoatMeshFromJson.h"
 #include "SailBoatPawn.generated.h"
 
 class UStaticMeshComponent;
@@ -25,11 +26,19 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing")
 	void SetHelmInput(float StarboardPositive);
+
+	/** Sheet ease 0..1 (0 hard in, 1 eased). */
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	void SetSheetEase(float Ease01);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing")
+	float GetSheetEase() const { return Dynamics.SheetEase; }
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing")
 	float GetSpeedKnots() const { return Dynamics.GetSpeedKnots(); }
@@ -89,6 +98,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
 	FString BoatJsonRelativePath = TEXT("Data/j105_boat3d.json");
 
+	/** Apply JSON sailing/dims into FBoatDynamics (BeginPlay only). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
+	bool bApplyJsonSailingParams = true;
+
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float OriginIslandRadiusCm = 80000.f;
 
@@ -101,17 +114,29 @@ protected:
 
 	FBoatDynamics Dynamics;
 	float HelmAxis = 0.f;
+	float SheetAxis = 0.f;
+	FVector BoomBaseLoc = FVector::ZeroVector;
+	FVector BoomEndLoc = FVector::ZeroVector;
+	bool bBoomEndpointsValid = false;
 	float SmoothedWaterZ = 0.f;
 	float SmoothedPitch = 0.f;
 	float WavePitchSampleTimer = 0.f;
 	float CachedWavePitch = 0.f;
 	bool bFloatInit = false;
+	bool bLoftMeshLoaded = false;
+	FString LoadedLoftPath;
+	FBoatJsonSailingParams CachedSailingParams;
 	int32 StartupSkipFrames = 3;
 
-	void LoadLoftMesh();
+	/** Load procedural loft (+ spars). bApplyDynamics: wire sailing params into VPP. */
+	void LoadLoftMesh(bool bApplyDynamics = false);
+	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
+	void ApplyCachedSailingToDynamics();
+	void UpdateBoomFromSheet();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
+	void OnSheetAxis(float Value);
 	void EnsureOpenWaterSpawn();
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };
