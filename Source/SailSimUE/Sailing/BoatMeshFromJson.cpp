@@ -257,13 +257,21 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		const bool bDouble = M->HasField(TEXT("double_sided")) && M->GetBoolField(TEXT("double_sided"));
 		if (bDouble)
 		{
+			// Copy indices first — TArray::Add(Array[i]) asserts in UE when the
+			// element address is from the same container being modified.
 			Triangles.Reserve(FrontTriCount * 2);
+			TArray<int32> Back;
+			Back.Reserve(FrontTriCount);
 			for (int32 T = 0; T + 2 < FrontTriCount; T += 3)
 			{
-				Triangles.Add(Triangles[T]);
-				Triangles.Add(Triangles[T + 2]);
-				Triangles.Add(Triangles[T + 1]);
+				const int32 Ia = Triangles[T];
+				const int32 Ib = Triangles[T + 1];
+				const int32 Ic = Triangles[T + 2];
+				Back.Add(Ia);
+				Back.Add(Ic);
+				Back.Add(Ib);
 			}
+			Triangles.Append(Back);
 		}
 
 		FString SectionName;
