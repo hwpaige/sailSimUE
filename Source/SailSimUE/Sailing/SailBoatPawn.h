@@ -112,6 +112,32 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
+	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float OrbitYawSpeed = 2.2f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float OrbitPitchSpeed = 1.8f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float MinOrbitPitchDeg = -85.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float MaxOrbitPitchDeg = -2.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float ZoomSpeedCm = 120.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float MinArmLengthCm = 350.f;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	float MaxArmLengthCm = 6000.f;
+
+	/** If true, only orbit while holding RMB (recommended for PIE). If false, always-on mouse look. */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
+	bool bRequireRMBToOrbit = true;
+
 	FBoatDynamics Dynamics;
 	float HelmAxis = 0.f;
 	float SheetAxis = 0.f;
@@ -128,15 +154,26 @@ protected:
 	FBoatJsonSailingParams CachedSailingParams;
 	int32 StartupSkipFrames = 3;
 
+	/** Spring-arm orbit (relative to boat). */
+	float OrbitYawDeg = -25.f;
+	float OrbitPitchDeg = -18.f;
+	bool bOrbitRMBHeld = false;
+
 	/** Load procedural loft (+ spars). bApplyDynamics: wire sailing params into VPP. */
 	void LoadLoftMesh(bool bApplyDynamics = false);
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
 	void ApplyCachedSailingToDynamics();
 	void UpdateBoomFromSheet();
+	void ApplyOrbitToSpringArm();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
 	void OnSheetAxis(float Value);
+	void OnLookYaw(float Value);
+	void OnLookPitch(float Value);
+	void OnCameraZoom(float Value);
+	void OnOrbitPressed();
+	void OnOrbitReleased();
 	void EnsureOpenWaterSpawn();
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };

@@ -62,13 +62,17 @@ ASailBoatPawn::ASailBoatPawn()
 	// Closer chase cam so ~10 m LOA loft fills the frame (was 24 m arm).
 	SpringArm->TargetArmLength = 1600.f;
 	SpringArm->bUsePawnControlRotation = false;
+	SpringArm->bInheritPitch = true;
+	SpringArm->bInheritYaw = true;
+	SpringArm->bInheritRoll = false; // keep horizon level when boat heels
 	SpringArm->bDoCollisionTest = false;
 	SpringArm->bEnableCameraLag = true;
 	SpringArm->CameraLagSpeed = 10.f;
-	SpringArm->bEnableCameraRotationLag = true;
-	SpringArm->CameraRotationLagSpeed = 12.f;
-	SpringArm->SetRelativeRotation(FRotator(-18.f, -25.f, 0.f));
+	SpringArm->bEnableCameraRotationLag = false; // snappier orbit response
 	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 220.f));
+	OrbitYawDeg = -25.f;
+	OrbitPitchDeg = -18.f;
+	ApplyOrbitToSpringArm();
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
@@ -263,6 +267,57 @@ void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &ASailBoatPawn::OnMoveRight);
 	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &ASailBoatPawn::OnMoveRight);
 	PlayerInputComponent->BindAxis(TEXT("Sheet"), this, &ASailBoatPawn::OnSheetAxis);
+	PlayerInputComponent->BindAxis(TEXT("LookYaw"), this, &ASailBoatPawn::OnLookYaw);
+	PlayerInputComponent->BindAxis(TEXT("LookPitch"), this, &ASailBoatPawn::OnLookPitch);
+	PlayerInputComponent->BindAxis(TEXT("CameraZoom"), this, &ASailBoatPawn::OnCameraZoom);
+	PlayerInputComponent->BindAction(TEXT("OrbitCamera"), IE_Pressed, this, &ASailBoatPawn::OnOrbitPressed);
+	PlayerInputComponent->BindAction(TEXT("OrbitCamera"), IE_Released, this, &ASailBoatPawn::OnOrbitReleased);
+}
+
+void ASailBoatPawn::ApplyOrbitToSpringArm()
+{
+	if (!SpringArm) return;
+	OrbitPitchDeg = FMath::Clamp(OrbitPitchDeg, MinOrbitPitchDeg, MaxOrbitPitchDeg);
+	// Normalize yaw to keep values sane
+	OrbitYawDeg = FMath::UnwindDegrees(OrbitYawDeg);
+	SpringArm->SetRelativeRotation(FRotator(OrbitPitchDeg, OrbitYawDeg, 0.f));
+}
+
+void ASailBoatPawn::OnOrbitPressed()
+{
+	bOrbitRMBHeld = true;
+}
+
+void ASailBoatPawn::OnOrbitReleased()
+{
+	bOrbitRMBHeld = false;
+}
+
+void ASailBoatPawn::OnLookYaw(float Value)
+{
+	if (FMath::IsNearlyZero(Value)) return;
+	if (bRequireRMBToOrbit && !bOrbitRMBHeld) return;
+	OrbitYawDeg += Value * OrbitYawSpeed;
+	ApplyOrbitToSpringArm();
+}
+
+void ASailBoatPawn::OnLookPitch(float Value)
+{
+	if (FMath::IsNearlyZero(Value)) return;
+	if (bRequireRMBToOrbit && !bOrbitRMBHeld) return;
+	// Drag mouse up → camera elevates (more negative pitch, top-down)
+	OrbitPitchDeg -= Value * OrbitPitchSpeed;
+	ApplyOrbitToSpringArm();
+}
+
+void ASailBoatPawn::OnCameraZoom(float Value)
+{
+	if (!SpringArm || FMath::IsNearlyZero(Value)) return;
+	// Wheel up (positive) zooms in
+	SpringArm->TargetArmLength = FMath::Clamp(
+		SpringArm->TargetArmLength - Value * ZoomSpeedCm,
+		MinArmLengthCm,
+		MaxArmLengthCm);
 }
 
 void ASailBoatPawn::OnMoveRight(float Value)
@@ -455,5 +510,5 @@ void ASailBoatPawn::DrawHud() const
 		Dynamics.bAutoHeading ? TEXT("AUTO") : TEXT("HELM"));
 	GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Cyan, Line);
 	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White,
-		TEXT("A/D helm | W/S sheet in/out | mesh = sail_geom J/105 loft"));
+		TEXT("A/D helm | W/S sheet | RMB+drag orbit | scroll zoom"));
 }
