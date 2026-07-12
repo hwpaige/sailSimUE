@@ -44,6 +44,20 @@ ASailBoatPawn::ASailBoatPawn()
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
+void ASailBoatPawn::EnsureOpenWaterSpawn()
+{
+	FVector Loc = GetActorLocation();
+	const float Dist2D = FVector2D(Loc.X, Loc.Y).Size();
+	const bool bNearOrigin = Dist2D < OriginIslandRadiusCm;
+	if (bForceOpenWaterSpawn || bNearOrigin)
+	{
+		Loc.X = OpenWaterSpawnXY.X;
+		Loc.Y = OpenWaterSpawnXY.Y;
+		// Z filled after water sample
+		SetActorLocation(Loc);
+	}
+}
+
 void ASailBoatPawn::BeginPlay()
 {
 	Super::BeginPlay();
@@ -54,9 +68,13 @@ void ASailBoatPawn::BeginPlay()
 	const float ScaleZ = (HullLengthCm * 0.18f) / 100.f;
 	HullMesh->SetWorldScale3D(FVector(ScaleX, ScaleY, ScaleZ));
 
+	// Leave the landscape island at world origin — sail in open water
+	EnsureOpenWaterSpawn();
+
 	FVector Loc = GetActorLocation();
 	FVector Surf, Norm;
-	if (SampleWaterSurface(Loc, Surf, Norm))
+	float Depth = 0.f;
+	if (SampleWaterSurface(Loc, Surf, Norm, &Depth))
 	{
 		SmoothedWaterZ = Surf.Z;
 	}
@@ -68,6 +86,10 @@ void ASailBoatPawn::BeginPlay()
 	const float HullHalfZ = ScaleZ * 50.f;
 	Loc.Z = SmoothedWaterZ + HullHalfZ * FloatDraftFraction;
 	SetActorLocation(Loc);
+
+	// Start heading east (matches OpenWater +Y/X setup; wind 225° gives a reach)
+	Dynamics.Heading = 90.f;
+	Dynamics.AutoTarget = Dynamics.Heading;
 }
 
 void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -101,7 +123,7 @@ void ASailBoatPawn::SetTrueWind(float SpeedKn, float DirDeg)
 	Dynamics.TrueWindDirDeg = DirDeg;
 }
 
-bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal) const
+bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth) const
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -109,10 +131,11 @@ bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurfa
 		return false;
 	}
 
-	// Query slightly above expected water so ocean bodies can project down
-	const FVector Query(WorldXY.X, WorldXY.Y, WorldXY.Z + 50000.f);
+	// High query point so ocean projection is stable
+	const FVector Query(WorldXY.X, WorldXY.Y, FMath::Max(WorldXY.Z, 0.f) + 100000.f);
 	bool bAny = false;
 	float BestAbsDZ = TNumericLimits<float>::Max();
+	float BestDepth = 0.f;
 
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
 	{
@@ -123,17 +146,22 @@ bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurfa
 		}
 		FVector Surf, Norm, Vel;
 		float Depth = 0.f;
-		if (Comp->GetWaterSurfaceInfoAtLocation(Query, Surf, Norm, Vel, Depth, /*bIncludeDepth*/ false))
+		if (Comp->GetWaterSurfaceInfoAtLocation(Query, Surf, Norm, Vel, Depth, /*bIncludeDepth*/ true))
 		{
 			const float Dz = FMath::Abs(Surf.Z - WorldXY.Z);
 			if (!bAny || Dz < BestAbsDZ)
 			{
 				BestAbsDZ = Dz;
+				BestDepth = Depth;
 				OutSurface = Surf;
 				OutNormal = Norm;
 				bAny = true;
 			}
 		}
+	}
+	if (bAny && OutDepth)
+	{
+		*OutDepth = BestDepth;
 	}
 	return bAny;
 }
@@ -160,15 +188,15 @@ void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 	Loc.X += Vx * DeltaSeconds;
 	Loc.Y += Vy * DeltaSeconds;
 
-	// --- Water float (center) + optional bow/stern for pitch ---
 	const float HullHalfZ = HullMesh->GetComponentScale().Z * 50.f;
 	const float HalfLoa = HullLengthCm * 0.45f;
 
 	FVector CenterSurf, CenterN;
 	float TargetZ = WaterSurfaceZ;
 	float WavePitch = 0.f;
+	float Depth = 0.f;
 
-	if (SampleWaterSurface(Loc, CenterSurf, CenterN))
+	if (SampleWaterSurface(Loc, CenterSurf, CenterN, &Depth))
 	{
 		TargetZ = CenterSurf.Z;
 		if (bSampleWavePitch)
@@ -203,7 +231,6 @@ void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 
 	Loc.Z = SmoothedWaterZ + HullHalfZ * FloatDraftFraction;
 
-	// Pitch = wave, Yaw = heading, Roll = heel (UE Rotator: Pitch, Yaw, Roll)
 	const FRotator Rot(SmoothedPitch, Yaw, Heel);
 	SetActorLocationAndRotation(Loc, Rot, false, nullptr, ETeleportType::None);
 }
@@ -212,7 +239,7 @@ void ASailBoatPawn::DrawHud() const
 {
 	if (!GEngine) return;
 	const FString Line = FString::Printf(
-		TEXT("SPD %.1f kn   HEEL %.0f°   PITCH %.1f°   HDG %.0f°   RUD %.0f°   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   WZ %.0f   %s"),
+		TEXT("SPD %.1f kn   HEEL %.0f°   PITCH %.1f°   HDG %.0f°   RUD %.0f°   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   WZ %.0f   XY (%.0f,%.0f)   %s"),
 		Dynamics.GetSpeedKnots(),
 		Dynamics.Phi,
 		SmoothedPitch,
@@ -223,7 +250,10 @@ void ASailBoatPawn::DrawHud() const
 		Dynamics.TrueWindSpeedKn,
 		Dynamics.TrueWindDirDeg,
 		SmoothedWaterZ,
+		GetActorLocation().X,
+		GetActorLocation().Y,
 		Dynamics.bAutoHeading ? TEXT("AUTO") : TEXT("HELM"));
 	GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Cyan, Line);
-	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White, TEXT("A/D helm  |  center re-engages AUTO  |  water Z from Water plugin when available"));
+	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White,
+		TEXT("A/D helm | center=AUTO | spawn forced to open water (800m east of origin island)"));
 }

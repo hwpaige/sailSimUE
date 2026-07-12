@@ -12,6 +12,9 @@ class UCameraComponent;
 /**
  * Placeholder keelboat driven by FBoatDynamics (J/105 3-DOF VPP).
  * Heading 0° → world +X, 90° → +Y. Float Z from Water plugin when available.
+ *
+ * Default ocean maps often place a landscape island near origin; we spawn/relocate
+ * into open water so PIE does not start stranded on land.
  */
 UCLASS()
 class SAILSIMUE_API ASailBoatPawn : public APawn
@@ -70,6 +73,21 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	bool bSampleWavePitch = true;
 
+	/**
+	 * If the pawn starts within this XY distance of the world origin (cm), snap to
+	 * OpenWaterSpawnXY. Default ocean landscapes sit around 0,0.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	float OriginIslandRadiusCm = 25000.f;
+
+	/** Open-water spawn XY (cm). Default: 800 m east of origin, away from brush island. */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	FVector2D OpenWaterSpawnXY = FVector2D(80000.f, 0.f);
+
+	/** If true, always force OpenWaterSpawnXY in BeginPlay (ignore placed actor XY). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	bool bForceOpenWaterSpawn = true;
+
 	FBoatDynamics Dynamics;
 	float HelmAxis = 0.f;
 	float SmoothedWaterZ = 0.f;
@@ -79,7 +97,8 @@ protected:
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
+	void EnsureOpenWaterSpawn();
 
-	/** Returns true if Water plugin gave a surface sample. */
-	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal) const;
+	/** Returns true if Water plugin gave a surface sample. Depth optional. */
+	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };
