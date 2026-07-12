@@ -2,6 +2,10 @@
 #include "Sailing/BoatMeshFromJson.h"
 #include "Sailing/BoatPresets.h"
 #include "Sailing/OceanHeightSample.h"
+#include "WaterZoneActor.h"
+#include "WaterBodyActor.h"
+#include "WaterBodyOceanActor.h"
+#include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
@@ -21,16 +25,33 @@ ASailBoatPawn::ASailBoatPawn()
 	BoatRoot = CreateDefaultSubobject<USceneComponent>(TEXT("BoatRoot"));
 	RootComponent = BoatRoot;
 
+	auto PrepLoft = [](UProceduralMeshComponent* Mesh, bool bCollision)
+	{
+		if (!Mesh) return;
+		Mesh->bUseAsyncCooking = true;
+		Mesh->SetCollisionEnabled(bCollision ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+		if (bCollision)
+		{
+			Mesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		}
+		Mesh->SetGenerateOverlapEvents(false);
+		Mesh->SetMobility(EComponentMobility::Movable);
+		Mesh->SetCastShadow(true);
+		Mesh->bNeverDistanceCull = true;
+		Mesh->SetReceivesDecals(false);
+	};
+
 	LoftMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("LoftMesh"));
 	LoftMesh->SetupAttachment(BoatRoot);
-	LoftMesh->bUseAsyncCooking = true;
-	LoftMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	LoftMesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
-	LoftMesh->SetGenerateOverlapEvents(false);
-	LoftMesh->SetMobility(EComponentMobility::Movable);
-	LoftMesh->SetCastShadow(true);
-	LoftMesh->bNeverDistanceCull = true;
-	LoftMesh->SetReceivesDecals(false);
+	PrepLoft(LoftMesh, true);
+
+	MainSailMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MainSailMesh"));
+	MainSailMesh->SetupAttachment(BoatRoot);
+	PrepLoft(MainSailMesh, false);
+
+	JibSailMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("JibSailMesh"));
+	JibSailMesh->SetupAttachment(BoatRoot);
+	PrepLoft(JibSailMesh, false);
 
 	MastMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mast"));
 	MastMesh->SetupAttachment(BoatRoot);
@@ -57,8 +78,8 @@ ASailBoatPawn::ASailBoatPawn()
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(BoatRoot);
-	// Closer chase cam so ~10 m LOA loft fills the frame (was 24 m arm).
-	SpringArm->TargetArmLength = 1600.f;
+	// Higher / farther chase so ocean horizon is visible under dusk lighting.
+	SpringArm->TargetArmLength = 2200.f;
 	SpringArm->bUsePawnControlRotation = false;
 	SpringArm->bInheritPitch = true;
 	SpringArm->bInheritYaw = true;
@@ -67,9 +88,9 @@ ASailBoatPawn::ASailBoatPawn()
 	SpringArm->bEnableCameraLag = true;
 	SpringArm->CameraLagSpeed = 10.f;
 	SpringArm->bEnableCameraRotationLag = false; // snappier orbit response
-	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 220.f));
-	OrbitYawDeg = -25.f;
-	OrbitPitchDeg = -18.f;
+	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 320.f));
+	OrbitYawDeg = -35.f;
+	OrbitPitchDeg = -22.f;
 	ApplyOrbitToSpringArm();
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -169,7 +190,8 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 	}
 
 	FBoatJsonLoadResult Result;
-	const bool bOk = FBoatMeshFromJson::LoadIntoProceduralMesh(LoftMesh, Path, BaseMat, &Result);
+	const bool bOk = FBoatMeshFromJson::LoadIntoProceduralMesh(
+		LoftMesh, Path, BaseMat, &Result, MainSailMesh, JibSailMesh);
 	if (!bOk)
 	{
 		bLoftMeshLoaded = false;
@@ -184,10 +206,28 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 	LoftMesh->SetVisibility(true);
 	LoftMesh->SetHiddenInGame(false);
 	LoftMesh->MarkRenderStateDirty();
+	if (MainSailMesh)
+	{
+		MainSailMesh->SetVisibility(true);
+		MainSailMesh->SetHiddenInGame(false);
+		MainSailMesh->MarkRenderStateDirty();
+	}
+	if (JibSailMesh)
+	{
+		JibSailMesh->SetVisibility(true);
+		JibSailMesh->SetHiddenInGame(false);
+		JibSailMesh->MarkRenderStateDirty();
+	}
 
 	if (Result.Spars.bMastValid)
 	{
+		MastBaseLoc = Result.Spars.MastBase;
+		bMastPivotValid = true;
 		PlaceSparFromEndpoints(MastMesh, Result.Spars.MastBase, Result.Spars.MastTop);
+	}
+	else
+	{
+		bMastPivotValid = false;
 	}
 	if (Result.Spars.bBoomValid)
 	{
@@ -200,6 +240,7 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 	{
 		bBoomEndpointsValid = false;
 	}
+	UpdateBoomFromSheet();
 
 	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color)
 	{
@@ -232,6 +273,47 @@ void ASailBoatPawn::EnsureOpenWaterSpawn()
 	}
 }
 
+void ASailBoatPawn::EnsureOceanCoverage()
+{
+	if (!bEnsureOceanCoverage) return;
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const FVector BoatLoc = GetActorLocation();
+	bool bAnyZone = false;
+	for (TActorIterator<AWaterZone> It(World); It; ++It)
+	{
+		bAnyZone = true;
+		// Keep zone centered near boat so local tessellation covers the camera.
+		FVector ZLoc = It->GetActorLocation();
+		ZLoc.X = BoatLoc.X;
+		ZLoc.Y = BoatLoc.Y;
+		It->SetActorLocation(ZLoc, false, nullptr, ETeleportType::TeleportPhysics);
+		const float Ext = FMath::Max(WaterZoneExtentCm, 500000.f);
+		It->SetZoneExtent(FVector2D(Ext, Ext));
+		It->MarkForRebuild(EWaterZoneRebuildFlags::All);
+		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: WaterZone '%s' centered (%.0f,%.0f) extent %.0f cm"),
+			*It->GetName(), ZLoc.X, ZLoc.Y, Ext);
+	}
+	if (!bAnyZone)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: no AWaterZone in level — ocean mesh will not render"));
+	}
+
+	// Nudge ocean bodies toward boat XY so collision/visuals stay relevant.
+	for (TActorIterator<AWaterBody> It(World); It; ++It)
+	{
+		FVector WLoc = It->GetActorLocation();
+		// Only re-center ocean (leave rivers/lakes if any)
+		if (It->IsA(AWaterBodyOcean::StaticClass()) || It->GetName().Contains(TEXT("Ocean")))
+		{
+			WLoc.X = BoatLoc.X;
+			WLoc.Y = BoatLoc.Y;
+			It->SetActorLocation(WLoc, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+	}
+}
+
 void ASailBoatPawn::BeginPlay()
 {
 	Super::BeginPlay();
@@ -243,16 +325,21 @@ void ASailBoatPawn::BeginPlay()
 	LoadLoftMesh(/*bApplyDynamics*/ true);
 
 	EnsureOpenWaterSpawn();
+	EnsureOceanCoverage();
 
 	FVector Loc = GetActorLocation();
 	FVector Surf, Norm;
 	if (SampleWaterSurface(Loc, Surf, Norm))
 	{
 		SmoothedWaterZ = Surf.Z;
+		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f"), Loc.X, Loc.Y, Surf.Z);
 	}
 	else
 	{
 		SmoothedWaterZ = WaterSurfaceZ;
+		UE_LOG(LogTemp, Warning,
+			TEXT("SailBoatPawn: NO water surface at XY(%.0f,%.0f) — floating at Z=%.1f (void risk)"),
+			Loc.X, Loc.Y, SmoothedWaterZ);
 	}
 	bFloatInit = true;
 	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
@@ -359,14 +446,37 @@ void ASailBoatPawn::SetSheetEase(float Ease01)
 
 void ASailBoatPawn::UpdateBoomFromSheet()
 {
-	if (!bBoomEndpointsValid || !BoomMesh) return;
-	// Swing boom out to leeward as sheet eases (visual only until cloth)
+	// Swing boom + sails out to leeward as sheet eases (placeholder until cloth)
 	const float SwingDeg = Dynamics.SheetEase * 55.f;
 	const float Sign = Dynamics.GetApparentWindAngleDeg() >= 0.f ? 1.f : -1.f;
-	const FVector LocalEnd = BoomEndLoc - BoomBaseLoc;
-	const FQuat Q(FVector::UpVector, FMath::DegreesToRadians(Sign * SwingDeg));
-	const FVector Swung = BoomBaseLoc + Q.RotateVector(LocalEnd);
-	PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc, Swung);
+	const float Yaw = Sign * SwingDeg;
+
+	if (bBoomEndpointsValid && BoomMesh)
+	{
+		const FVector LocalEnd = BoomEndLoc - BoomBaseLoc;
+		const FQuat Q(FVector::UpVector, FMath::DegreesToRadians(Yaw));
+		const FVector Swung = BoomBaseLoc + Q.RotateVector(LocalEnd);
+		PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc, Swung);
+	}
+
+	// Sails are pivoted at mast base in boat space
+	if (MainSailMesh)
+	{
+		if (bMastPivotValid)
+		{
+			MainSailMesh->SetRelativeLocation(MastBaseLoc);
+		}
+		MainSailMesh->SetRelativeRotation(FRotator(0.f, Yaw, 0.f));
+	}
+	if (JibSailMesh)
+	{
+		if (bMastPivotValid)
+		{
+			JibSailMesh->SetRelativeLocation(MastBaseLoc);
+		}
+		// Jib opens a bit less than main
+		JibSailMesh->SetRelativeRotation(FRotator(0.f, Yaw * 0.9f, 0.f));
+	}
 }
 
 void ASailBoatPawn::SetTrueWind(float SpeedKn, float DirDeg)
@@ -473,10 +583,14 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	if (StartupSkipFrames > 0)
 	{
 		--StartupSkipFrames;
-		FVector Loc = GetActorLocation();
 		// Re-assert open water on first frames (PlayerStart may reset XY)
 		EnsureOpenWaterSpawn();
-		Loc = GetActorLocation();
+		if (StartupSkipFrames == 2)
+		{
+			// Once after first relocate — re-center WaterZone on boat
+			EnsureOceanCoverage();
+		}
+		FVector Loc = GetActorLocation();
 		FVector Surf, Norm;
 		if (SampleWaterSurface(Loc, Surf, Norm))
 		{

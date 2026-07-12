@@ -31,8 +31,9 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 		}
 	}
 
-	// Default water-brush landscape island at origin: hide in game so we don't
-	// look like we're "on land" even when floated offshore.
+	// Hide the OpenWorld checkerboard landscape (M_ProcGrid) so it doesn't
+	// cover the ocean — but only disable collision; keep as last-resort ground
+	// if water fails to tessellate (spawn is now near zone center so ocean should show).
 	for (TActorIterator<ALandscape> It(World); It; ++It)
 	{
 		It->SetActorHiddenInGame(true);

@@ -53,14 +53,18 @@ struct FBoatJsonLoadResult
 struct FBoatMeshFromJson
 {
 	/**
-	 * Parse + fill procedural mesh. Always reloads mesh sections.
-	 * OutResult receives sailing + spar endpoints from the same parse.
+	 * Parse + fill procedural meshes. Always reloads mesh sections.
+	 * Hull sections → HullOrCombinedMesh. Optional Main/Jib sail meshes receive
+	 * sail_* sections with verts pivoted around mast base (for sheet rotation).
+	 * If sail meshes are null, sails go into HullOrCombinedMesh.
 	 */
 	static bool LoadIntoProceduralMesh(
-		UProceduralMeshComponent* Mesh,
+		UProceduralMeshComponent* HullOrCombinedMesh,
 		const FString& JsonPathOrContentRelative,
 		UMaterialInterface* DefaultMaterial = nullptr,
-		FBoatJsonLoadResult* OutResult = nullptr);
+		FBoatJsonLoadResult* OutResult = nullptr,
+		UProceduralMeshComponent* MainSailMesh = nullptr,
+		UProceduralMeshComponent* JibSailMesh = nullptr);
 
 	/** Parse sailing/spars only (no mesh rebuild) — for BeginPlay when mesh already loaded. */
 	static bool LoadMetadataOnly(

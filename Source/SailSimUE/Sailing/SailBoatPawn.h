@@ -96,9 +96,15 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> BoatRoot;
 
-	/** Lofted hull/deck/cabin/sails from Content/Data/j105_boat3d.json */
+	/** Lofted hull/deck/cabin (sails are separate so they can sheet). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UProceduralMeshComponent> LoftMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UProceduralMeshComponent> MainSailMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UProceduralMeshComponent> JibSailMesh;
 
 	/** Mast cylinder (JSON only has endpoints). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -145,15 +151,26 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
 	bool bApplyJsonSailingParams = true;
 
+	/** Soft radius around origin for the water-brush island (spawn just outside). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float OriginIslandRadiusCm = 80000.f;
+	float OriginIslandRadiusCm = 12000.f;
 
-	/** Far from water-brush island (~2 km NE of origin). */
+	/**
+	 * Spawn on the WaterZone near origin (not km offshore — far spawn sits outside
+	 * ocean tessellation and looks like empty sky after landscape is hidden).
+	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(200000.f, 150000.f);
+	FVector2D OpenWaterSpawnXY = FVector2D(18000.f, 14000.f);
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
+
+	/** Expand WaterZone so ocean mesh covers the boat at runtime. */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	bool bEnsureOceanCoverage = true;
+
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	float WaterZoneExtentCm = 2000000.f;
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
@@ -186,7 +203,9 @@ protected:
 	float SheetAxis = 0.f;
 	FVector BoomBaseLoc = FVector::ZeroVector;
 	FVector BoomEndLoc = FVector::ZeroVector;
+	FVector MastBaseLoc = FVector::ZeroVector;
 	bool bBoomEndpointsValid = false;
+	bool bMastPivotValid = false;
 	float SmoothedWaterZ = 0.f;
 	float SmoothedPitch = 0.f;
 	float WavePitchSampleTimer = 0.f;
@@ -207,6 +226,7 @@ protected:
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
 	void ApplyCachedSailingToDynamics();
 	void UpdateBoomFromSheet();
+	void EnsureOceanCoverage();
 	void ApplyOrbitToSpringArm();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void OnMoveRight(float Value);

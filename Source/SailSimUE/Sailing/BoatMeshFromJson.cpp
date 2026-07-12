@@ -149,16 +149,18 @@ bool FBoatMeshFromJson::LoadMetadataOnly(
 }
 
 bool FBoatMeshFromJson::LoadIntoProceduralMesh(
-	UProceduralMeshComponent* Mesh,
+	UProceduralMeshComponent* HullOrCombinedMesh,
 	const FString& JsonPathOrContentRelative,
 	UMaterialInterface* DefaultMaterial,
-	FBoatJsonLoadResult* OutResult)
+	FBoatJsonLoadResult* OutResult,
+	UProceduralMeshComponent* MainSailMesh,
+	UProceduralMeshComponent* JibSailMesh)
 {
 	if (OutResult)
 	{
 		*OutResult = FBoatJsonLoadResult();
 	}
-	if (!Mesh)
+	if (!HullOrCombinedMesh)
 	{
 		return false;
 	}
@@ -187,13 +189,26 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 	}
 
 	UMaterialInterface* BaseMat = DefaultMaterial;
-	Mesh->ClearAllMeshSections();
-	Mesh->bUseComplexAsSimpleCollision = true;
-	Mesh->SetCastShadow(true);
-	Mesh->SetVisibility(true);
-	Mesh->SetHiddenInGame(false);
+	auto PrepMesh = [](UProceduralMeshComponent* Mesh)
+	{
+		if (!Mesh) return;
+		Mesh->ClearAllMeshSections();
+		Mesh->bUseComplexAsSimpleCollision = true;
+		Mesh->SetCastShadow(true);
+		Mesh->SetVisibility(true);
+		Mesh->SetHiddenInGame(false);
+	};
+	PrepMesh(HullOrCombinedMesh);
+	PrepMesh(MainSailMesh);
+	PrepMesh(JibSailMesh);
 
-	int32 Section = 0;
+	const FVector SailPivot = Spars.bMastValid ? Spars.MastBase : FVector::ZeroVector;
+	const bool bSplitSails = (MainSailMesh != nullptr) || (JibSailMesh != nullptr);
+
+	int32 HullSection = 0;
+	int32 MainSection = 0;
+	int32 JibSection = 0;
+	int32 TotalSections = 0;
 	for (const TSharedPtr<FJsonValue>& Val : *MeshArr)
 	{
 		const TSharedPtr<FJsonObject> M = Val->AsObject();
@@ -207,6 +222,37 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		}
 		if (VertsJ->Num() < 9 || IdxJ->Num() < 3) continue;
 
+		FString SectionName;
+		M->TryGetStringField(TEXT("name"), SectionName);
+		const bool bIsMain = SectionName.Contains(TEXT("sail_main"), ESearchCase::IgnoreCase)
+			|| SectionName.Equals(TEXT("main"), ESearchCase::IgnoreCase);
+		const bool bIsJib = SectionName.Contains(TEXT("sail_jib"), ESearchCase::IgnoreCase)
+			|| SectionName.Contains(TEXT("jib"), ESearchCase::IgnoreCase);
+		const bool bIsSail = SectionName.Contains(TEXT("sail"), ESearchCase::IgnoreCase) || bIsMain || bIsJib;
+
+		UProceduralMeshComponent* Target = HullOrCombinedMesh;
+		int32* SectionCounter = &HullSection;
+		bool bPivotToSail = false;
+		if (bSplitSails && bIsMain && MainSailMesh)
+		{
+			Target = MainSailMesh;
+			SectionCounter = &MainSection;
+			bPivotToSail = true;
+		}
+		else if (bSplitSails && bIsJib && JibSailMesh)
+		{
+			Target = JibSailMesh;
+			SectionCounter = &JibSection;
+			bPivotToSail = true;
+		}
+		else if (bSplitSails && bIsSail && MainSailMesh)
+		{
+			// Other sails (spinnaker etc.) → main mesh
+			Target = MainSailMesh;
+			SectionCounter = &MainSection;
+			bPivotToSail = true;
+		}
+
 		TArray<FVector> Vertices;
 		TArray<int32> Triangles;
 		TArray<FVector> Normals;
@@ -217,10 +263,15 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		Vertices.Reserve(VertsJ->Num() / 3);
 		for (int32 I = 0; I + 2 < VertsJ->Num(); I += 3)
 		{
-			Vertices.Add(FVector(
+			FVector V(
 				(*VertsJ)[I]->AsNumber(),
 				(*VertsJ)[I + 1]->AsNumber(),
-				(*VertsJ)[I + 2]->AsNumber()));
+				(*VertsJ)[I + 2]->AsNumber());
+			if (bPivotToSail)
+			{
+				V -= SailPivot;
+			}
+			Vertices.Add(V);
 		}
 
 		Triangles.Reserve(IdxJ->Num());
@@ -254,9 +305,6 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 			}
 		}
 
-		FString SectionName;
-		M->TryGetStringField(TEXT("name"), SectionName);
-		const bool bIsSail = SectionName.Contains(TEXT("sail"), ESearchCase::IgnoreCase);
 		const bool bIsKeel = SectionName.Contains(TEXT("keel"), ESearchCase::IgnoreCase)
 			|| SectionName.Contains(TEXT("rudder"), ESearchCase::IgnoreCase);
 		const bool bIsWindow = SectionName.Contains(TEXT("window"), ESearchCase::IgnoreCase);
@@ -329,34 +377,50 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		Tangents.Init(FProcMeshTangent(1.f, 0.f, 0.f), Vertices.Num());
 
 		// Collision on hull only (not sails / windows)
-		const bool bCollision = bIsHull || (Section == 0 && SectionName.IsEmpty());
-		Mesh->CreateMeshSection_LinearColor(
-			Section, Vertices, Triangles, Normals, UV0, Colors, Tangents, bCollision);
+		const bool bCollision = (Target == HullOrCombinedMesh)
+			&& (bIsHull || (HullSection == 0 && SectionName.IsEmpty()));
+		const int32 SectionIdx = *SectionCounter;
+		Target->CreateMeshSection_LinearColor(
+			SectionIdx, Vertices, Triangles, Normals, UV0, Colors, Tangents, bCollision);
 
 		if (BaseMat)
 		{
-			UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(BaseMat, Mesh);
+			UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(BaseMat, Target);
 			if (Mid)
 			{
 				// BasicShapeMaterial primarily uses Color
 				Mid->SetVectorParameterValue(TEXT("Color"), Col);
 				Mid->SetVectorParameterValue(TEXT("BaseColor"), Col);
-				Mesh->SetMaterial(Section, Mid);
+				Target->SetMaterial(SectionIdx, Mid);
 			}
 		}
 
-		++Section;
+		++(*SectionCounter);
+		++TotalSections;
+	}
+
+	if (MainSailMesh && MainSection > 0)
+	{
+		MainSailMesh->SetRelativeLocation(SailPivot);
+		MainSailMesh->SetRelativeRotation(FRotator::ZeroRotator);
+	}
+	if (JibSailMesh && JibSection > 0)
+	{
+		JibSailMesh->SetRelativeLocation(SailPivot);
+		JibSailMesh->SetRelativeRotation(FRotator::ZeroRotator);
 	}
 
 	if (OutResult)
 	{
-		OutResult->bOk = Section > 0;
-		OutResult->SectionCount = Section;
+		OutResult->bOk = TotalSections > 0;
+		OutResult->SectionCount = TotalSections;
 		OutResult->Sailing = Sailing;
 		OutResult->Spars = Spars;
 		OutResult->ResolvedPath = Path;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("BoatMeshFromJson: loaded %d sections from %s"), Section, *Path);
-	return Section > 0;
+	UE_LOG(LogTemp, Log,
+		TEXT("BoatMeshFromJson: loaded %d sections (hull=%d main=%d jib=%d) from %s"),
+		TotalSections, HullSection, MainSection, JibSection, *Path);
+	return TotalSections > 0;
 }
