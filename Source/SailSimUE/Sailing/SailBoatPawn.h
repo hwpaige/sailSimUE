@@ -129,31 +129,31 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float MaxWaterZSpeedCm = 140.f;
 
-	/** Soft buoyancy vertical spring (1/s-ish). */
+	/** Soft buoyancy vertical spring (higher = snappier ride on waves). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float BuoyancyStiffness = 6.0f;
+	float BuoyancyStiffness = 12.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float BuoyancyDamping = 4.0f;
+	float BuoyancyDamping = 5.5f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float WavePitchSmoothRate = 2.5f;
+	float WavePitchSmoothRate = 4.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float WaveRollSmoothRate = 2.0f;
+	float WaveRollSmoothRate = 3.5f;
 
 	/** How much wave slope adds to VPP heel (0 = pure VPP, 1 = full wave roll). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float WaveRollGain = 0.35f;
+	float WaveRollGain = 0.55f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float MaxWavePitchDeg = 10.f;
+	float MaxWavePitchDeg = 12.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float MaxWaveRollDeg = 8.f;
+	float MaxWaveRollDeg = 10.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Buoyancy")
-	float WaveSampleInterval = 0.08f;
+	float WaveSampleInterval = 0.05f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float HullLengthCm = 1050.f;

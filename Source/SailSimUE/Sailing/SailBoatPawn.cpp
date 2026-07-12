@@ -3,8 +3,6 @@
 #include "Sailing/BoatPresets.h"
 #include "Sailing/OceanHeightSample.h"
 #include "WaterZoneActor.h"
-#include "WaterBodyActor.h"
-#include "WaterBodyOceanActor.h"
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -295,33 +293,22 @@ void ASailBoatPawn::EnsureOceanCoverage()
 	for (TActorIterator<AWaterZone> It(World); It; ++It)
 	{
 		bAnyZone = true;
-		// Keep zone centered near boat so local tessellation covers the camera.
-		FVector ZLoc = It->GetActorLocation();
-		ZLoc.X = BoatLoc.X;
-		ZLoc.Y = BoatLoc.Y;
-		It->SetActorLocation(ZLoc, false, nullptr, ETeleportType::TeleportPhysics);
+		// Do NOT move Static WaterZone actors (engine warns; breaks tessellation).
+		// Only enlarge extent so the spawn point is covered while zone stays at origin.
 		const float Ext = FMath::Max(WaterZoneExtentCm, 500000.f);
-		It->SetZoneExtent(FVector2D(Ext, Ext));
-		It->MarkForRebuild(EWaterZoneRebuildFlags::All);
-		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: WaterZone '%s' centered (%.0f,%.0f) extent %.0f cm"),
-			*It->GetName(), ZLoc.X, ZLoc.Y, Ext);
+		const FVector2D Cur = It->GetZoneExtent();
+		if (Cur.X < Ext * 0.9f || Cur.Y < Ext * 0.9f)
+		{
+			It->SetZoneExtent(FVector2D(Ext, Ext));
+			It->MarkForRebuild(EWaterZoneRebuildFlags::All);
+		}
+		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: WaterZone '%s' at (%.0f,%.0f) extent (%.0f,%.0f) boat (%.0f,%.0f)"),
+			*It->GetName(), It->GetActorLocation().X, It->GetActorLocation().Y,
+			It->GetZoneExtent().X, It->GetZoneExtent().Y, BoatLoc.X, BoatLoc.Y);
 	}
 	if (!bAnyZone)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: no AWaterZone in level — ocean mesh will not render"));
-	}
-
-	// Nudge ocean bodies toward boat XY so collision/visuals stay relevant.
-	for (TActorIterator<AWaterBody> It(World); It; ++It)
-	{
-		FVector WLoc = It->GetActorLocation();
-		// Only re-center ocean (leave rivers/lakes if any)
-		if (It->IsA(AWaterBodyOcean::StaticClass()) || It->GetName().Contains(TEXT("Ocean")))
-		{
-			WLoc.X = BoatLoc.X;
-			WLoc.Y = BoatLoc.Y;
-			It->SetActorLocation(WLoc, false, nullptr, ETeleportType::TeleportPhysics);
-		}
 	}
 }
 
@@ -343,7 +330,14 @@ void ASailBoatPawn::BeginPlay()
 	if (SampleWaterSurface(Loc, Surf, Norm))
 	{
 		SmoothedWaterZ = Surf.Z;
-		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f"), Loc.X, Loc.Y, Surf.Z);
+		// Sample a second point to log whether wave height varies (buoyancy diagnostic)
+		FVector Surf2, Norm2;
+		const bool b2 = SampleWaterSurface(Loc + FVector(400.f, 0.f, 0.f), Surf2, Norm2);
+		UE_LOG(LogTemp, Log,
+			TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f  neighbor dZ=%.1f (waves %s)"),
+			Loc.X, Loc.Y, Surf.Z,
+			b2 ? (Surf2.Z - Surf.Z) : 0.f,
+			(b2 && FMath::Abs(Surf2.Z - Surf.Z) > 0.5f) ? TEXT("OK") : TEXT("flat/fallback"));
 	}
 	else
 	{
