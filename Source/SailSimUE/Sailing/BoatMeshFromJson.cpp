@@ -1,4 +1,5 @@
 #include "Sailing/BoatMeshFromJson.h"
+#include "SailSimUE.h"
 #include "ProceduralMeshComponent.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -45,19 +46,19 @@ namespace BoatMeshJsonPrivate
 	{
 		if (!FPaths::FileExists(Path))
 		{
-			UE_LOG(LogTemp, Error, TEXT("BoatMeshFromJson: missing %s"), *Path);
+			UE_LOG(LogSailSim, Error, TEXT("BoatMeshFromJson: missing %s"), *Path);
 			return false;
 		}
 		FString JsonStr;
 		if (!FFileHelper::LoadFileToString(JsonStr, *Path))
 		{
-			UE_LOG(LogTemp, Error, TEXT("BoatMeshFromJson: failed to read %s"), *Path);
+			UE_LOG(LogSailSim, Error, TEXT("BoatMeshFromJson: failed to read %s"), *Path);
 			return false;
 		}
 		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
 		if (!FJsonSerializer::Deserialize(Reader, OutRoot) || !OutRoot.IsValid())
 		{
-			UE_LOG(LogTemp, Error, TEXT("BoatMeshFromJson: JSON parse failed"));
+			UE_LOG(LogSailSim, Error, TEXT("BoatMeshFromJson: JSON parse failed"));
 			return false;
 		}
 		return true;
@@ -419,7 +420,7 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		OutResult->ResolvedPath = Path;
 	}
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogSailSim, Log,
 		TEXT("BoatMeshFromJson: loaded %d sections (hull=%d main=%d jib=%d) from %s"),
 		TotalSections, HullSection, MainSection, JibSection, *Path);
 	return TotalSections > 0;

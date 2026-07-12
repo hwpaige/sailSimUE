@@ -1,4 +1,5 @@
 #include "Sailing/BoatDynamics.h"
+#include "SailSimUE.h"
 #include "Math/UnrealMathUtility.h"
 
 void FBoatDynamics::InitJ105()
@@ -426,7 +427,7 @@ bool FBoatDynamics::RunGoldenSelfCheck(FString* OutReport)
 	const FString Report = FString::Printf(
 		TEXT("VPP golden TWS12 HDG185: SPD=%.2f kn (want 3.5–9.5) HEEL=%.1f° (want 5–32) %s"),
 		Spd, HeelAbs, bOk ? TEXT("PASS") : TEXT("FAIL"));
-	UE_LOG(LogTemp, Log, TEXT("%s"), *Report);
+	UE_LOG(LogSailSim, Log, TEXT("%s"), *Report);
 	if (OutReport) *OutReport = Report;
 	return bOk;
 }

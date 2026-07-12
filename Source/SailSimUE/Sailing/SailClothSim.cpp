@@ -1,4 +1,5 @@
 #include "Sailing/SailClothSim.h"
+#include "SailSimUE.h"
 #include "ProceduralMeshComponent.h"
 
 void FSailClothSim::Clear()
@@ -93,7 +94,7 @@ bool FSailClothSim::BuildFromMesh(UProceduralMeshComponent* Mesh, int32 Section)
 	}
 
 	bInitialized = Pos.Num() > 0 && Springs.Num() > 0;
-	UE_LOG(LogTemp, Log, TEXT("SailClothSim: %d verts, %d springs, clew=%d"),
+	UE_LOG(LogSailSim, Log, TEXT("SailClothSim: %d verts, %d springs, clew=%d"),
 		Pos.Num(), Springs.Num(), ClewIndex);
 	return bInitialized;
 }

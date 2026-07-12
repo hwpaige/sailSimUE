@@ -192,9 +192,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
-	/** Expand WaterZone so ocean mesh covers the boat at runtime. */
+	/** Diagnostic only: log water zone presence (never moves/resizes Static water actors). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	bool bEnsureOceanCoverage = true;
+	bool bEnsureOceanCoverage = false;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float WaterZoneExtentCm = 2000000.f;

@@ -2,6 +2,7 @@
 #include "Sailing/BoatMeshFromJson.h"
 #include "Sailing/BoatPresets.h"
 #include "Sailing/OceanHeightSample.h"
+#include "SailSimUE.h"
 #include "WaterZoneActor.h"
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
@@ -150,7 +151,7 @@ void ASailBoatPawn::ApplyCachedSailingToDynamics()
 	{
 		HullBeamCm = S.BeamFt * 30.48f;
 	}
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogSailSim, Log,
 		TEXT("SailBoatPawn: dynamics from JSON disp=%.0f lb SA=%.0f LOA=%.1f ft"),
 		S.DispLb, S.SaTotal, S.LoaFt);
 }
@@ -197,7 +198,7 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 	{
 		bLoftMeshLoaded = false;
 		LoadedLoftPath.Reset();
-		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: loft JSON failed (%s) — no hull mesh"), *Path);
+		UE_LOG(LogSailSim, Warning, TEXT("SailBoatPawn: loft JSON failed (%s) — no hull mesh"), *Path);
 		return;
 	}
 
@@ -284,31 +285,30 @@ void ASailBoatPawn::EnsureOpenWaterSpawn()
 
 void ASailBoatPawn::EnsureOceanCoverage()
 {
+	// Intentionally a no-op at runtime.
+	// Moving / resizing Static WaterZone or Ocean components at PIE spams
+	// "Mobility has to be 'Movable'" and can break tessellation. Zone extent
+	// was enlarged in the map (see PLAN.md); boat spawns near origin so it
+	// is already covered. Enable only for diagnostics if debugging water.
 	if (!bEnsureOceanCoverage) return;
+	// Optional one-shot presence check (no actor mutation).
+	static bool bLoggedOnce = false;
+	if (bLoggedOnce) return;
+	bLoggedOnce = true;
 	UWorld* World = GetWorld();
 	if (!World) return;
-
-	const FVector BoatLoc = GetActorLocation();
-	bool bAnyZone = false;
+	int32 Zones = 0;
 	for (TActorIterator<AWaterZone> It(World); It; ++It)
 	{
-		bAnyZone = true;
-		// Do NOT move Static WaterZone actors (engine warns; breaks tessellation).
-		// Only enlarge extent so the spawn point is covered while zone stays at origin.
-		const float Ext = FMath::Max(WaterZoneExtentCm, 500000.f);
-		const FVector2D Cur = It->GetZoneExtent();
-		if (Cur.X < Ext * 0.9f || Cur.Y < Ext * 0.9f)
-		{
-			It->SetZoneExtent(FVector2D(Ext, Ext));
-			It->MarkForRebuild(EWaterZoneRebuildFlags::All);
-		}
-		UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: WaterZone '%s' at (%.0f,%.0f) extent (%.0f,%.0f) boat (%.0f,%.0f)"),
-			*It->GetName(), It->GetActorLocation().X, It->GetActorLocation().Y,
-			It->GetZoneExtent().X, It->GetZoneExtent().Y, BoatLoc.X, BoatLoc.Y);
+		++Zones;
 	}
-	if (!bAnyZone)
+	if (Zones == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: no AWaterZone in level — ocean mesh will not render"));
+		UE_LOG(LogSailSim, Warning, TEXT("No AWaterZone in level — ocean mesh will not render"));
+	}
+	else
+	{
+		UE_LOG(LogSailSim, Verbose, TEXT("WaterZone present (%d) — not mutating (Static mobility)"), Zones);
 	}
 }
 
@@ -333,7 +333,7 @@ void ASailBoatPawn::BeginPlay()
 		// Sample a second point to log whether wave height varies (buoyancy diagnostic)
 		FVector Surf2, Norm2;
 		const bool b2 = SampleWaterSurface(Loc + FVector(400.f, 0.f, 0.f), Surf2, Norm2);
-		UE_LOG(LogTemp, Log,
+		UE_LOG(LogSailSim, Log,
 			TEXT("SailBoatPawn: water at XY(%.0f,%.0f) Z=%.1f  neighbor dZ=%.1f (waves %s)"),
 			Loc.X, Loc.Y, Surf.Z,
 			b2 ? (Surf2.Z - Surf.Z) : 0.f,
@@ -342,7 +342,7 @@ void ASailBoatPawn::BeginPlay()
 	else
 	{
 		SmoothedWaterZ = WaterSurfaceZ;
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogSailSim, Warning,
 			TEXT("SailBoatPawn: NO water surface at XY(%.0f,%.0f) — floating at Z=%.1f (void risk)"),
 			Loc.X, Loc.Y, SmoothedWaterZ);
 	}
@@ -660,7 +660,7 @@ bool ASailBoatPawn::SetBoatPreset(const FString& PresetId)
 	const FBoatPreset* P = FBoatPresets::Find(PresetId);
 	if (!P)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SailBoatPawn: unknown preset '%s'"), *PresetId);
+		UE_LOG(LogSailSim, Warning, TEXT("SailBoatPawn: unknown preset '%s'"), *PresetId);
 		return false;
 	}
 	ActivePresetId = P->Id;
@@ -669,7 +669,7 @@ bool ASailBoatPawn::SetBoatPreset(const FString& PresetId)
 	bLoftMeshLoaded = false;
 	LoadedLoftPath.Reset();
 	LoadLoftMesh(/*bApplyDynamics*/ true);
-	UE_LOG(LogTemp, Log, TEXT("SailBoatPawn: switched preset to %s (%s)"), *P->DisplayName, *P->JsonRelativePath);
+	UE_LOG(LogSailSim, Log, TEXT("SailBoatPawn: switched preset to %s (%s)"), *P->DisplayName, *P->JsonRelativePath);
 	return bLoftMeshLoaded;
 }
 
@@ -705,8 +705,7 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 		EnsureOpenWaterSpawn();
 		if (StartupSkipFrames == 2)
 		{
-			// Once after first relocate — re-center WaterZone on boat
-			EnsureOceanCoverage();
+			EnsureOceanCoverage(); // diagnostic only when enabled
 		}
 		FVector Loc = GetActorLocation();
 		FVector Surf, Norm;
