@@ -12,6 +12,7 @@ class USpringArmComponent;
 class UCameraComponent;
 class USceneComponent;
 class UProceduralMeshComponent;
+class UBoxComponent;
 
 /**
  * J/105 from sail_geom.boat3d (procedural mesh) + FBoatDynamics 3-DOF VPP.
@@ -97,7 +98,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> BoatRoot;
 
-	/** Lofted hull/deck/cabin (sails are separate so they can sheet). */
+	/** Lofted hull/deck/cabin (sails are separate so they can sheet). Visual only. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UProceduralMeshComponent> LoftMesh;
 
@@ -106,6 +107,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UProceduralMeshComponent> JibSailMesh;
+
+	/** Simple hull collider (avoids Chaos bad-tri complex mesh from loft). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> HullCollision;
 
 	/** Mast cylinder (JSON only has endpoints). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -255,10 +260,12 @@ protected:
 
 	/** Load procedural loft (+ spars). bApplyDynamics: wire sailing params into VPP. */
 	void LoadLoftMesh(bool bApplyDynamics = false);
+	void UpdateHullCollisionFromMesh();
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
 	void ApplyCachedSailingToDynamics();
 	void UpdateBoomFromSheet();
 	void UpdateSailCloth(float DeltaSeconds);
+	void ApplyClothForceToDynamics();
 	void EnsureOceanCoverage();
 	void ApplyOrbitToSpringArm();
 	void ApplyDynamicsToTransform(float DeltaSeconds);

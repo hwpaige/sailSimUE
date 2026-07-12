@@ -194,7 +194,8 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 	{
 		if (!Mesh) return;
 		Mesh->ClearAllMeshSections();
-		Mesh->bUseComplexAsSimpleCollision = true;
+		Mesh->bUseComplexAsSimpleCollision = false;
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Mesh->SetCastShadow(true);
 		Mesh->SetVisibility(true);
 		Mesh->SetHiddenInGame(false);
@@ -377,12 +378,12 @@ bool FBoatMeshFromJson::LoadIntoProceduralMesh(
 		Colors.Init(Col, Vertices.Num());
 		Tangents.Init(FProcMeshTangent(1.f, 0.f, 0.f), Vertices.Num());
 
-		// Collision on hull only (not sails / windows)
-		const bool bCollision = (Target == HullOrCombinedMesh)
-			&& (bIsHull || (HullSection == 0 && SectionName.IsEmpty()));
+		// Never cook complex collision from loft meshes:
+		// double-sided / near-degenerate grid tris produce Chaos "bad triangles" spam.
+		// SailBoatPawn uses a simple box collider instead.
 		const int32 SectionIdx = *SectionCounter;
 		Target->CreateMeshSection_LinearColor(
-			SectionIdx, Vertices, Triangles, Normals, UV0, Colors, Tangents, bCollision);
+			SectionIdx, Vertices, Triangles, Normals, UV0, Colors, Tangents, /*bCreateCollision*/ false);
 
 		if (BaseMat)
 		{

@@ -39,6 +39,10 @@ struct FSailClothSim
 	float WindForceScale = 18.f;
 	float SheetPullScale = 0.35f; // how hard clew tracks boom tip
 
+	/** 0..1 cloth fill / sheet-shape quality (updated each Step). */
+	float LastFillQuality = 0.75f;
+	float LastCamberCm = 0.f;
+
 	bool BuildFromMesh(UProceduralMeshComponent* Mesh, int32 Section = 0);
 	void Clear();
 	void Step(
@@ -48,4 +52,7 @@ struct FSailClothSim
 		const FVector& ClewTargetLocal, // boom tip in sail component space
 		float SheetEase01);
 	void PushToMesh(UProceduralMeshComponent* Mesh) const;
+
+	/** Refresh LastFillQuality / LastCamberCm from current particle state. */
+	void MeasureShape();
 };

@@ -44,17 +44,26 @@ bool FSailClothSim::BuildFromMesh(UProceduralMeshComponent* Mesh, int32 Section)
 		MaxX = FMath::Max(MaxX, P.X);
 	}
 
-	// Pin luff: near mast edge in sail-pivot space (forward/low-X band)
+	float MinZ = TNumericLimits<float>::Max();
+	float MaxZ = TNumericLimits<float>::Lowest();
+	for (int32 I = 0; I < N; ++I)
+	{
+		MinZ = FMath::Min(MinZ, Pos[I].Z);
+		MaxZ = FMath::Max(MaxZ, Pos[I].Z);
+	}
+
+	// Pin luff (mast edge) + head (top band) so sail doesn't slide up the mast
 	const float LuffBand = FMath::Max(8.f, (MaxX - MinX) * 0.08f);
+	const float HeadBand = FMath::Max(12.f, (MaxZ - MinZ) * 0.06f);
 	int32 ClewCandidate = 0;
 	float BestClewScore = -TNumericLimits<float>::Max();
 	for (int32 I = 0; I < N; ++I)
 	{
-		if (Pos[I].X <= MinX + LuffBand)
+		if (Pos[I].X <= MinX + LuffBand || Pos[I].Z >= MaxZ - HeadBand)
 		{
 			bPinned[I] = 1;
 		}
-		const float Score = -Pos[I].X + FMath::Abs(Pos[I].Y) * 0.35f;
+		const float Score = -Pos[I].X + FMath::Abs(Pos[I].Y) * 0.35f - Pos[I].Z * 0.05f;
 		if (Score > BestClewScore && !bPinned[I])
 		{
 			BestClewScore = Score;
@@ -160,6 +169,37 @@ void FSailClothSim::Step(
 			Pos[ClewIndex] = FMath::Lerp(Pos[ClewIndex], ClewTargetLocal, Pull);
 		}
 	}
+
+	MeasureShape();
+}
+
+void FSailClothSim::MeasureShape()
+{
+	if (!bInitialized || Pos.Num() == 0)
+	{
+		LastFillQuality = 0.75f;
+		LastCamberCm = 0.f;
+		return;
+	}
+
+	float CamberSum = 0.f;
+	int32 Free = 0;
+	for (int32 I = 0; I < Pos.Num(); ++I)
+	{
+		if (bPinned[I]) continue;
+		// Lateral fill vs rest (camber proxy)
+		CamberSum += FMath::Abs(Pos[I].Y - Rest[I].Y);
+		++Free;
+	}
+	LastCamberCm = (Free > 0) ? (CamberSum / Free) : 0.f;
+
+	// Healthy working camber ~5–40 cm mean |Y| offset; too flat or thrashing → lower quality
+	const float Ideal = 18.f;
+	const float Err = FMath::Abs(LastCamberCm - Ideal) / Ideal;
+	LastFillQuality = FMath::Clamp(1.f - 0.55f * Err, 0.35f, 1.1f);
+
+	// Clew distance from target is handled via sheet; soft-clamp quality
+	LastFillQuality = FMath::Clamp(LastFillQuality, 0.3f, 1.15f);
 }
 
 void FSailClothSim::PushToMesh(UProceduralMeshComponent* Mesh) const

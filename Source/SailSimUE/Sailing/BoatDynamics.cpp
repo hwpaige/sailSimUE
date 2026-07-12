@@ -247,7 +247,7 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 		const float T = (AwaAbs - 28.f) / (50.f - 28.f);
 		const float Peak = FMath::Clamp(T, 0.f, 1.f);
 		const float Fall = FMath::Clamp(1.f - (AwaAbs - 90.f) / 90.f, 0.f, 1.f);
-		Cl = CFMax * Peak * Fall * SheetEff;
+		Cl = CFMax * Peak * Fall * SheetEff * FMath::Clamp(ClothForceScale, 0.3f, 1.25f);
 	}
 	// Air density slug/ft³ ~0.00237; convert kn→ft/s
 	const float Va = Aws * KnToFts;

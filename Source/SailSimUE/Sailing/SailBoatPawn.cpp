@@ -7,6 +7,7 @@
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -24,15 +25,12 @@ ASailBoatPawn::ASailBoatPawn()
 	BoatRoot = CreateDefaultSubobject<USceneComponent>(TEXT("BoatRoot"));
 	RootComponent = BoatRoot;
 
-	auto PrepLoft = [](UProceduralMeshComponent* Mesh, bool bCollision)
+	auto PrepLoft = [](UProceduralMeshComponent* Mesh)
 	{
 		if (!Mesh) return;
-		Mesh->bUseAsyncCooking = true;
-		Mesh->SetCollisionEnabled(bCollision ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
-		if (bCollision)
-		{
-			Mesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
-		}
+		Mesh->bUseAsyncCooking = false;
+		Mesh->bUseComplexAsSimpleCollision = false;
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Mesh->SetGenerateOverlapEvents(false);
 		Mesh->SetMobility(EComponentMobility::Movable);
 		Mesh->SetCastShadow(true);
@@ -42,15 +40,24 @@ ASailBoatPawn::ASailBoatPawn()
 
 	LoftMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("LoftMesh"));
 	LoftMesh->SetupAttachment(BoatRoot);
-	PrepLoft(LoftMesh, true);
+	PrepLoft(LoftMesh);
 
 	MainSailMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MainSailMesh"));
 	MainSailMesh->SetupAttachment(BoatRoot);
-	PrepLoft(MainSailMesh, false);
+	PrepLoft(MainSailMesh);
 
 	JibSailMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("JibSailMesh"));
 	JibSailMesh->SetupAttachment(BoatRoot);
-	PrepLoft(JibSailMesh, false);
+	PrepLoft(JibSailMesh);
+
+	HullCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("HullCollision"));
+	HullCollision->SetupAttachment(BoatRoot);
+	HullCollision->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	HullCollision->SetGenerateOverlapEvents(false);
+	HullCollision->SetBoxExtent(FVector(500.f, 160.f, 120.f));
+	HullCollision->SetRelativeLocation(FVector(0.f, 0.f, -40.f));
+	HullCollision->SetCanEverAffectNavigation(false);
 
 	MastMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mast"));
 	MastMesh->SetupAttachment(BoatRoot);
@@ -107,6 +114,49 @@ void ASailBoatPawn::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	StartupSkipFrames = 3;
+}
+
+void ASailBoatPawn::UpdateHullCollisionFromMesh()
+{
+	if (!HullCollision) return;
+
+	// Prefer LOA/beam from JSON dims when available; fall back to mesh bounds.
+	float HalfX = HullLengthCm * 0.48f;
+	float HalfY = HullBeamCm * 0.48f;
+	float HalfZ = FMath::Max(80.f, HullLengthCm * 0.08f);
+	FVector Center(0.f, 0.f, -HalfZ * 0.35f);
+
+	if (LoftMesh && LoftMesh->GetNumSections() > 0)
+	{
+		FBox Sphere(ForceInit);
+		bool bAny = false;
+		for (int32 S = 0; S < LoftMesh->GetNumSections(); ++S)
+		{
+			const FProcMeshSection* Sec = LoftMesh->GetProcMeshSection(S);
+			if (!Sec) continue;
+			for (const FProcMeshVertex& V : Sec->ProcVertexBuffer)
+			{
+				Sphere += V.Position;
+				bAny = true;
+			}
+		}
+		if (bAny)
+		{
+			const FVector Ext = Sphere.GetExtent();
+			HalfX = FMath::Max(Ext.X, 50.f);
+			HalfY = FMath::Max(Ext.Y, 30.f);
+			HalfZ = FMath::Max(Ext.Z * 0.55f, 40.f);
+			Center = Sphere.GetCenter();
+			// Keep box center near waterline (root), slightly below deck
+			Center.Z = FMath::Clamp(Center.Z * 0.35f, -HalfZ, 0.f);
+		}
+	}
+
+	HullCollision->SetBoxExtent(FVector(HalfX, HalfY, HalfZ));
+	HullCollision->SetRelativeLocation(Center);
+	HullCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	UE_LOG(LogSailSim, Log, TEXT("HullCollision box half-ext (%.0f, %.0f, %.0f) at Z=%.0f"),
+		HalfX, HalfY, HalfZ, Center.Z);
 }
 
 void ASailBoatPawn::PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B)
@@ -251,6 +301,7 @@ void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
 		if (MainSailMesh) MainCloth.BuildFromMesh(MainSailMesh, 0);
 		if (JibSailMesh) JibCloth.BuildFromMesh(JibSailMesh, 0);
 	}
+	UpdateHullCollisionFromMesh();
 
 	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color)
 	{
@@ -482,6 +533,35 @@ void ASailBoatPawn::UpdateBoomFromSheet()
 	}
 }
 
+void ASailBoatPawn::ApplyClothForceToDynamics()
+{
+	if (!bEnableSailCloth)
+	{
+		Dynamics.ClothForceScale = 1.f;
+		return;
+	}
+	float Q = 0.f;
+	int32 N = 0;
+	if (MainCloth.bInitialized)
+	{
+		Q += MainCloth.LastFillQuality * 0.6f;
+		++N;
+	}
+	if (JibCloth.bInitialized)
+	{
+		Q += JibCloth.LastFillQuality * 0.4f;
+		++N;
+	}
+	if (N == 0)
+	{
+		Dynamics.ClothForceScale = 1.f;
+		return;
+	}
+	// Main+jib weighted; if only one built, renormalize
+	const float W = (MainCloth.bInitialized ? 0.6f : 0.f) + (JibCloth.bInitialized ? 0.4f : 0.f);
+	Dynamics.ClothForceScale = (W > 0.f) ? (Q / W) : 1.f;
+}
+
 void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 {
 	if (!bEnableSailCloth) return;
@@ -531,6 +611,8 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 		JibCloth.Step(DeltaSeconds, WindLocal, Dynamics.GetApparentWindSpeedKn(), ClewLocal, Dynamics.SheetEase);
 		JibCloth.PushToMesh(JibSailMesh);
 	}
+
+	ApplyClothForceToDynamics();
 }
 
 void ASailBoatPawn::SampleMultiPointBuoyancy(

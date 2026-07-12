@@ -40,6 +40,11 @@ struct FBoatDynamics
 	bool bManualHelm = false;
 	/** 0 = sheeted hard, 1 = fully eased. Affects stub sail force until cloth measure lands. */
 	float SheetEase = 0.20f;
+	/**
+	 * Multiplier from live cloth shape (1 = nominal). Updated by SailBoatPawn when cloth runs.
+	 * Clamped in the force stub so a broken cloth measure can't explode the VPP.
+	 */
+	float ClothForceScale = 1.f;
 
 	// J/105 defaults (imperial)
 	float Xudot = 0.07f;
