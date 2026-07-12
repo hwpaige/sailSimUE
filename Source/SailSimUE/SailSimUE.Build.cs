@@ -18,7 +18,11 @@ public class SailSimUE : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
-			"Water"
+			"Water",
+			"ProceduralMeshComponent",
+			"Json",
+			"JsonUtilities",
+			"Landscape"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

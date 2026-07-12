@@ -4,6 +4,7 @@
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Landscape.h"
 
 ASailSimGameMode::ASailSimGameMode()
 {
@@ -18,8 +19,6 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	TArray<ASailBoatPawn*> ToDestroy;
 	for (TActorIterator<ASailBoatPawn> It(World); It; ++It)
 	{
-		// Level-placed actors exist before RestartPlayer; destroy them so we only
-		// have the pawn spawned for the player controller.
 		ToDestroy.Add(*It);
 	}
 	for (ASailBoatPawn* Boat : ToDestroy)
@@ -28,6 +27,14 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 		{
 			Boat->Destroy();
 		}
+	}
+
+	// Default water-brush landscape island at origin: hide in game so we don't
+	// look like we're "on land" even when floated offshore.
+	for (TActorIterator<ALandscape> It(World); It; ++It)
+	{
+		It->SetActorHiddenInGame(true);
+		It->SetActorEnableCollision(false);
 	}
 }
 

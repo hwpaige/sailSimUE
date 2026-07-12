@@ -9,11 +9,11 @@ class UStaticMeshComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class USceneComponent;
+class UProceduralMeshComponent;
 
 /**
- * Placeholder keelboat (primitive rig) driven by FBoatDynamics (J/105 3-DOF VPP).
- * Root is at waterline; hull hangs partly below. Spawned by GameMode only (no AutoPossess)
- * to avoid double-boat glitches when a boat is also placed in the level.
+ * J/105 from sail_geom.boat3d (procedural mesh) + FBoatDynamics 3-DOF VPP.
+ * Root at waterline; open-water spawn away from default landscape island.
  */
 UCLASS()
 class SAILSIMUE_API ASailBoatPawn : public APawn
@@ -47,26 +47,16 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> BoatRoot;
 
+	/** Lofted hull/deck/cabin/sails from Content/Data/j105_boat3d.json */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> HullMesh;
+	TObjectPtr<UProceduralMeshComponent> LoftMesh;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> CabinMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> KeelMesh;
-
+	/** Mast cylinder (JSON only has endpoints). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> MastMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BoomMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> MainSailMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> JibSailMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USpringArmComponent> SpringArm;
@@ -77,21 +67,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float WaterSurfaceZ = 0.f;
 
-	/** Root (waterline) above sampled water (cm). */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float WaterlineOffsetCm = 5.f;
+	float WaterlineOffsetCm = 4.f;
 
-	/** Max water-height change rate (cm/s) — kills float jitter. */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float MaxWaterZSpeedCm = 120.f;
+	float MaxWaterZSpeedCm = 100.f;
 
-	/** Pitch blend rate (1/s). Lower = calmer. */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float PitchSmoothRate = 2.5f;
+	float PitchSmoothRate = 2.0f;
 
-	/** How often to re-sample bow/stern for pitch (seconds). */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float WavePitchSampleInterval = 0.1f;
+	float WavePitchSampleInterval = 0.12f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float HullLengthCm = 1050.f;
@@ -99,11 +85,16 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	bool bSampleWavePitch = true;
 
-	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float OriginIslandRadiusCm = 25000.f;
+	/** Content-relative path to boat3d export. */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
+	FString BoatJsonRelativePath = TEXT("Data/j105_boat3d.json");
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(80000.f, 0.f);
+	float OriginIslandRadiusCm = 80000.f;
+
+	/** Far from water-brush island (~2 km NE of origin). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	FVector2D OpenWaterSpawnXY = FVector2D(200000.f, 150000.f);
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
@@ -115,9 +106,9 @@ protected:
 	float WavePitchSampleTimer = 0.f;
 	float CachedWavePitch = 0.f;
 	bool bFloatInit = false;
-	bool bDynamicsReady = false;
-	int32 StartupSkipFrames = 2;
+	int32 StartupSkipFrames = 3;
 
+	void LoadLoftMesh();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
