@@ -1,0 +1,56 @@
+# SailSimUE — Port Plan (working doc)
+
+**Owner:** Claude Code, driving the Unreal editor over MCP (`unreal` server, `http://127.0.0.1:8765/mcp`).
+**Derived from:** the Grok "Port SailSim to Unreal Engine 5" plan. That plan is the strategic reference; this file is what we execute against day-to-day and supersedes `../sail-sim/unreal-port/PROGRESS.md` going forward.
+**Last grounded against the live editor:** 2026-07-11 (map `/Game/Maps/SailSim_Ocean`).
+
+## North star
+
+Port the browser SailSim (Angular UI + FastAPI numpy loft + ~12k-line Three.js/WebGPU runtime + commercial `water-pro` FFT ocean) to a native **UE5** app, for the frame budget and native systems. Feature parity with better frame time — Unreal-native systems where they beat a 1:1 JS port.
+
+### Load-bearing decisions (carried from Grok, still in force)
+- **Do not port `threejs-water-pro` shaders/source into this repo.** Rebuild the ocean with UE-native FFT (plugin or custom Tessendorf); keep water-pro only as the visual/feature **bar**. License + rewrite risk.
+- **C++ for dynamics & loft**, Blueprint/UMG for designer UI.
+- **SI meters** in UE (1 uu = 1 cm); convert web presets from feet once. (Dynamics internals stay in the web model's imperial units, converted at the boundary — see `BoatDynamics.h`.)
+- Physics source of truth: `../sail-sim/frontend/public/webgl-utils.sailing.js` (`hBoat`, cloth) + `../sail-sim/backend/sail_geom.py`.
+- Keep the Python loft as a **golden oracle** (regression JSON) until C++ parity is proven.
+
+## Current state (verified in-editor, not just from the tracker)
+
+Phases 0–1 done (bootstrap, MCP). **Phase 2 vertical slice is essentially complete** — confirmed live:
+- `ASailBoatPawn` renders a **procedural J/105 loft** (hull + deck + cabin + main + jib + mast + boom) from `Content/Data/j105_boat3d.json`, visible in-editor via `OnConstruction`.
+- `FBoatDynamics` — Fossen-style 3-DOF VPP (`u,v,r` + heel), J/105 imperial defaults, apparent-wind, **sheet-ease** stub sail force; JSON `sailing`/`dims_ft` applied at BeginPlay.
+- Controls: A/D helm, W/S sheet (boom swings), orbit spring-arm camera (RMB), water-surface float sampling, open-water spawn (forces XY ~2 km offshore, hides landscape island in game), on-screen debug HUD (speed/heel/heading/sheet%).
+- Scene: single `SailBoatPawn` (dedupe worked), `WaterBodyOcean` + `WaterZone`, Nantucket-ish `Landscape` (WP, 8×8 streaming proxies + HLOD), `PlayerStart`, `WorldPartitionMiniMap`.
+- Build `SailSimUEEditor` (Mac Development) succeeded at last session.
+
+### Issues found while grounding (fix these before "P2.5 verified")
+1. ✅ **FIXED (2026-07-11).** Duplicate environment actors → engine warned "multiple directional lights competing for forward shading." The env had been placed ~3× (**3 DirectionalLights, 3 SkyAtmospheres, 3 SkyLights, 2 ExponentialHeightFogs**). Deleted the 7 duplicates via MCP, kept one coherent set, `save_assets`. Verified: warning gone, exposure coherent (soft dusk), git shows exactly 7 external-actor deletions.
+2. **In-flight uncommitted work** in the tree from the prior session: `Source/SailSimUE/Sailing/SailBoatPawn.cpp/.h` modified, plus one map external-actor `.uasset`. Review + commit before layering new changes so history stays clean. (Task 2.)
+3. Cosmetic: the pawn's **editor** placement sits near origin on the checkerboard (no water there); harmless because BeginPlay teleports it to open water. Optionally move the editor placement onto the ocean for a nicer non-play view.
+
+## Immediate backlog (execution queue)
+
+| # | Task | Where | Risk | Verify |
+|---|------|-------|------|--------|
+| 1 | ✅ **DONE** — Env dedup: deleted 7 duplicate DirectionalLight/SkyAtmosphere/SkyLight/Fog actors, kept one coherent set, saved | MCP (map) | done | ✅ warning gone, exposure clean, 7 external-actors removed |
+| 2 | Review + commit in-flight `SailBoatPawn.cpp/.h` + this session's `.mcp.json` / config INIs | git | low | `git status` clean; editor build OK |
+| 3 | **P3 materials** — cream two-sided sail + brighter hull master/instances (currently set in C++) | `BoatMeshFromJson.cpp` | med (recompile) | Viewport: sails read cream, no normal cancel |
+| 4 | **P3 HUD** — replace `DrawHud` debug text with a UMG widget (speed/heel/heading/AWA/sheet) | UMG + C++ bind | med | PIE: widget shows live values |
+| 5 | **P2.5 sign-off** — PIE feel check: A/D helm, W/S sheet, speed builds under wind, heel responds, no NaNs, ~60 FPS | PIE | low | drive inputs, read HUD/log |
+| 6 | Dynamics calibration — steady-state speed/leeway/heel vs web + `tools/j105-*-calibrate.mjs` (~10% band) | C++ + oracle | med | golden compare |
+
+## Roadmap after the vertical slice (from Grok, condensed)
+
+- **P3 — Generative boat builder:** port `sail_geom.py` loft → `SailCore` C++; rebuild meshes on spec change; Python golden JSON regression; presets J/105, Endeavour, Melges 24, Cruiser 36; Plans tab.
+- **P4 — Cloth + trim + sail materials:** main/jib grids from loft; fabric/shear/bend/batten/sheet/vang/outhaul constraints; live API matching `SailEngineService`; auto-trim. GPU cloth if viable, else C++ solver + LOD.
+- **P5 — Ocean (FFT), sea state, FX:** decision gate — production FFT plugin (default) vs custom Tessendorf; `IOceanHeightSample` abstraction over the heightfield; sea-mood data assets; Niagara wake/spray/foam/rain; underwater state; quality tiers. **water-pro = checklist only.**
+- **P6 — Nantucket nav world:** offline DEM/chart/structure pipeline → Landscape/WP/Nanite; port `nav-geo.js`; UMG chart minimap, waypoints, autopilot hdg/awa/nav.
+- **P7 — Full UI / audio / polish:** UMG = all Angular control sections; MetaSounds moods; SaveGame; macOS packaging; scalability tiers Low/Med/High/Ultra.
+
+## How we work
+- **MCP-first:** drive the editor via the `unreal` server; write C++/config to disk; recompile via editor Live Coding / build.
+- **Verify visually:** `CaptureViewport` for editor look; `StartPIE` + capture + log read for behavior. Don't mark a step done on "build succeeded" alone.
+- **Ask the user only for:** credentials, GUI-only actions MCP can't do, genuine design choices, and final feel/look verification.
+- **Never** copy `threejs-water-pro/src` into this repo.
+- Keep this file current: check tasks off, append findings.
