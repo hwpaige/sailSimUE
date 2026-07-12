@@ -11,4 +11,12 @@ class SAILSIMUE_API ASailSimGameMode : public AGameModeBase
 
 public:
 	ASailSimGameMode();
+
+	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
+	virtual void RestartPlayer(AController* NewPlayer) override;
+
+protected:
+	/** Strip level-placed boats so only the GameMode-spawned pawn remains (avoids double boats in PIE). */
+	void DestroyLevelPlacedBoats();
 };

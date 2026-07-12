@@ -11,15 +11,18 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "WaterBodyActor.h"
 #include "WaterBodyComponent.h"
+#include "GameFramework/Controller.h"
 
 ASailBoatPawn::ASailBoatPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	// GameMode spawns + possesses. Level-placed boats must NOT auto-possess or
+	// PIE gets two boats (very glitchy).
+	AutoPossessPlayer = EAutoReceiveInput::Disabled;
 
 	BoatRoot = CreateDefaultSubobject<USceneComponent>(TEXT("BoatRoot"));
 	RootComponent = BoatRoot;
 
-	// Meshes filled in constructor via BuildBoatMeshes-equivalent inline
 	HullMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Hull"));
 	HullMesh->SetupAttachment(BoatRoot);
 	CabinMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Cabin"));
@@ -52,6 +55,8 @@ ASailBoatPawn::ASailBoatPawn()
 		{
 			Comp->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 		}
+		// Avoid physics push from water/landscape
+		Comp->SetGenerateOverlapEvents(false);
 		Comp->SetCastShadow(true);
 		if (BaseMat)
 		{
@@ -67,58 +72,56 @@ ASailBoatPawn::ASailBoatPawn()
 	SetupMesh(MainSailMesh, Cube, false);
 	SetupMesh(JibSailMesh, Cube, false);
 
-	// Relative layout: root = waterline / CG; +X bow
-	// Engine cube = 100cm; cylinder = 100cm tall, 100cm diameter
 	const float Loa = 1050.f;
 	const float Beam = 340.f;
-	const float HullDepth = 120.f; // freeboard+draft visual
-	// Hull: center slightly below waterline so bottom is immersed
+	const float HullDepth = 120.f;
 	HullMesh->SetRelativeLocation(FVector(0.f, 0.f, -HullDepth * 0.25f));
 	HullMesh->SetRelativeScale3D(FVector(Loa / 100.f, Beam / 100.f, HullDepth / 100.f));
 
-	// Cabin trunk (cockpit house)
 	CabinMesh->SetRelativeLocation(FVector(-80.f, 0.f, 55.f));
 	CabinMesh->SetRelativeScale3D(FVector(3.2f, 2.4f, 0.9f));
 
-	// Fin keel
 	KeelMesh->SetRelativeLocation(FVector(-40.f, 0.f, -HullDepth * 0.25f - 100.f));
 	KeelMesh->SetRelativeScale3D(FVector(1.8f, 0.12f, 2.0f));
 
-	// Mast ~14 m above deck
 	const float MastH = 1400.f;
 	MastMesh->SetRelativeLocation(FVector(-50.f, 0.f, MastH * 0.5f + 40.f));
 	MastMesh->SetRelativeScale3D(FVector(0.18f, 0.18f, MastH / 100.f));
 
-	// Boom
 	BoomMesh->SetRelativeLocation(FVector(200.f, 0.f, 90.f));
-	BoomMesh->SetRelativeRotation(FRotator(0.f, 0.f, 90.f)); // lay along X
+	BoomMesh->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
 	BoomMesh->SetRelativeScale3D(FVector(0.12f, 0.12f, 4.5f));
 
-	// Mainsail: thin plane on starboard-ish of mast (visual only)
 	MainSailMesh->SetRelativeLocation(FVector(180.f, 15.f, 700.f));
 	MainSailMesh->SetRelativeScale3D(FVector(4.0f, 0.04f, 11.0f));
 
-	// Jib forward of mast
 	JibSailMesh->SetRelativeLocation(FVector(280.f, -12.f, 550.f));
 	JibSailMesh->SetRelativeRotation(FRotator(0.f, 12.f, 0.f));
 	JibSailMesh->SetRelativeScale3D(FVector(2.8f, 0.035f, 8.5f));
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(BoatRoot);
-	SpringArm->TargetArmLength = 2800.f;
+	SpringArm->TargetArmLength = 2600.f;
 	SpringArm->bUsePawnControlRotation = false;
 	SpringArm->bDoCollisionTest = false;
+	// Mild lag only — heavy lag + water Z felt rubbery/glitchy
 	SpringArm->bEnableCameraLag = true;
-	SpringArm->CameraLagSpeed = 3.f;
+	SpringArm->CameraLagSpeed = 8.f;
 	SpringArm->bEnableCameraRotationLag = true;
-	SpringArm->CameraRotationLagSpeed = 4.f;
+	SpringArm->CameraRotationLagSpeed = 10.f;
 	SpringArm->SetRelativeRotation(FRotator(-14.f, 0.f, 0.f));
 	SpringArm->SetRelativeLocation(FVector(0.f, 0.f, 220.f));
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+}
 
-	AutoPossessPlayer = EAutoReceiveInput::Player0;
+void ASailBoatPawn::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	// Ensure only the possessed boat runs dynamics/HUD
+	bDynamicsReady = true;
+	StartupSkipFrames = 2;
 }
 
 void ASailBoatPawn::EnsureOpenWaterSpawn()
@@ -129,7 +132,7 @@ void ASailBoatPawn::EnsureOpenWaterSpawn()
 	{
 		Loc.X = OpenWaterSpawnXY.X;
 		Loc.Y = OpenWaterSpawnXY.Y;
-		SetActorLocation(Loc);
+		SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 
@@ -137,8 +140,9 @@ void ASailBoatPawn::BeginPlay()
 {
 	Super::BeginPlay();
 	Dynamics.InitJ105();
+	Dynamics.Heading = 90.f;
+	Dynamics.AutoTarget = Dynamics.Heading;
 
-	// Tint materials (hull white, sails off-white, spars dark)
 	auto Tint = [](UStaticMeshComponent* Comp, FLinearColor Color, float Metallic = 0.f, float Rough = 0.7f)
 	{
 		if (!Comp) return;
@@ -146,7 +150,6 @@ void ASailBoatPawn::BeginPlay()
 		if (!Base) return;
 		UMaterialInstanceDynamic* Mid = Comp->CreateAndSetMaterialInstanceDynamic(0);
 		if (!Mid) return;
-		// BasicShapeMaterial uses "Color" parameter on many engine builds
 		Mid->SetVectorParameterValue(TEXT("Color"), Color);
 		Mid->SetVectorParameterValue(TEXT("BaseColor"), Color);
 		Mid->SetScalarParameterValue(TEXT("Metallic"), Metallic);
@@ -159,6 +162,12 @@ void ASailBoatPawn::BeginPlay()
 	Tint(BoomMesh, FLinearColor(0.75f, 0.75f, 0.78f), 0.4f, 0.35f);
 	Tint(MainSailMesh, FLinearColor(0.96f, 0.96f, 0.94f), 0.f, 0.85f);
 	Tint(JibSailMesh, FLinearColor(0.96f, 0.96f, 0.94f), 0.f, 0.85f);
+
+	// Only the possessed pawn should force spawn / drive (level leftovers get destroyed by GameMode)
+	if (IsPlayerControlled() || HasAuthority())
+	{
+		// Delay open-water relocate until first ticks if not yet possessed
+	}
 
 	EnsureOpenWaterSpawn();
 
@@ -173,12 +182,11 @@ void ASailBoatPawn::BeginPlay()
 		SmoothedWaterZ = WaterSurfaceZ;
 	}
 	bFloatInit = true;
-	// Root sits at waterline (+ small freeboard offset)
 	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
-	SetActorLocation(Loc);
+	SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
 
-	Dynamics.Heading = 90.f;
-	Dynamics.AutoTarget = Dynamics.Heading;
+	// Dynamics only if we're the player boat (possessed this frame or next)
+	bDynamicsReady = IsPlayerControlled();
 }
 
 void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -220,7 +228,8 @@ bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurfa
 		return false;
 	}
 
-	const FVector Query(WorldXY.X, WorldXY.Y, FMath::Max(WorldXY.Z, 0.f) + 100000.f);
+	// Stable query height — don't chain off boat Z (that feedback-looped jitter)
+	const FVector Query(WorldXY.X, WorldXY.Y, 50000.f);
 	bool bAny = false;
 	float BestAbsDZ = TNumericLimits<float>::Max();
 	float BestDepth = 0.f;
@@ -228,15 +237,14 @@ bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurfa
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
 	{
 		UWaterBodyComponent* Comp = It->GetWaterBodyComponent();
-		if (!Comp)
-		{
-			continue;
-		}
+		if (!Comp) continue;
+
 		FVector Surf, Norm, Vel;
 		float Depth = 0.f;
-		if (Comp->GetWaterSurfaceInfoAtLocation(Query, Surf, Norm, Vel, Depth, true))
+		// Depth query off — cheaper/more stable for ocean float
+		if (Comp->GetWaterSurfaceInfoAtLocation(Query, Surf, Norm, Vel, Depth, false))
 		{
-			const float Dz = FMath::Abs(Surf.Z - WorldXY.Z);
+			const float Dz = FMath::Abs(Surf.Z - (bFloatInit ? SmoothedWaterZ : 0.f));
 			if (!bAny || Dz < BestAbsDZ)
 			{
 				BestAbsDZ = Dz;
@@ -257,8 +265,31 @@ bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurfa
 void ASailBoatPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	Dynamics.Update(DeltaSeconds);
-	ApplyDynamicsToTransform(DeltaSeconds);
+
+	// Unpossessed level leftovers: do nothing (GameMode should have destroyed them)
+	if (!IsPlayerControlled())
+	{
+		return;
+	}
+
+	if (StartupSkipFrames > 0)
+	{
+		--StartupSkipFrames;
+		// Still snap Z once so camera isn't wrong on first visible frame
+		FVector Loc = GetActorLocation();
+		FVector Surf, Norm;
+		if (SampleWaterSurface(Loc, Surf, Norm))
+		{
+			SmoothedWaterZ = Surf.Z;
+			Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
+			SetActorLocation(Loc, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		return;
+	}
+
+	const float Dt = FMath::Clamp(DeltaSeconds, 0.f, 1.f / 20.f); // avoid huge hitch steps
+	Dynamics.Update(Dt);
+	ApplyDynamicsToTransform(Dt);
 	DrawHud();
 }
 
@@ -278,63 +309,69 @@ void ASailBoatPawn::ApplyDynamicsToTransform(float DeltaSeconds)
 
 	const float HalfLoa = HullLengthCm * 0.45f;
 	FVector CenterSurf, CenterN;
-	float TargetZ = WaterSurfaceZ;
-	float WavePitch = 0.f;
+	float TargetZ = bFloatInit ? SmoothedWaterZ : WaterSurfaceZ;
 
 	if (SampleWaterSurface(Loc, CenterSurf, CenterN))
 	{
 		TargetZ = CenterSurf.Z;
-		if (bSampleWavePitch)
-		{
-			const FVector Fwd(CosH, SinH, 0.f);
-			FVector BowS, BowN, SternS, SternN;
-			if (SampleWaterSurface(Loc + Fwd * HalfLoa, BowS, BowN) &&
-				SampleWaterSurface(Loc - Fwd * HalfLoa, SternS, SternN))
-			{
-				const float DZ = BowS.Z - SternS.Z;
-				WavePitch = FMath::Clamp(
-					FMath::RadiansToDegrees(FMath::Atan2(DZ, HalfLoa * 2.f)),
-					-12.f, 12.f);
-			}
-		}
 	}
 
+	// Rate-limit water Z so wave sampling / API noise can't thrash the hull
 	if (!bFloatInit)
 	{
 		SmoothedWaterZ = TargetZ;
-		SmoothedPitch = WavePitch;
 		bFloatInit = true;
 	}
 	else
 	{
-		const float A = 1.f - FMath::Exp(-FloatSmoothRate * DeltaSeconds);
-		SmoothedWaterZ = FMath::Lerp(SmoothedWaterZ, TargetZ, A);
-		SmoothedPitch = FMath::Lerp(SmoothedPitch, WavePitch, A);
+		const float MaxStep = MaxWaterZSpeedCm * DeltaSeconds;
+		const float DeltaZ = FMath::Clamp(TargetZ - SmoothedWaterZ, -MaxStep, MaxStep);
+		SmoothedWaterZ += DeltaZ;
 	}
 
-	// Root = waterline
+	// Pitch sampling throttled
+	WavePitchSampleTimer -= DeltaSeconds;
+	if (bSampleWavePitch && WavePitchSampleTimer <= 0.f)
+	{
+		WavePitchSampleTimer = WavePitchSampleInterval;
+		const FVector Fwd(CosH, SinH, 0.f);
+		FVector BowS, BowN, SternS, SternN;
+		if (SampleWaterSurface(Loc + Fwd * HalfLoa, BowS, BowN) &&
+			SampleWaterSurface(Loc - Fwd * HalfLoa, SternS, SternN))
+		{
+			const float DZ = BowS.Z - SternS.Z;
+			CachedWavePitch = FMath::Clamp(
+				FMath::RadiansToDegrees(FMath::Atan2(DZ, HalfLoa * 2.f)),
+				-8.f, 8.f);
+		}
+	}
+	{
+		const float A = 1.f - FMath::Exp(-PitchSmoothRate * DeltaSeconds);
+		SmoothedPitch = FMath::Lerp(SmoothedPitch, CachedWavePitch, A);
+	}
+
 	Loc.Z = SmoothedWaterZ + WaterlineOffsetCm;
 
 	const FRotator Rot(SmoothedPitch, Yaw, Heel);
 	SetActorLocationAndRotation(Loc, Rot, false, nullptr, ETeleportType::None);
 
-	// Sheet main boom slightly with heel for a bit of life
+	// Soft boom ease (visual only)
 	if (BoomMesh)
 	{
-		const float BoomYaw = FMath::Clamp(Dynamics.Phi * 0.35f, -25.f, 25.f);
+		const float BoomYaw = FMath::Clamp(Dynamics.Phi * 0.3f, -20.f, 20.f);
 		BoomMesh->SetRelativeRotation(FRotator(0.f, BoomYaw, 90.f));
 		if (MainSailMesh)
 		{
-			MainSailMesh->SetRelativeRotation(FRotator(0.f, BoomYaw * 0.9f, 0.f));
+			MainSailMesh->SetRelativeRotation(FRotator(0.f, BoomYaw * 0.85f, 0.f));
 		}
 	}
 }
 
 void ASailBoatPawn::DrawHud() const
 {
-	if (!GEngine) return;
+	if (!GEngine || !IsPlayerControlled()) return;
 	const FString Line = FString::Printf(
-		TEXT("SPD %.1f kn   HEEL %.0f°   PITCH %.1f°   HDG %.0f°   RUD %.0f°   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   WL %.0f   %s"),
+		TEXT("SPD %.1f kn   HEEL %.0f°   PITCH %.1f°   HDG %.0f°   RUD %.0f°   AWA %.0f°   AWS %.1f   TWS %.0f@%.0f   %s"),
 		Dynamics.GetSpeedKnots(),
 		Dynamics.Phi,
 		SmoothedPitch,
@@ -344,9 +381,7 @@ void ASailBoatPawn::DrawHud() const
 		Dynamics.GetApparentWindSpeedKn(),
 		Dynamics.TrueWindSpeedKn,
 		Dynamics.TrueWindDirDeg,
-		SmoothedWaterZ + WaterlineOffsetCm,
 		Dynamics.bAutoHeading ? TEXT("AUTO") : TEXT("HELM"));
 	GEngine->AddOnScreenDebugMessage(1, 0.f, FColor::Cyan, Line);
-	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White,
-		TEXT("A/D helm | center=AUTO | primitive J/105 stand-in (hull+keel+mast+sails)"));
+	GEngine->AddOnScreenDebugMessage(2, 0.f, FColor::White, TEXT("A/D helm | center=AUTO"));
 }

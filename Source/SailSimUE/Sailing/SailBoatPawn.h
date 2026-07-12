@@ -12,7 +12,8 @@ class USceneComponent;
 
 /**
  * Placeholder keelboat (primitive rig) driven by FBoatDynamics (J/105 3-DOF VPP).
- * Root is at waterline; hull mesh hangs partly below. Heading 0° → +X, 90° → +Y.
+ * Root is at waterline; hull hangs partly below. Spawned by GameMode only (no AutoPossess)
+ * to avoid double-boat glitches when a boat is also placed in the level.
  */
 UCLASS()
 class SAILSIMUE_API ASailBoatPawn : public APawn
@@ -25,6 +26,7 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing")
 	void SetHelmInput(float StarboardPositive);
@@ -72,22 +74,25 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UCameraComponent> Camera;
 
-	/** Fallback water height (cm) if Water plugin query fails. */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float WaterSurfaceZ = 0.f;
 
-	/**
-	 * Height of actor root (waterline) above sampled water surface (cm).
-	 * Keep small so the hull (which extends below root) sits in the water.
-	 */
+	/** Root (waterline) above sampled water (cm). */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float WaterlineOffsetCm = 8.f;
+	float WaterlineOffsetCm = 5.f;
 
-	/** Vertical blend toward water surface (1/s). */
+	/** Max water-height change rate (cm/s) — kills float jitter. */
 	UPROPERTY(EditAnywhere, Category = "Sailing")
-	float FloatSmoothRate = 6.f;
+	float MaxWaterZSpeedCm = 120.f;
 
-	/** Visual LOA (J/105 ~10.5 m → 1050 cm). */
+	/** Pitch blend rate (1/s). Lower = calmer. */
+	UPROPERTY(EditAnywhere, Category = "Sailing")
+	float PitchSmoothRate = 2.5f;
+
+	/** How often to re-sample bow/stern for pitch (seconds). */
+	UPROPERTY(EditAnywhere, Category = "Sailing")
+	float WavePitchSampleInterval = 0.1f;
+
 	UPROPERTY(EditAnywhere, Category = "Sailing")
 	float HullLengthCm = 1050.f;
 
@@ -97,7 +102,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float OriginIslandRadiusCm = 25000.f;
 
-	/** Open-water spawn XY (cm). ~800 m east of origin island. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	FVector2D OpenWaterSpawnXY = FVector2D(80000.f, 0.f);
 
@@ -108,9 +112,12 @@ protected:
 	float HelmAxis = 0.f;
 	float SmoothedWaterZ = 0.f;
 	float SmoothedPitch = 0.f;
+	float WavePitchSampleTimer = 0.f;
+	float CachedWavePitch = 0.f;
 	bool bFloatInit = false;
+	bool bDynamicsReady = false;
+	int32 StartupSkipFrames = 2;
 
-	void BuildBoatMeshes();
 	void ApplyDynamicsToTransform(float DeltaSeconds);
 	void DrawHud() const;
 	void OnMoveRight(float Value);
