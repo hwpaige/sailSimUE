@@ -52,14 +52,19 @@ bool FSailClothSim::BuildFromMesh(UProceduralMeshComponent* Mesh, int32 Section)
 		MaxZ = FMath::Max(MaxZ, Pos[I].Z);
 	}
 
-	// Pin luff (mast edge) + head (top band) so sail doesn't slide up the mast
+	// Pin luff (mast), head (top), and foot near tack (low-Z + low-X band)
 	const float LuffBand = FMath::Max(8.f, (MaxX - MinX) * 0.08f);
 	const float HeadBand = FMath::Max(12.f, (MaxZ - MinZ) * 0.06f);
+	const float FootBand = FMath::Max(10.f, (MaxZ - MinZ) * 0.08f);
+	const float FootXBand = FMath::Max(15.f, (MaxX - MinX) * 0.12f);
 	int32 ClewCandidate = 0;
 	float BestClewScore = -TNumericLimits<float>::Max();
 	for (int32 I = 0; I < N; ++I)
 	{
-		if (Pos[I].X <= MinX + LuffBand || Pos[I].Z >= MaxZ - HeadBand)
+		const bool bLuff = Pos[I].X <= MinX + LuffBand;
+		const bool bHead = Pos[I].Z >= MaxZ - HeadBand;
+		const bool bFootTack = Pos[I].Z <= MinZ + FootBand && Pos[I].X <= MinX + FootXBand;
+		if (bLuff || bHead || bFootTack)
 		{
 			bPinned[I] = 1;
 		}

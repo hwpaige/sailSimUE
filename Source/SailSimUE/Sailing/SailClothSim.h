@@ -33,11 +33,11 @@ struct FSailClothSim
 	int32 ClewIndex = INDEX_NONE;
 
 	float GravityCm = -980.f;
-	float Damping = 0.992f;
-	float StructuralStiffness = 0.55f; // 0..1 constraint blend per iter
-	int32 ConstraintIters = 3;
-	float WindForceScale = 18.f;
-	float SheetPullScale = 0.35f; // how hard clew tracks boom tip
+	float Damping = 0.994f;
+	float StructuralStiffness = 0.72f; // 0..1 constraint blend per iter
+	int32 ConstraintIters = 5;
+	float WindForceScale = 16.f;
+	float SheetPullScale = 0.42f; // how hard clew tracks boom tip
 
 	/** 0..1 cloth fill / sheet-shape quality (updated each Step). */
 	float LastFillQuality = 0.75f;

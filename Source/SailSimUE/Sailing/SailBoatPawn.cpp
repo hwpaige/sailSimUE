@@ -214,31 +214,118 @@ void ASailBoatPawn::PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVe
 
 void ASailBoatPawn::ApplyCachedSailingToDynamics()
 {
-	if (!bApplyJsonSailingParams || !CachedSailingParams.bValid)
+	// Prefer ActiveSpec (catalog + live scales). Seed from JSON when available.
+	if (bApplyJsonSailingParams && CachedSailingParams.bValid)
 	{
-		return;
+		const FBoatJsonSailingParams& S = CachedSailingParams;
+		ActiveSpec.Loa = S.LoaFt > 0.f ? S.LoaFt : ActiveSpec.Loa;
+		ActiveSpec.Lwl = S.LwlFt > 0.f ? S.LwlFt : ActiveSpec.Lwl;
+		ActiveSpec.Beam = S.BeamFt > 0.f ? S.BeamFt : ActiveSpec.Beam;
+		ActiveSpec.Draft = S.DraftFt > 0.f ? S.DraftFt : ActiveSpec.Draft;
+		ActiveSpec.DispLb = S.DispLb > 0.f ? S.DispLb : ActiveSpec.DispLb;
+		ActiveSpec.BallastLb = S.BallastLb > 0.f ? S.BallastLb : ActiveSpec.BallastLb;
+		ActiveSpec.SailArea = S.SaTotal > 0.f ? S.SaTotal : ActiveSpec.SailArea;
 	}
-	const FBoatJsonSailingParams& S = CachedSailingParams;
+	ApplyActiveSpecToBoat();
+}
+
+void ASailBoatPawn::ApplyActiveSpecToBoat()
+{
+	const float Loa = ActiveSpec.EffectiveLoa();
+	const float Lwl = ActiveSpec.EffectiveLwl();
+	const float Beam = ActiveSpec.EffectiveBeam();
+	const float Draft = ActiveSpec.EffectiveDraft();
+	const float Disp = ActiveSpec.EffectiveDisp();
+	const float SA = ActiveSpec.EffectiveSail();
+	const float Ballast = ActiveSpec.BallastLb * ActiveSpec.ScaleLoa * ActiveSpec.ScaleBeam * ActiveSpec.ScaleDraft;
+	const float HullSpeed = 1.34f * FMath::Sqrt(FMath::Max(Lwl, 1.f));
+	const float MastTop = ActiveSpec.I * ActiveSpec.ScaleLoa;
+	const float LatArea = FMath::Max(20.f, Lwl * Draft * 0.85f);
+	const float KeelArea = FMath::Max(8.f, Draft * Beam * 0.35f);
+	const float KeelSpan = Draft * 0.9f;
+	const float RudArea = FMath::Max(2.f, KeelArea * 0.12f);
+	const float Tc = FMath::Max(0.5f, Draft * 0.18f);
+	const float Gm = FMath::Clamp(Beam * 0.38f, 3.5f, 6.5f);
+
+	const float PrevHdg = Dynamics.Heading;
+	const float PrevAuto = Dynamics.AutoTarget;
+	const bool bWasAuto = Dynamics.bAutoHeading;
+	const float PrevSheet = Dynamics.SheetEase;
+	const float PrevTws = Dynamics.TrueWindSpeedKn;
+	const float PrevTwd = Dynamics.TrueWindDirDeg;
+
 	Dynamics.ApplySailingParams(
-		S.DispLb, S.BallastLb, S.BeamFt, S.LwlFt,
-		S.DraftFt, S.TcFt, S.LateralArea, S.KeelArea,
-		S.RudderArea, S.KeelSpan, S.ClrX, S.ClrZ,
-		S.SaTotal, S.HullSpeedKn, S.GmFt,
-		S.LoaFt, S.MastTopFt);
-	Dynamics.Heading = 90.f;
-	Dynamics.AutoTarget = Dynamics.Heading;
-	if (S.LoaFt > 1.f)
+		Disp, Ballast, Beam, Lwl, Draft, Tc,
+		LatArea, KeelArea, RudArea, KeelSpan,
+		-1.f, -Draft * 0.45f, SA, HullSpeed, Gm,
+		Loa, MastTop);
+
+	Dynamics.Heading = PrevHdg > 0.f ? PrevHdg : 90.f;
+	Dynamics.AutoTarget = PrevAuto > 0.f ? PrevAuto : Dynamics.Heading;
+	Dynamics.bAutoHeading = bWasAuto;
+	Dynamics.SheetEase = PrevSheet;
+	Dynamics.TrueWindSpeedKn = PrevTws;
+	Dynamics.TrueWindDirDeg = PrevTwd;
+
+	HullLengthCm = Loa * 30.48f;
+	HullBeamCm = Beam * 30.48f;
+
+	// Visual scale of loft relative to JSON (JSON is 1.0 catalog). Absolute, not cumulative.
+	const float MeshScale = ActiveSpec.MeshUniformScale();
+	const FVector MeshS(MeshScale, MeshScale, MeshScale);
+	if (LoftMesh) LoftMesh->SetRelativeScale3D(MeshS);
+	if (MainSailMesh) MainSailMesh->SetRelativeScale3D(MeshS);
+	if (JibSailMesh) JibSailMesh->SetRelativeScale3D(MeshS);
+	// Re-place spars at scaled endpoints (absolute sizes)
+	if (bMastPivotValid && MastMesh)
 	{
-		HullLengthCm = S.LoaFt * 30.48f;
-		RefreshChaseCamera();
+		PlaceSparFromEndpoints(MastMesh, MastBaseLoc * MeshScale,
+			MastBaseLoc * MeshScale + FVector(0.f, 0.f, FMath::Max(100.f, ActiveSpec.I * 30.48f * MeshScale)));
 	}
-	if (S.BeamFt > 1.f)
+	if (bBoomEndpointsValid && BoomMesh)
 	{
-		HullBeamCm = S.BeamFt * 30.48f;
+		PlaceSparFromEndpoints(BoomMesh, BoomBaseLoc * MeshScale, BoomEndLoc * MeshScale);
 	}
+	UpdateHullCollisionFromMesh();
+	// Collision box should track mesh scale
+	if (HullCollision)
+	{
+		HullCollision->SetRelativeScale3D(MeshS);
+	}
+	RefreshChaseCamera();
+
 	UE_LOG(LogSailSim, Log,
-		TEXT("SailBoatPawn: dynamics from JSON disp=%.0f lb SA=%.0f LOA=%.1f ft"),
-		S.DispLb, S.SaTotal, S.LoaFt);
+		TEXT("Spec %s: LOA=%.1fft (x%.2f) Beam=%.1f Draft=%.1f Disp=%.0f SA=%.0f meshScale=%.2f"),
+		*ActiveSpec.Name, Loa, ActiveSpec.ScaleLoa, Beam, Draft, Disp, SA, MeshScale);
+}
+
+void ASailBoatPawn::SetLiveLoaScale(float Scale)
+{
+	ActiveSpec.ScaleLoa = FMath::Clamp(Scale, 0.5f, 1.6f);
+	// Keep beam/draft proportional-ish for a simple "size" slider
+	ActiveSpec.ScaleBeam = FMath::Lerp(1.f, ActiveSpec.ScaleLoa, 0.65f);
+	ActiveSpec.ScaleDraft = FMath::Lerp(1.f, ActiveSpec.ScaleLoa, 0.55f);
+	ActiveSpec.ScaleSail = FMath::Square(FMath::Lerp(1.f, ActiveSpec.ScaleLoa, 0.85f));
+	ApplyActiveSpecToBoat();
+	// Rebuild cloth rest pose under new scale
+	if (bEnableSailCloth)
+	{
+		MainCloth.Clear();
+		JibCloth.Clear();
+		if (MainSailMesh) MainCloth.BuildFromMesh(MainSailMesh, 0);
+		if (JibSailMesh) JibCloth.BuildFromMesh(JibSailMesh, 0);
+	}
+}
+
+void ASailBoatPawn::AdjustLiveLoaScale(float Delta)
+{
+	SetLiveLoaScale(ActiveSpec.ScaleLoa + Delta);
+}
+
+FString ASailBoatPawn::GetSpecSummary() const
+{
+	return FString::Printf(TEXT("%s  LOA×%.2f  (%.1f ft)"),
+		*ActiveSpec.Name, ActiveSpec.ScaleLoa, ActiveSpec.EffectiveLoa());
 }
 
 void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
@@ -482,6 +569,10 @@ void ASailBoatPawn::BeginPlay()
 	Dynamics.InitJ105();
 	Dynamics.Heading = 90.f;
 	Dynamics.AutoTarget = Dynamics.Heading;
+	if (ActiveSpec.Id.IsEmpty())
+	{
+		ActiveSpec = FBoatSpec::FromPresetId(ActivePresetId.IsEmpty() ? TEXT("j105") : ActivePresetId);
+	}
 
 	LoadLoftMesh(/*bApplyDynamics*/ true);
 
@@ -539,6 +630,8 @@ void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	PlayerInputComponent->BindAction(TEXT("Preset2"), IE_Pressed, this, &ASailBoatPawn::OnPreset2);
 	PlayerInputComponent->BindAction(TEXT("Preset3"), IE_Pressed, this, &ASailBoatPawn::OnPreset3);
 	PlayerInputComponent->BindAction(TEXT("Preset4"), IE_Pressed, this, &ASailBoatPawn::OnPreset4);
+	PlayerInputComponent->BindAction(TEXT("LoaScaleUp"), IE_Pressed, this, &ASailBoatPawn::OnLoaScaleUp);
+	PlayerInputComponent->BindAction(TEXT("LoaScaleDown"), IE_Pressed, this, &ASailBoatPawn::OnLoaScaleDown);
 }
 
 void ASailBoatPawn::ApplyOrbitToSpringArm()
@@ -586,7 +679,8 @@ void ASailBoatPawn::RefreshChaseCamera()
 		Camera->SetActive(true);
 	}
 
-	UE_LOG(LogSailSim, Log, TEXT("Chase cam arm=%.0f cm pitch=%.1f yaw=%.1f LOA=%.0f"),
+	// Verbose only — was spamming every StartupSkip frame
+	UE_LOG(LogSailSim, Verbose, TEXT("Chase cam arm=%.0f cm pitch=%.1f yaw=%.1f LOA=%.0f"),
 		Arm, OrbitPitchDeg, OrbitYawDeg, HullLengthCm);
 }
 
@@ -884,6 +978,7 @@ void ASailBoatPawn::OnWindDirRight()
 
 FString ASailBoatPawn::GetBoatDisplayName() const
 {
+	if (!ActiveSpec.Name.IsEmpty()) return ActiveSpec.Name;
 	if (const FBoatPreset* P = FBoatPresets::Find(ActivePresetId))
 	{
 		return P->DisplayName;
@@ -901,10 +996,17 @@ bool ASailBoatPawn::SetBoatPreset(const FString& PresetId)
 	}
 	ActivePresetId = P->Id;
 	BoatJsonRelativePath = P->JsonRelativePath;
+	const float KeepLoaScale = ActiveSpec.ScaleLoa;
+	ActiveSpec = FBoatSpec::FromPresetId(P->Id);
+	ActiveSpec.ScaleLoa = KeepLoaScale;
+	ActiveSpec.ScaleBeam = FMath::Lerp(1.f, KeepLoaScale, 0.65f);
+	ActiveSpec.ScaleDraft = FMath::Lerp(1.f, KeepLoaScale, 0.55f);
+	ActiveSpec.ScaleSail = FMath::Square(FMath::Lerp(1.f, KeepLoaScale, 0.85f));
 	// Force mesh rebuild even if previous path cached
 	bLoftMeshLoaded = false;
 	LoadedLoftPath.Reset();
 	LoadLoftMesh(/*bApplyDynamics*/ true);
+	ApplyActiveSpecToBoat();
 	UE_LOG(LogSailSim, Log, TEXT("SailBoatPawn: switched preset to %s (%s)"), *P->DisplayName, *P->JsonRelativePath);
 	return bLoftMeshLoaded;
 }
@@ -913,6 +1015,8 @@ void ASailBoatPawn::OnPreset1() { SetBoatPreset(TEXT("j105")); }
 void ASailBoatPawn::OnPreset2() { SetBoatPreset(TEXT("endeavour")); }
 void ASailBoatPawn::OnPreset3() { SetBoatPreset(TEXT("melges24")); }
 void ASailBoatPawn::OnPreset4() { SetBoatPreset(TEXT("cruiser36")); }
+void ASailBoatPawn::OnLoaScaleUp() { AdjustLiveLoaScale(0.05f); }
+void ASailBoatPawn::OnLoaScaleDown() { AdjustLiveLoaScale(-0.05f); }
 
 bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth) const
 {

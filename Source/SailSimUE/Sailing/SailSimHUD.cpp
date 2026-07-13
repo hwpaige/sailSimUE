@@ -70,7 +70,7 @@ void ASailSimHUD::DrawHUD()
 	const FLinearColor Warn(1.f, 0.75f, 0.35f, 1.f);
 
 	float Row = Y + 10.f;
-	DrawLineText(X + 12.f, Row, FString::Printf(TEXT("SAILSIM  ·  %s"), *Boat->GetBoatDisplayName()), Title, 1.25f);
+	DrawLineText(X + 12.f, Row, FString::Printf(TEXT("SAILSIM  ·  %s"), *Boat->GetSpecSummary()), Title, 1.15f);
 	Row += LineH + 4.f;
 
 	DrawLineText(X + 12.f, Row, FString::Printf(
@@ -100,5 +100,5 @@ void ASailSimHUD::DrawHUD()
 
 	DrawLineText(X + 12.f, Row, TEXT("A/D helm · W/S sheet · RMB orbit · wheel zoom"), Dim, 1.0f);
 	Row += LineH;
-	DrawLineText(X + 12.f, Row, TEXT("[ ] TWS · ; ' TWD · T sail · 1-4 boat preset"), Dim, 1.0f);
+	DrawLineText(X + 12.f, Row, TEXT("[ ] TWS · ; ' TWD · T sail · 1-4 preset · -/= LOA scale"), Dim, 1.0f);
 }

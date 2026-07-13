@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Sailing/BoatDynamics.h"
 #include "Sailing/BoatMeshFromJson.h"
+#include "Sailing/BoatSpec.h"
 #include "Sailing/SailClothSim.h"
 #include "SailBoatPawn.generated.h"
 
@@ -98,6 +99,19 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
 	FString GetBoatDisplayName() const;
+
+	/** Phase 3.2: live LOA scale (1 = catalog). Rebuilds mesh scale + dynamics. */
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spec")
+	void SetLiveLoaScale(float Scale);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spec")
+	void AdjustLiveLoaScale(float Delta);
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spec")
+	float GetLiveLoaScale() const { return ActiveSpec.ScaleLoa; }
+
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spec")
+	FString GetSpecSummary() const;
 
 	/**
 	 * Open-water spawn (XY cm). Must be outside the water-brush island
@@ -263,6 +277,7 @@ protected:
 	bool bLoftMeshLoaded = false;
 	FString LoadedLoftPath;
 	FBoatJsonSailingParams CachedSailingParams;
+	FBoatSpec ActiveSpec;
 	int32 StartupSkipFrames = 3;
 	/** Frames to wait before destroying unpossessed level/WP boats. */
 	int32 OrphanGraceFrames = 8;
@@ -281,6 +296,8 @@ protected:
 	void UpdateHullCollisionFromMesh();
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
 	void ApplyCachedSailingToDynamics();
+	/** Apply ActiveSpec scales to mesh + FBoatDynamics (Phase 3.2). */
+	void ApplyActiveSpecToBoat();
 	void UpdateBoomFromSheet();
 	void UpdateSailCloth(float DeltaSeconds);
 	void ApplyClothForceToDynamics();
@@ -307,6 +324,8 @@ protected:
 	void OnPreset2();
 	void OnPreset3();
 	void OnPreset4();
+	void OnLoaScaleUp();
+	void OnLoaScaleDown();
 	void EnsureOpenWaterSpawn();
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };
