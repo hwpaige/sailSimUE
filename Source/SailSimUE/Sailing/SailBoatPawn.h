@@ -114,6 +114,17 @@ public:
 	FString GetSpecSummary() const;
 
 	/**
+	 * Phase 3.3: re-loft via Python sail_geom oracle → Content/Data/live_boat3d.json,
+	 * then reload mesh (true geometry change, not just scale).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Sailing|Spec")
+	bool RebuildLoftFromOracle();
+
+	/** If true, -/= LOA scale also triggers oracle re-loft (slower; needs python3). */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spec")
+	bool bAutoOracleOnScale = false;
+
+	/**
 	 * Open-water spawn (XY cm). Must be outside the water-brush island
 	 * (hundreds of meters) but inside WaterZone half-extent (~1 km with default ensure).
 	 */
@@ -326,6 +337,7 @@ protected:
 	void OnPreset4();
 	void OnLoaScaleUp();
 	void OnLoaScaleDown();
+	void OnRebuildLoft();
 	void EnsureOpenWaterSpawn();
 	bool SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth = nullptr) const;
 };

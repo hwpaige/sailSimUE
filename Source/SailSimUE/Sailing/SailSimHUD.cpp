@@ -100,5 +100,5 @@ void ASailSimHUD::DrawHUD()
 
 	DrawLineText(X + 12.f, Row, TEXT("A/D helm · W/S sheet · RMB orbit · wheel zoom"), Dim, 1.0f);
 	Row += LineH;
-	DrawLineText(X + 12.f, Row, TEXT("[ ] TWS · ; ' TWD · T sail · 1-4 preset · -/= LOA scale"), Dim, 1.0f);
+	DrawLineText(X + 12.f, Row, TEXT("[ ] TWS · 1-4 preset · -/= scale · R re-loft (python)"), Dim, 1.0f);
 }

@@ -43,10 +43,34 @@ struct FBoatSpec
 	}
 	float EffectiveSail() const { return SailArea * ScaleSail * ScaleLoa * ScaleBeam; } // area ~ L²-ish
 
-	/** Uniform mesh scale for procedural loft (average linear). */
+	/**
+	 * Uniform mesh scale when using catalog JSON + visual scale only.
+	 * When bLiveLoftGeometry is true, geometry already has effective dims → 1.
+	 */
+	bool bLiveLoftGeometry = false;
+
 	float MeshUniformScale() const
 	{
+		if (bLiveLoftGeometry) return 1.f;
 		return FMath::Max(0.25f, (ScaleLoa + ScaleBeam + ScaleDraft) / 3.f);
+	}
+
+	/** Bake current scales into base dims (after true re-loft). */
+	void BakeScalesIntoBase()
+	{
+		Loa = EffectiveLoa();
+		Lwl = EffectiveLwl();
+		Beam = EffectiveBeam();
+		Draft = EffectiveDraft();
+		DispLb = EffectiveDisp();
+		BallastLb *= ScaleLoa * ScaleBeam * ScaleDraft;
+		SailArea = EffectiveSail();
+		I *= ScaleLoa;
+		J *= ScaleBeam;
+		P *= ScaleLoa;
+		E *= ScaleLoa;
+		ScaleLoa = ScaleBeam = ScaleDraft = ScaleSail = 1.f;
+		bLiveLoftGeometry = true;
 	}
 
 	static FBoatSpec FromPresetId(const FString& PresetId)

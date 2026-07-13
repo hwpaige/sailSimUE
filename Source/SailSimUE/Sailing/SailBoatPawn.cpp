@@ -1,6 +1,7 @@
 #include "Sailing/SailBoatPawn.h"
 #include "Sailing/BoatMeshFromJson.h"
 #include "Sailing/BoatPresets.h"
+#include "Sailing/BoatLoftOracle.h"
 #include "Sailing/OceanHeightSample.h"
 #include "SailSimUE.h"
 #include "WaterZoneActor.h"
@@ -320,12 +321,54 @@ void ASailBoatPawn::SetLiveLoaScale(float Scale)
 void ASailBoatPawn::AdjustLiveLoaScale(float Delta)
 {
 	SetLiveLoaScale(ActiveSpec.ScaleLoa + Delta);
+	if (bAutoOracleOnScale)
+	{
+		RebuildLoftFromOracle();
+	}
 }
 
 FString ASailBoatPawn::GetSpecSummary() const
 {
-	return FString::Printf(TEXT("%s  LOA×%.2f  (%.1f ft)"),
-		*ActiveSpec.Name, ActiveSpec.ScaleLoa, ActiveSpec.EffectiveLoa());
+	return FString::Printf(TEXT("%s  LOA×%.2f  (%.1f ft)%s"),
+		*ActiveSpec.Name, ActiveSpec.ScaleLoa, ActiveSpec.EffectiveLoa(),
+		ActiveSpec.bLiveLoftGeometry ? TEXT("  [live loft]") : TEXT(""));
+}
+
+bool ASailBoatPawn::RebuildLoftFromOracle()
+{
+	FString Err;
+	if (!FBoatLoftOracle::RebuildLiveLoft(ActiveSpec, &Err))
+	{
+		UE_LOG(LogSailSim, Warning, TEXT("RebuildLoftFromOracle failed: %s"), *Err);
+		return false;
+	}
+
+	// Bake scales into base dims; geometry now matches effective size.
+	ActiveSpec.BakeScalesIntoBase();
+	ActivePresetId = ActiveSpec.Id;
+	BoatJsonRelativePath = FBoatLoftOracle::LiveBoatJsonRelative();
+	bLoftMeshLoaded = false;
+	LoadedLoftPath.Reset();
+	LoadLoftMesh(/*bApplyDynamics*/ true);
+	// Reset visual scale to 1 (geometry is absolute)
+	const FVector One(1.f, 1.f, 1.f);
+	if (LoftMesh) LoftMesh->SetRelativeScale3D(One);
+	if (MainSailMesh) MainSailMesh->SetRelativeScale3D(One);
+	if (JibSailMesh) JibSailMesh->SetRelativeScale3D(One);
+	if (HullCollision) HullCollision->SetRelativeScale3D(One);
+	ApplyActiveSpecToBoat();
+
+	if (bEnableSailCloth)
+	{
+		MainCloth.Clear();
+		JibCloth.Clear();
+		if (MainSailMesh) MainCloth.BuildFromMesh(MainSailMesh, 0);
+		if (JibSailMesh) JibCloth.BuildFromMesh(JibSailMesh, 0);
+	}
+
+	SnapToWaterSurface(false);
+	UE_LOG(LogSailSim, Log, TEXT("Live loft loaded: %s"), *BoatJsonRelativePath);
+	return bLoftMeshLoaded;
 }
 
 void ASailBoatPawn::LoadLoftMesh(bool bApplyDynamics)
@@ -632,6 +675,7 @@ void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 	PlayerInputComponent->BindAction(TEXT("Preset4"), IE_Pressed, this, &ASailBoatPawn::OnPreset4);
 	PlayerInputComponent->BindAction(TEXT("LoaScaleUp"), IE_Pressed, this, &ASailBoatPawn::OnLoaScaleUp);
 	PlayerInputComponent->BindAction(TEXT("LoaScaleDown"), IE_Pressed, this, &ASailBoatPawn::OnLoaScaleDown);
+	PlayerInputComponent->BindAction(TEXT("RebuildLoft"), IE_Pressed, this, &ASailBoatPawn::OnRebuildLoft);
 }
 
 void ASailBoatPawn::ApplyOrbitToSpringArm()
@@ -1017,6 +1061,7 @@ void ASailBoatPawn::OnPreset3() { SetBoatPreset(TEXT("melges24")); }
 void ASailBoatPawn::OnPreset4() { SetBoatPreset(TEXT("cruiser36")); }
 void ASailBoatPawn::OnLoaScaleUp() { AdjustLiveLoaScale(0.05f); }
 void ASailBoatPawn::OnLoaScaleDown() { AdjustLiveLoaScale(-0.05f); }
+void ASailBoatPawn::OnRebuildLoft() { RebuildLoftFromOracle(); }
 
 bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth) const
 {
