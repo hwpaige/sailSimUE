@@ -399,11 +399,11 @@ void ASailBoatPawn::EnsureOceanCoverage()
 	const float NeedHalf = FMath::Max3(
 		static_cast<float>(FMath::Abs(Boat.X)),
 		static_cast<float>(FMath::Abs(Boat.Y)),
-		25000.f) + 50000.f;
+		static_cast<float>(FMath::Max(OpenWaterSpawnXY.X, OpenWaterSpawnXY.Y))) + 60000.f;
 	// Cap full extent ~4 km — larger values hit Mac tile cap (512→256 bias) and can hide mesh.
 	const float NeedFull = FMath::Clamp(
 		FMath::Max(WaterZoneExtentCm, NeedHalf * 2.f),
-		100000.f,
+		150000.f,
 		400000.f);
 
 	int32 Zones = 0;

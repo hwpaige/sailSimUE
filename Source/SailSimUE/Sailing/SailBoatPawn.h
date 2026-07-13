@@ -99,9 +99,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Sailing|Mesh")
 	FString GetBoatDisplayName() const;
 
-	/** Open-water spawn used by GameMode (XY cm). */
+	/**
+	 * Open-water spawn (XY cm). Must be outside the water-brush island
+	 * (hundreds of meters) but inside WaterZone half-extent (~1 km with default ensure).
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(6000.f, 8000.f);
+	FVector2D OpenWaterSpawnXY = FVector2D(70000.f, 55000.f);
 
 	/** Snap hull waterline to ocean surface; optionally force open-water XY. */
 	UFUNCTION(BlueprintCallable, Category = "Sailing|Spawn")
@@ -196,9 +199,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Mesh")
 	bool bApplyJsonSailingParams = true;
 
-	/** Soft radius around origin for the water-brush island (spawn just outside). */
+	/** Soft radius around origin for the water-brush island (force offshore if closer). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float OriginIslandRadiusCm = 5000.f;
+	float OriginIslandRadiusCm = 40000.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
@@ -207,9 +210,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bEnsureOceanCoverage = true;
 
-	/** Full ZoneExtent (cm) after ensure — keep modest on Mac (huge values break tiles). */
+	/** Full ZoneExtent (cm) after ensure — must cover OpenWaterSpawnXY; Mac-safe if ≤~400k. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float WaterZoneExtentCm = 200000.f;
+	float WaterZoneExtentCm = 250000.f;
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
