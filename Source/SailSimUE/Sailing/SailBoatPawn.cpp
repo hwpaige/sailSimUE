@@ -3,11 +3,8 @@
 #include "Sailing/BoatPresets.h"
 #include "Sailing/BoatLoftOracle.h"
 #include "Sailing/OceanHeightSample.h"
+#include "Sailing/Ocean/SailOceanSubsystem.h"
 #include "SailSimUE.h"
-#include "WaterZoneActor.h"
-#include "WaterMeshComponent.h"
-#include "WaterBodyActor.h"
-#include "WaterBodyComponent.h"
 #include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -524,69 +521,17 @@ void ASailBoatPawn::EnsureOceanCoverage()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	const FVector Boat = GetActorLocation();
-	// ZoneExtent is FULL width; half-extent must cover |boat| + margin.
-	const float NeedHalf = FMath::Max3(
-		static_cast<float>(FMath::Abs(Boat.X)),
-		static_cast<float>(FMath::Abs(Boat.Y)),
-		static_cast<float>(FMath::Max(OpenWaterSpawnXY.X, OpenWaterSpawnXY.Y))) + 60000.f;
-	// Cap full extent ~4 km — larger values hit Mac tile cap (512→256 bias) and can hide mesh.
-	const float NeedFull = FMath::Clamp(
-		FMath::Max(WaterZoneExtentCm, NeedHalf * 2.f),
-		150000.f,
-		400000.f);
-
-	int32 Zones = 0;
-	for (TActorIterator<AWaterZone> It(World); It; ++It)
+	// Phase 5: visual coverage via ocean subsystem (world-space waves; local mesh window).
+	if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
 	{
-		++Zones;
-		AWaterZone* Zone = *It;
-		// Do NOT SetActorLocation (Static WaterMesh mobility spam / broken tiles).
-		const FVector2D Cur = Zone->GetZoneExtent();
-		// Expand if boat is outside; shrink if oversized (Mac tile-cap breaks the mesh).
-		const bool bTooSmall = Cur.X + 1.f < NeedFull || Cur.Y + 1.f < NeedFull;
-		const bool bTooBig = Cur.X > 450000.f || Cur.Y > 450000.f;
-		if (bTooSmall || bTooBig)
-		{
-			Zone->SetZoneExtent(FVector2D(NeedFull, NeedFull));
-			Zone->MarkForRebuild(EWaterZoneRebuildFlags::All);
-			UE_LOG(LogSailSim, Log, TEXT("WaterZone '%s' extent (%.0f,%.0f)->%.0f cm (%s)"),
-				*Zone->GetName(), Cur.X, Cur.Y, NeedFull,
-				bTooBig ? TEXT("shrink for tiles") : TEXT("expand for boat"));
-		}
-
-		if (UWaterMeshComponent* WaterMesh = Zone->GetWaterMeshComponent())
-		{
-			WaterMesh->SetVisibility(true);
-			WaterMesh->SetHiddenInGame(false);
-			WaterMesh->SetCastShadow(false);
-		}
-
-		const FBox ZoneBox = Zone->GetZoneBounds();
-		const bool bInside = ZoneBox.IsInsideOrOn(
-			FVector(Boat.X, Boat.Y, ZoneBox.GetCenter().Z));
-		UE_LOG(LogSailSim, Log,
-			TEXT("WaterZone '%s' boat XY(%.0f,%.0f) inside=%s extent=(%.0f,%.0f) bounds=%s"),
-			*Zone->GetName(), Boat.X, Boat.Y,
-			bInside ? TEXT("YES") : TEXT("NO"),
-			Zone->GetZoneExtent().X, Zone->GetZoneExtent().Y,
-			*ZoneBox.ToString());
-	}
-
-	if (Zones == 0)
-	{
-		UE_LOG(LogSailSim, Warning, TEXT("No AWaterZone in level — ocean mesh will not render"));
-	}
-
-	// Ensure ocean water bodies stay visible
-	for (TActorIterator<AWaterBody> It(World); It; ++It)
-	{
-		It->SetActorHiddenInGame(false);
-		if (UWaterBodyComponent* Comp = It->GetWaterBodyComponent())
-		{
-			Comp->SetVisibility(true);
-			Comp->SetHiddenInGame(false);
-		}
+		// Sync sea params from boat wind for swell direction
+		FSeaParams Sea = Ocean->GetSeaParams();
+		Sea.WindSpeedKn = Dynamics.TrueWindSpeedKn;
+		Sea.WindDirDeg = Dynamics.TrueWindDirDeg;
+		Sea.WaveDirDeg = FMath::Fmod(Dynamics.TrueWindDirDeg + 180.f, 360.f);
+		Ocean->SetSeaParams(Sea);
+		Ocean->EnsureOceanVisualCoverage(
+			GetActorLocation(), WaterZoneExtentCm, LocalWaterTessellationDiameterCm);
 	}
 }
 
@@ -1065,6 +1010,23 @@ void ASailBoatPawn::OnRebuildLoft() { RebuildLoftFromOracle(); }
 
 bool ASailBoatPawn::SampleWaterSurface(const FVector& WorldXY, FVector& OutSurface, FVector& OutNormal, float* OutDepth) const
 {
+	// Prefer Phase-5 ocean subsystem (world-space height field).
+	if (UWorld* World = GetWorld())
+	{
+		if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
+		{
+			const FVector Q(WorldXY.X, WorldXY.Y, bFloatInit ? SmoothedWaterZ : WorldXY.Z);
+			const FOceanSample S = Ocean->SampleOcean(Q);
+			if (S.bValid)
+			{
+				OutSurface = S.Surface;
+				OutNormal = S.Normal;
+				if (OutDepth) *OutDepth = S.Depth;
+				return true;
+			}
+		}
+	}
+
 	const FOceanSample S = FOceanHeightSample::SampleAt(
 		GetWorld(), WorldXY, bFloatInit ? SmoothedWaterZ : 0.f, bFloatInit);
 	if (!S.bValid) return false;

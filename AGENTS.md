@@ -18,6 +18,6 @@ Port of [sail-sim](../sail-sim) sailing simulator to Unreal Engine 5.8.
 
 ## Current phase
 
-**Phase 2 done** · **P3.1** multi-preset · **P4.0** multipoint buoyancy + Verlet cloth scaffold.  
-Next: richer cloth/force measure, live loft sliders, FFT ocean (not water-pro code).  
-Tracker: `../sail-sim/unreal-port/PROGRESS.md`.
+**P2 done** · **P3** presets/scale/oracle · **P4** cloth scaffold · **P5** ocean interface (Gerstner backend; FFT later).  
+Ocean: world-space height field; local tessellation is render-only. Never port water-pro shaders.  
+Trackers: `../sail-sim/unreal-port/PROGRESS.md`, `PHASE5_OCEAN.md`.

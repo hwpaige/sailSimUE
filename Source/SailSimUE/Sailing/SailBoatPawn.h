@@ -125,11 +125,11 @@ public:
 	bool bAutoOracleOnScale = false;
 
 	/**
-	 * Open-water spawn (XY cm). Must be outside the water-brush island
-	 * (hundreds of meters) but inside WaterZone half-extent (~1 km with default ensure).
+	 * Open-water spawn (XY cm). Outside the island, but not so far that we leave
+	 * the WaterZone mesh square before local tessellation is enabled.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sailing|Spawn")
-	FVector2D OpenWaterSpawnXY = FVector2D(70000.f, 55000.f);
+	FVector2D OpenWaterSpawnXY = FVector2D(22000.f, 18000.f);
 
 	/** Snap hull waterline to ocean surface; optionally force open-water XY. */
 	UFUNCTION(BlueprintCallable, Category = "Sailing|Spawn")
@@ -226,18 +226,22 @@ protected:
 
 	/** Soft radius around origin for the water-brush island (force offshore if closer). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float OriginIslandRadiusCm = 40000.f;
+	float OriginIslandRadiusCm = 15000.f;
 
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bForceOpenWaterSpawn = true;
 
-	/** Resize WaterZone extent (not location) so the water mesh covers the boat. */
+	/** Resize WaterZone + enable local tessellation so ocean draws under the boat. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	bool bEnsureOceanCoverage = true;
 
-	/** Full ZoneExtent (cm) after ensure — must cover OpenWaterSpawnXY; Mac-safe if ≤~400k. */
+	/** Full ZoneExtent (cm). With local tessellation this can stay moderate. */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float WaterZoneExtentCm = 250000.f;
+	float WaterZoneExtentCm = 150000.f;
+
+	/** Sliding-window water mesh diameter (cm) around the camera/boat. */
+	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
+	float LocalWaterTessellationDiameterCm = 90000.f;
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")
