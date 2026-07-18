@@ -32,10 +32,11 @@ PRESETS: dict[str, dict] = {
         "disp": 7750,
         "ballast": 3340,
         "sail_area": 545,
-        "I": 44,
+        # J/Boats + class rules 6.4.2 (ft)
+        "I": 40.6,
         "J": 13.5,
-        "P": 40,
-        "E": 13.5,
+        "P": 41.5,
+        "E": 14.6,
         "draft": 6.5,
         "hull": {
             "lcb": 54,
@@ -276,6 +277,28 @@ def export_one(preset_id: str, spec: dict, n_st: int = 56, nh: int = 14) -> str:
                 "double_sided": True,
             }
         )
+    wn = b.get("winches") or {}
+    if wn.get("verts") and wn.get("indices"):
+        meshes.append(
+            {
+                "name": "winches",
+                "color": [0.12, 0.13, 0.14, 1.0],
+                "verts": py_verts_to_ue_cm(wn["verts"], x_shift),
+                "indices": list(wn["indices"]),
+                "double_sided": False,
+            }
+        )
+    bl = (wn.get("blocks") or b.get("blocks") or {})
+    if bl.get("verts") and bl.get("indices"):
+        meshes.append(
+            {
+                "name": "sheet_blocks",
+                "color": [0.10, 0.10, 0.11, 1.0],
+                "verts": py_verts_to_ue_cm(bl["verts"], x_shift),
+                "indices": list(bl["indices"]),
+                "double_sided": False,
+            }
+        )
     tc = b.get("transomCap") or {}
     if tc.get("verts") and tc.get("indices"):
         meshes.append(
@@ -321,6 +344,34 @@ def export_one(preset_id: str, spec: dict, n_st: int = 56, nh: int = 14) -> str:
             "end": pt3(b["boom"]["end"], x_shift),
         },
     }
+    # Running rigging (must ship with mesh — traveler/mainsheet/vang need these)
+    jibsheet = None
+    if b.get("jibsheet"):
+        js = b["jibsheet"]
+        jibsheet = {
+            "port_track_fwd": pt3(js["port_track_fwd"], x_shift),
+            "port_track_aft": pt3(js["port_track_aft"], x_shift),
+            "stbd_track_fwd": pt3(js["stbd_track_fwd"], x_shift),
+            "stbd_track_aft": pt3(js["stbd_track_aft"], x_shift),
+            "foot_length": float(js.get("foot_length", 0.0)) * FT_TO_CM,
+        }
+    mainsheet = None
+    if b.get("mainsheet"):
+        ms = b["mainsheet"]
+        mainsheet = {
+            "gooseneck": pt3(ms["gooseneck"], x_shift),
+            "lead": pt3(ms["lead"], x_shift),
+            "boom_length": float(ms.get("boom_length", 0.0)) * FT_TO_CM,
+            "vang_mast_drop_frac": float(ms.get("vang_mast_drop_frac", 0.06)),
+            "vang_boom_frac": float(ms.get("vang_boom_frac", 0.25)),
+        }
+    sheet_leads = None
+    sl = b.get("sheet_leads") or (b.get("winches") or {}).get("sheet_leads") or {}
+    if sl:
+        sheet_leads = {}
+        for k, v in sl.items():
+            if v and len(v) >= 3:
+                sheet_leads[k] = pt3(v, x_shift)
     out = {
         "name": b["name"],
         "preset_id": preset_id,
@@ -331,6 +382,9 @@ def export_one(preset_id: str, spec: dict, n_st: int = 56, nh: int = 14) -> str:
         "sailing": b["sailing"],
         "meshes": meshes,
         "spars": spars,
+        "jibsheet": jibsheet,
+        "mainsheet": mainsheet,
+        "sheet_leads": sheet_leads,
     }
     path = os.path.join(ROOT, "Content", "Data", f"{preset_id}_boat3d.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)

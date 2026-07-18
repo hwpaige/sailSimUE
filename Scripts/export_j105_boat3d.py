@@ -91,10 +91,12 @@ def main() -> None:
         "disp": 7750,
         "ballast": 3340,
         "sail_area": 545,
-        "I": 44,
+        # J/Boats tech specs + class rules 6.4.2 (ft): I=40.60 J=13.50 P=41.50 E=14.60
+        # (old export used E=13.5 / P=40 — boom looked short vs a class main)
+        "I": 40.6,
         "J": 13.5,
-        "P": 40,
-        "E": 13.5,
+        "P": 41.5,
+        "E": 14.6,
         "draft": 6.5,
         "hull": {
             "lcb": 54,
@@ -170,6 +172,28 @@ def main() -> None:
                 "double_sided": True,
             }
         )
+    wn = b.get("winches") or {}
+    if wn.get("verts") and wn.get("indices"):
+        meshes.append(
+            {
+                "name": "winches",
+                "color": [0.12, 0.13, 0.14, 1.0],
+                "verts": py_verts_to_ue_cm(wn["verts"], x_shift),
+                "indices": list(wn["indices"]),
+                "double_sided": False,
+            }
+        )
+    bl = (wn.get("blocks") or b.get("blocks") or {})
+    if bl.get("verts") and bl.get("indices"):
+        meshes.append(
+            {
+                "name": "sheet_blocks",
+                "color": [0.10, 0.10, 0.11, 1.0],
+                "verts": py_verts_to_ue_cm(bl["verts"], x_shift),
+                "indices": list(bl["indices"]),
+                "double_sided": False,
+            }
+        )
     tc = b.get("transomCap") or {}
     if tc.get("verts") and tc.get("indices"):
         meshes.append(
@@ -201,36 +225,73 @@ def main() -> None:
                 "color": [0.96, 0.96, 0.94, 1.0],
                 "verts": py_verts_to_ue_cm(s["verts"], x_shift),
                 "indices": grid_index(s["nu"], s["nw"]),
+                "nu": int(s["nu"]),
+                "nw": int(s["nw"]),
                 "double_sided": True,
             }
         )
 
+    def pt(p):
+        return [
+            (p[0] - x_shift) * FT_TO_CM,
+            p[1] * FT_TO_CM,
+            p[2] * FT_TO_CM,
+        ]
+
     spars = {
         "mast": {
-            "base": [
-                (b["mast"]["base"][0] - x_shift) * FT_TO_CM,
-                b["mast"]["base"][1] * FT_TO_CM,
-                b["mast"]["base"][2] * FT_TO_CM,
-            ],
-            "top": [
-                (b["mast"]["top"][0] - x_shift) * FT_TO_CM,
-                b["mast"]["top"][1] * FT_TO_CM,
-                b["mast"]["top"][2] * FT_TO_CM,
-            ],
+            "base": pt(b["mast"]["base"]),
+            "top": pt(b["mast"]["top"]),
         },
         "boom": {
-            "base": [
-                (b["boom"]["base"][0] - x_shift) * FT_TO_CM,
-                b["boom"]["base"][1] * FT_TO_CM,
-                b["boom"]["base"][2] * FT_TO_CM,
-            ],
-            "end": [
-                (b["boom"]["end"][0] - x_shift) * FT_TO_CM,
-                b["boom"]["end"][1] * FT_TO_CM,
-                b["boom"]["end"][2] * FT_TO_CM,
-            ],
+            "base": pt(b["boom"]["base"]),
+            "end": pt(b["boom"]["end"]),
         },
     }
+    # Running rigging endpoints (web uses these for tracks / mainsheet lead)
+    jibsheet = None
+    if b.get("jibsheet"):
+        js = b["jibsheet"]
+        jibsheet = {
+            "port_track_fwd": pt(js["port_track_fwd"]),
+            "port_track_aft": pt(js["port_track_aft"]),
+            "stbd_track_fwd": pt(js["stbd_track_fwd"]),
+            "stbd_track_aft": pt(js["stbd_track_aft"]),
+            "foot_length": float(js.get("foot_length", 0.0)) * FT_TO_CM,
+        }
+    mainsheet = None
+    if b.get("mainsheet"):
+        ms = b["mainsheet"]
+        mainsheet = {
+            "gooseneck": pt(ms["gooseneck"]),
+            "lead": pt(ms["lead"]),
+            "boom_length": float(ms.get("boom_length", 0.0)) * FT_TO_CM,
+            "vang_mast_drop_frac": float(ms.get("vang_mast_drop_frac", 0.06)),
+            "vang_boom_frac": float(ms.get("vang_boom_frac", 0.25)),
+        }
+    # Jib: car→primary winch. Spin: quarter block→cabin winch (cm, UE coords).
+    sheet_leads = None
+    sl = b.get("sheet_leads") or (b.get("winches") or {}).get("sheet_leads") or {}
+    if sl:
+        sheet_leads = {}
+        for k, v in sl.items():
+            if v and len(v) >= 3:
+                sheet_leads[k] = pt(v)
+    winch_placements = None
+    wn_pl = (b.get("winches") or {}).get("placements") or []
+    if wn_pl:
+        winch_placements = []
+        for p in wn_pl:
+            entry = {
+                "role": p.get("role"),
+                "side": p.get("side"),
+                "r": float(p.get("r", 0.2)) * FT_TO_CM,
+                "h": float(p.get("h", 0.4)) * FT_TO_CM,
+            }
+            if p.get("lead") and len(p["lead"]) >= 3:
+                entry["lead"] = pt(p["lead"])
+            entry["pos"] = pt([p["x"], p["y"], p["z"]])
+            winch_placements.append(entry)
     out = {
         "name": b["name"],
         "units": "cm",
@@ -240,6 +301,10 @@ def main() -> None:
         "sailing": b["sailing"],
         "meshes": meshes,
         "spars": spars,
+        "jibsheet": jibsheet,
+        "mainsheet": mainsheet,
+        "sheet_leads": sheet_leads,
+        "winch_placements": winch_placements,
     }
     path = os.path.join(ROOT, "Content", "Data", "j105_boat3d.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)

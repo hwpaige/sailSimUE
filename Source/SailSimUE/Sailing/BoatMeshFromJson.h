@@ -39,6 +39,38 @@ struct FBoatJsonSparEndpoints
 	FVector BoomEnd = FVector::ZeroVector;
 };
 
+/** Jib genoa tracks + mainsheet lead + sheet winch/block routing (UE cm). */
+struct FBoatJsonRunningRigging
+{
+	bool bJibTracksValid = false;
+	FVector JibPortTrackFwd = FVector::ZeroVector;
+	FVector JibPortTrackAft = FVector::ZeroVector;
+	FVector JibStbdTrackFwd = FVector::ZeroVector;
+	FVector JibStbdTrackAft = FVector::ZeroVector;
+
+	bool bMainsheetValid = false;
+	FVector MainsheetGooseneck = FVector::ZeroVector;
+	FVector MainsheetLead = FVector::ZeroVector; // deck lead / traveler centerline
+	float BoomLengthCm = 0.f;
+	/** Boom vang (web MAST_VANG_DROP_FRAC / MAINVANG_FRAC). */
+	float VangMastDropFrac = 0.06f;
+	float VangBoomFrac = 0.25f;
+
+	/**
+	 * Sheet terminal points (J/105 layout):
+	 *  jib  clew → track car → primary winch
+	 *  spin clew → stern quarter block → cabin-top winch
+	 * Port = −Y after load-time swap; stbd = +Y.
+	 */
+	bool bSheetLeadsValid = false;
+	FVector JibPortWinch = FVector::ZeroVector;
+	FVector JibStbdWinch = FVector::ZeroVector;
+	FVector SpinPortBlock = FVector::ZeroVector;
+	FVector SpinStbdBlock = FVector::ZeroVector;
+	FVector SpinPortWinch = FVector::ZeroVector;
+	FVector SpinStbdWinch = FVector::ZeroVector;
+};
+
 /** Full boat3d load result (mesh sections filled separately). */
 struct FBoatJsonLoadResult
 {
@@ -46,6 +78,7 @@ struct FBoatJsonLoadResult
 	int32 SectionCount = 0;
 	FBoatJsonSailingParams Sailing;
 	FBoatJsonSparEndpoints Spars;
+	FBoatJsonRunningRigging Rigging;
 	FString ResolvedPath;
 };
 
@@ -64,7 +97,17 @@ struct FBoatMeshFromJson
 		UMaterialInterface* DefaultMaterial = nullptr,
 		FBoatJsonLoadResult* OutResult = nullptr,
 		UProceduralMeshComponent* MainSailMesh = nullptr,
-		UProceduralMeshComponent* JibSailMesh = nullptr);
+		UProceduralMeshComponent* JibSailMesh = nullptr,
+		/** When true, skip sail_* sections entirely (moored boats with sails down). */
+		bool bSkipSailSections = false,
+		/**
+		 * Optional: keel/rudder go here (no shadow cast — underwater appendages
+		 * should not darken the topsides). Null → pack into HullOrCombinedMesh.
+		 */
+		UProceduralMeshComponent* AppendagesMesh = nullptr);
+
+	/** Deep-copy all procedural sections + materials from Src → Dst. */
+	static void CopyProceduralMesh(UProceduralMeshComponent* Src, UProceduralMeshComponent* Dst);
 
 	/** Parse sailing/spars only (no mesh rebuild) — for BeginPlay when mesh already loaded. */
 	static bool LoadMetadataOnly(
