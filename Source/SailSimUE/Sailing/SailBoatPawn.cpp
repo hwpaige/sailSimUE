@@ -107,6 +107,10 @@ ASailBoatPawn::ASailBoatPawn()
 
 	BowspritMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Bowsprit"));
 	BowspritMesh->SetupAttachment(BoatRoot);
+	ForestayFoilMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ForestayFoil"));
+	ForestayFoilMesh->SetupAttachment(BoatRoot);
+	FurlerDrumMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FurlerDrum"));
+	FurlerDrumMesh->SetupAttachment(BoatRoot);
 	SpinSheetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SpinSheet"));
 	SpinSheetMesh->SetupAttachment(BoatRoot);
 	SpinSheetToWinchMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SpinSheetToWinch"));
@@ -251,6 +255,8 @@ ASailBoatPawn::ASailBoatPawn()
 	SetupCyl(MastMesh);
 	SetupCyl(BoomMesh);
 	SetupCyl(BowspritMesh);
+	SetupCyl(ForestayFoilMesh);
+	SetupCyl(FurlerDrumMesh);
 	SetupCyl(SpinSheetMesh);
 	SetupCyl(SpinSheetToWinchMesh);
 	SetupCyl(SpinLazySheetSegA);
@@ -468,6 +474,52 @@ void ASailBoatPawn::PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVe
 	Comp->SetRelativeRotation(FRotationMatrix::MakeFromZ(Dir.GetSafeNormal()).Rotator());
 }
 
+void ASailBoatPawn::UpdateJibFurlerVisuals(float MeshS)
+{
+	// Forestay endpoints from jib cloth stay (unscaled sail-local ≈ boat-cm when mesh at root).
+	FVector Tack = JibCloth.StayTackLocal * MeshS;
+	FVector Head = JibCloth.StayHeadLocal * MeshS;
+	if (!JibCloth.bStayValid || FVector::DistSquared(Tack, Head) < 100.f)
+	{
+		// Fallback: mast + J forward (stemhead) → near masthead
+		const FVector Mast = bMastPivotValid ? (MastBaseLoc * MeshS) : FVector::ZeroVector;
+		const float Jcm = FMath::Max(150.f, ActiveSpec.J * 30.48f * MeshS);
+		const float Icm = FMath::Max(200.f, ActiveSpec.I * 30.48f * MeshS);
+		Tack = Mast + FVector(Jcm, 0.f, 12.f * MeshS);
+		Head = Mast + FVector(0.f, 0.f, Icm * 0.92f);
+	}
+
+	const FVector Axis = (Head - Tack).GetSafeNormal();
+	const float StayLen = FMath::Max(1.f, FVector::Dist(Tack, Head));
+
+	// Extruded foil along the forestay (slightly thicker than the wire).
+	if (ForestayFoilMesh)
+	{
+		PlaceSparFromEndpoints(ForestayFoilMesh, Tack, Head);
+		ForestayFoilMesh->SetRelativeScale3D(FVector(0.055f, 0.055f, StayLen / 100.f));
+		ForestayFoilMesh->SetVisibility(true);
+		ForestayFoilMesh->SetHiddenInGame(false);
+	}
+
+	// Furler drum at the tack: short fat cylinder on the stay axis, spins with furl.
+	if (FurlerDrumMesh)
+	{
+		const float DrumH = 14.f * MeshS;
+		const float DrumR = 0.16f; // scale units (~16 cm radius visual)
+		const FVector DrumCenter = Tack + Axis * (DrumH * 0.55f);
+		const FVector DrumTop = DrumCenter + Axis * (DrumH * 0.5f);
+		const FVector DrumBot = DrumCenter - Axis * (DrumH * 0.5f);
+		PlaceSparFromEndpoints(FurlerDrumMesh, DrumBot, DrumTop);
+		// Base orientation along stay, then spin around stay by FurlerSpinRad.
+		const FRotator BaseRot = FRotationMatrix::MakeFromZ(Axis).Rotator();
+		const FQuat SpinQ(Axis, FurlerSpinRad);
+		FurlerDrumMesh->SetRelativeRotation((SpinQ * BaseRot.Quaternion()).Rotator());
+		FurlerDrumMesh->SetRelativeScale3D(FVector(DrumR, DrumR, DrumH / 100.f));
+		FurlerDrumMesh->SetVisibility(true);
+		FurlerDrumMesh->SetHiddenInGame(false);
+	}
+}
+
 void ASailBoatPawn::PlaceBoxAt(UStaticMeshComponent* Comp, const FVector& Center, const FVector& Scale, const FRotator& Rot)
 {
 	if (!Comp) return;
@@ -517,6 +569,9 @@ void ASailBoatPawn::EnsureRunningRiggingBuilt()
 	Tint(JibSheetPortToWinchMesh, RopeCol);
 	Tint(JibSheetStbdToWinchMesh, RopeCol);
 	Tint(BowspritMesh, TrackCol);
+	Tint(ForestayFoilMesh, TrackCol);
+	// Furler drum: dark alloy (Harken MKIV look)
+	Tint(FurlerDrumMesh, BlockCol);
 	// Lazy sheet slightly browner / secondary (web opacity 0.5)
 	const FLinearColor LazyRopeCol(0.22f, 0.18f, 0.13f, 1.f);
 	Tint(JibLazySheetSegA, LazyRopeCol);
@@ -668,8 +723,8 @@ void ASailBoatPawn::UpdateRunningRigging()
 		ThinLazy(JibLazySheetSegA, Hang, HeapWx);
 		ThinLazy(JibLazySheetSegB, HeapWx, LazyCar);
 
-		// Manual jib douse — hide sheets (tracks/cars stay)
-		if (JibSet01 < 0.08f)
+		// Hide jib sheets when sail is mostly furled (tracks/cars stay).
+		if (JibSet01 < 0.18f)
 		{
 			auto Hide = [](UStaticMeshComponent* C)
 			{
@@ -2795,20 +2850,24 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 		EnsureSailClothBuilt(false);
 	}
 
-	// Manual jib set/douse (smooth furl; independent of Code Zero)
-	JibSet01 = FMath::FInterpTo(JibSet01, JibSetTarget01, DeltaSeconds, 2.2f);
-	const bool bJibFlying = JibSet01 > 0.08f;
+	// Manual jib set/douse — roller furling (smooth wrap onto forestay).
+	// Slightly slower on the douse so the furler spin / wrap reads clearly.
+	const float JibFurlRate = (JibSetTarget01 < JibSet01) ? 1.15f : 2.0f;
+	JibSet01 = FMath::FInterpTo(JibSet01, JibSetTarget01, DeltaSeconds, JibFurlRate);
+	// Cloth always visible: fully furled is a tight roll on the forestay foil.
+	const bool bJibVisible = true;
+	// Sheets only when the sail is mostly out.
+	const bool bJibSheetsOut = JibSet01 > 0.18f;
 	if (JibSailMesh)
 	{
-		JibSailMesh->SetVisibility(bJibFlying);
-		JibSailMesh->SetHiddenInGame(!bJibFlying);
+		JibSailMesh->SetVisibility(bJibVisible);
+		JibSailMesh->SetHiddenInGame(!bJibVisible);
 	}
-	// Hide jib sheets / lazy when doused
-	auto HideJibRope = [bJibFlying](UStaticMeshComponent* C)
+	auto HideJibRope = [bJibSheetsOut](UStaticMeshComponent* C)
 	{
 		if (!C) return;
-		C->SetVisibility(bJibFlying);
-		C->SetHiddenInGame(!bJibFlying);
+		C->SetVisibility(bJibSheetsOut);
+		C->SetHiddenInGame(!bJibSheetsOut);
 	};
 	HideJibRope(JibSheetPortMesh);
 	HideJibRope(JibSheetStbdMesh);
@@ -2816,6 +2875,7 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 	HideJibRope(JibSheetStbdToWinchMesh);
 	HideJibRope(JibLazySheetSegA);
 	HideJibRope(JibLazySheetSegB);
+	const bool bJibFlying = JibSet01 > 0.08f; // aero / telltales threshold
 
 	const float Ease = FMath::Clamp(Dynamics.SheetEase, 0.f, 1.f);
 	// Single source of truth: Dynamics.LeeSign (+1 = lee port = wind from stbd).
@@ -2869,17 +2929,15 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 		// RT proxy rebuild every frame (expensive; not needed for section vertex updates).
 		MainCloth.PushToMesh(MainSailMesh);
 
-		// --- Jib: only the leeward lead loads the clew (windward is lazy) ---
-		// Skipped when manually doused (jib can stay set with the Code Zero).
+		// --- Jib: lee lead + roller furling morph onto forestay ---
 		FVector WindLocalJib = WindLocalMain;
-		if (bJibFlying && JibCloth.bInitialized && JibSailMesh)
+		if (bJibVisible && JibCloth.bInitialized && JibSailMesh)
 		{
 			const float MeshSJib = ActiveSpec.MeshUniformScale();
 			const float Car = FMath::Clamp(Dynamics.JibCar01, 0.f, 1.f);
 			FVector LeadPortBoat, LeadStbdBoat;
 			if (CachedRigging.bJibTracksValid)
 			{
-				// Match visual cars on the genoa tracks
 				LeadPortBoat = FMath::Lerp(
 					CachedRigging.JibPortTrackFwd, CachedRigging.JibPortTrackAft, Car) * MeshSJib
 					+ FVector(0.f, 0.f, 3.f);
@@ -2903,32 +2961,45 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 			const FVector LeadStbdLocal = JibXf.InverseTransformPosition(LeadStbdBoat);
 			WindLocalJib = JibXf.InverseTransformVectorNoScale(AirVelBoat).GetSafeNormal();
 
-			// Soften aero while furling in/out
+			// Soften aero as the sail rolls in (fully furled → no wind force).
 			const float AeroSave = JibCloth.AeroK;
-			JibCloth.AeroK = AeroSave * FMath::Clamp(JibSet01, 0.f, 1.f);
-			JibCloth.Step(
-				DeltaSeconds, WindLocalJib, AwsKn * JibSet01,
-				FVector::ZeroVector,
-				Ease,
-				LeadPortLocal, LeadStbdLocal,
-				bLeeToStarboard);
+			const float SetAmt = FMath::Clamp(JibSet01, 0.f, 1.f);
+			JibCloth.AeroK = AeroSave * SetAmt * SetAmt;
+			if (SetAmt > 0.12f)
+			{
+				JibCloth.Step(
+					DeltaSeconds, WindLocalJib, AwsKn * SetAmt,
+					FVector::ZeroVector,
+					Ease,
+					LeadPortLocal, LeadStbdLocal,
+					bLeeToStarboard);
+			}
+			else
+			{
+				// Nearly / fully furled: skip aero so the wrap doesn't fight the wind.
+				JibCloth.SnapRigToStay();
+			}
 			JibCloth.AeroK = AeroSave;
+			// Wrap cloth around forestay; drive furler drum from returned angle.
+			FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 			JibCloth.PushToMesh(JibSailMesh);
+
+			// Forestay foil + spinning furler drum at the tack.
+			UpdateJibFurlerVisuals(MeshSJib);
 		}
 
 		if (bEnableSailVisualExtras)
 		{
 			SailVisuals.SailNumber = SailNumber;
 			SailVisuals.bEnabled = true;
-			// Yarns on jib only when set (Code Zero never has telltales).
 			SailVisuals.bJibTellTales = bJibFlying;
 			SailVisuals.EnsureBuilt(MainSailMesh, JibSailMesh);
 			SailVisuals.Update(DeltaSeconds, MainCloth, JibCloth, WindLocalMain, WindLocalJib);
 		}
 	}
-	else if (bJibFlying && JibCloth.bInitialized && JibSailMesh)
+	else if (bJibVisible && JibCloth.bInitialized && JibSailMesh)
 	{
-		// Main missing — still step jib alone (lee lead only)
+		// Main missing — still step/furl jib alone
 		const float MeshSJib = ActiveSpec.MeshUniformScale();
 		const float Car = FMath::Clamp(Dynamics.JibCar01, 0.f, 1.f);
 		FVector LeadPortBoat, LeadStbdBoat;
@@ -2953,13 +3024,23 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 		}
 		const FTransform JibXf = JibSailMesh->GetRelativeTransform();
 		const FVector WindLocalJib = JibXf.InverseTransformVectorNoScale(AirVelBoat).GetSafeNormal();
-		JibCloth.Step(
-			DeltaSeconds, WindLocalJib, AwsKn * JibSet01,
-			FVector::ZeroVector, Ease,
-			JibXf.InverseTransformPosition(LeadPortBoat),
-			JibXf.InverseTransformPosition(LeadStbdBoat),
-			bLeeToStarboard);
+		const float SetAmt = FMath::Clamp(JibSet01, 0.f, 1.f);
+		if (SetAmt > 0.12f)
+		{
+			JibCloth.Step(
+				DeltaSeconds, WindLocalJib, AwsKn * SetAmt,
+				FVector::ZeroVector, Ease,
+				JibXf.InverseTransformPosition(LeadPortBoat),
+				JibXf.InverseTransformPosition(LeadStbdBoat),
+				bLeeToStarboard);
+		}
+		else
+		{
+			JibCloth.SnapRigToStay();
+		}
+		FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 		JibCloth.PushToMesh(JibSailMesh);
+		UpdateJibFurlerVisuals(MeshSJib);
 	}
 
 	ApplyClothForceToDynamics();

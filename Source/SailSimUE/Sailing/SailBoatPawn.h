@@ -378,6 +378,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BowspritMesh;
 
+	/** Forestay extrusion (foil) + furler drum at the tack (roller-furling jib). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Rigging")
+	TObjectPtr<UStaticMeshComponent> ForestayFoilMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Rigging")
+	TObjectPtr<UStaticMeshComponent> FurlerDrumMesh;
 	/** Spin sheet rope: clew → stern quarter block. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components|Rigging")
 	TObjectPtr<UStaticMeshComponent> SpinSheetMesh;
@@ -700,6 +705,8 @@ protected:
 	 */
 	float JibSet01 = 1.f;
 	float JibSetTarget01 = 1.f;
+	/** Visual furler drum spin (radians), driven by roller-furl amount. */
+	float FurlerSpinRad = 0.f;
 	/**
 	 * Manual kite set 0 or 1. When 1, hoist and stay up; when 0, douse.
 	 * Default doused — user hits KITE · SET when they want it.
@@ -733,6 +740,8 @@ protected:
 	void ApplyPlayerHullPaint(UProceduralMeshComponent* HullMesh);
 	void UpdateHullCollisionFromMesh();
 	void PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVector& A, const FVector& B);
+	/** Place forestay foil + spin furler drum from jib stay endpoints (MeshS-scaled boat cm). */
+	void UpdateJibFurlerVisuals(float MeshS);
 	void PlaceBoxAt(UStaticMeshComponent* Comp, const FVector& Center, const FVector& Scale, const FRotator& Rot);
 	void EnsureRunningRiggingBuilt();
 	void UpdateRunningRigging();
