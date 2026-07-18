@@ -289,6 +289,8 @@ struct FSailClothSim
 	 * for driving a furler drum visual (0 = fully set).
 	 */
 	float ApplyRollerFurl(float Set01);
+	/** After unfurl finishes, reset free verts to loft so cloth Step doesn't pop. */
+	void SeedOpenFromLoft();
 	/**
 	 * Asym / Code Zero: if the kite is on the windward side, mirror free verts
 	 * across the centreline so it always fills to leeward.

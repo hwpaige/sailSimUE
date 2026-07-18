@@ -2851,8 +2851,8 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 	}
 
 	// Manual jib set/douse — roller furling (smooth wrap onto forestay).
-	// Slightly slower on the douse so the furler spin / wrap reads clearly.
-	const float JibFurlRate = (JibSetTarget01 < JibSet01) ? 1.15f : 2.0f;
+	// Same moderate rate both ways so the full roll is visible end-to-end.
+	const float JibFurlRate = 1.05f;
 	JibSet01 = FMath::FInterpTo(JibSet01, JibSetTarget01, DeltaSeconds, JibFurlRate);
 	// Cloth always visible: fully furled is a tight roll on the forestay foil.
 	const bool bJibVisible = true;
@@ -2961,27 +2961,36 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 			const FVector LeadStbdLocal = JibXf.InverseTransformPosition(LeadStbdBoat);
 			WindLocalJib = JibXf.InverseTransformVectorNoScale(AirVelBoat).GetSafeNormal();
 
-			// Soften aero as the sail rolls in (fully furled → no wind force).
-			const float AeroSave = JibCloth.AeroK;
+			// Roller-furl owns the mesh until nearly fully set. Never SnapRigToStay
+			// mid-furl (that collapsed the sail) and never Step on furled verts
+			// (that popped them open).
 			const float SetAmt = FMath::Clamp(JibSet01, 0.f, 1.f);
-			JibCloth.AeroK = AeroSave * SetAmt * SetAmt;
-			if (SetAmt > 0.12f)
+			constexpr float kFurlDriveMaxSet = 0.92f; // below this: pure geometric wrap
+			if (SetAmt < kFurlDriveMaxSet)
 			{
+				bJibFurlDriveActive = true;
+				FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
+			}
+			else
+			{
+				if (bJibFurlDriveActive)
+				{
+					// Hand off: seed loft so Verlet doesn't explode from sausage shape.
+					JibCloth.SeedOpenFromLoft();
+					bJibFurlDriveActive = false;
+				}
+				const float AeroSave = JibCloth.AeroK;
+				JibCloth.AeroK = AeroSave * SetAmt * SetAmt;
 				JibCloth.Step(
 					DeltaSeconds, WindLocalJib, AwsKn * SetAmt,
 					FVector::ZeroVector,
 					Ease,
 					LeadPortLocal, LeadStbdLocal,
 					bLeeToStarboard);
+				JibCloth.AeroK = AeroSave;
+				// Tiny residual wrap near full-set (smooth last few degrees of drum).
+				FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 			}
-			else
-			{
-				// Nearly / fully furled: skip aero so the wrap doesn't fight the wind.
-				JibCloth.SnapRigToStay();
-			}
-			JibCloth.AeroK = AeroSave;
-			// Wrap cloth around forestay; drive furler drum from returned angle.
-			FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 			JibCloth.PushToMesh(JibSailMesh);
 
 			// Forestay foil + spinning furler drum at the tack.
@@ -3025,20 +3034,27 @@ void ASailBoatPawn::UpdateSailCloth(float DeltaSeconds)
 		const FTransform JibXf = JibSailMesh->GetRelativeTransform();
 		const FVector WindLocalJib = JibXf.InverseTransformVectorNoScale(AirVelBoat).GetSafeNormal();
 		const float SetAmt = FMath::Clamp(JibSet01, 0.f, 1.f);
-		if (SetAmt > 0.12f)
+		constexpr float kFurlDriveMaxSet = 0.92f;
+		if (SetAmt < kFurlDriveMaxSet)
 		{
+			bJibFurlDriveActive = true;
+			FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
+		}
+		else
+		{
+			if (bJibFurlDriveActive)
+			{
+				JibCloth.SeedOpenFromLoft();
+				bJibFurlDriveActive = false;
+			}
 			JibCloth.Step(
 				DeltaSeconds, WindLocalJib, AwsKn * SetAmt,
 				FVector::ZeroVector, Ease,
 				JibXf.InverseTransformPosition(LeadPortBoat),
 				JibXf.InverseTransformPosition(LeadStbdBoat),
 				bLeeToStarboard);
+			FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 		}
-		else
-		{
-			JibCloth.SnapRigToStay();
-		}
-		FurlerSpinRad = JibCloth.ApplyRollerFurl(SetAmt);
 		JibCloth.PushToMesh(JibSailMesh);
 		UpdateJibFurlerVisuals(MeshSJib);
 	}

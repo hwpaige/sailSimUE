@@ -1823,12 +1823,12 @@ float FSailClothSim::ApplyRollerFurl(float Set01)
 	}
 	const float Set = FMath::Clamp(Set01, 0.f, 1.f);
 	const float Furl = 1.f - Set; // 0 = flying, 1 = fully wrapped
-	if (Furl < 1e-4f)
+	// Linear wrap progress (no smoothstep) so the last 20% of Set still moves cloth.
+	const float F = Furl;
+	if (F < 1e-5f)
 	{
 		return 0.f;
 	}
-	// Smooth ease so the first motion is clearly rotational, not a hard shrink.
-	const float F = Furl * Furl * (3.f - 2.f * Furl);
 
 	FVector Axis = StayHeadLocal - StayTackLocal;
 	const float StayLen = FMath::Max(1.f, Axis.Size());
@@ -1848,27 +1848,24 @@ float FSailClothSim::ApplyRollerFurl(float Set01)
 		for (int32 J = 0; J < Nw; ++J)
 		{
 			const int32 Idx = GridIdx(I, J);
-			if (!Pos.IsValidIndex(Idx)) continue;
+			if (!Pos.IsValidIndex(Idx) || !FlatRest.IsValidIndex(Idx)) continue;
 
-			// Luff rides the foil surface (slightly proud of the stay wire).
+			// Luff rides the stay (foil mesh is separate).
 			if (J == 0)
 			{
-				// Keep luff on the stay line (reassert); foil body is a separate mesh.
 				Pos[Idx] = Prev[Idx] = OnStay;
 				continue;
 			}
 
-			const float Chord = float(J) / float(Nw - 1); // 0 at luff+1 … 1 at leech
-			// Open cloth position (post-Step billow).
-			const FVector POpen = Pos[Idx];
-			// Stable radial from loft rest so the furl doesn't thrash with aero.
-			const FVector Pref = FlatRest.IsValidIndex(Idx) ? FlatRest[Idx] : POpen;
+			const float Chord = float(J) / float(Nw - 1); // 0 near luff … 1 at leech
+			// ALWAYS morph from loft rest → spiral. Never from live Pos / SnapRigToStay
+			// (that collapsed mid-furl and popped open mid-unfurl).
+			const FVector Pref = FlatRest[Idx];
 			FVector Rad = Pref - OnStay;
 			Rad -= Axis * FVector::DotProduct(Rad, Axis);
 			float R0 = Rad.Size();
 			if (R0 < 0.5f)
 			{
-				// Degenerate: invent a horizontal radial.
 				FVector Hint = FVector::CrossProduct(Axis, FVector(0.f, 0.f, 1.f));
 				if (Hint.SizeSquared() < 1e-4f)
 				{
@@ -1878,30 +1875,29 @@ float FSailClothSim::ApplyRollerFurl(float Set01)
 				R0 = 20.f;
 			}
 			const FVector RadDir = Rad / R0;
+			const FVector POpen = OnStay + RadDir * R0; // open loft in stay frame
 
-			// Spiral onto the foil: outer cloth (leech) packs on the outside after more wrap.
+			// Spiral onto the foil: leech packs outermost after more wrap.
 			const float RFurl = FoilR + Chord * float(Nw) * Layer + 1.2f;
 			const float Ang = WrapRad * (0.12f + 0.88f * Chord);
 			const float C = FMath::Cos(Ang);
 			const float S = FMath::Sin(Ang);
-			// Rodrigues rotation of RadDir around Axis
 			const FVector RotDir =
 				RadDir * C
 				+ FVector::CrossProduct(Axis, RadDir) * S
 				+ Axis * FVector::DotProduct(Axis, RadDir) * (1.f - C);
 
 			const FVector PFurl = OnStay + RotDir * RFurl;
-			// Also pull open cloth toward stay early so the foot/leech don't hang while rolling.
-			const FVector PPull = FMath::Lerp(POpen, OnStay + RadDir * FMath::Lerp(R0, RFurl, 0.35f), F * 0.55f);
-			Pos[Idx] = FMath::Lerp(PPull, PFurl, F);
-			Prev[Idx] = Pos[Idx]; // kill Verlet while furled so it doesn't unspool
+			// Pure geometric blend: F=0 open loft, F=1 fully rolled sausage.
+			Pos[Idx] = FMath::Lerp(POpen, PFurl, F);
+			Prev[Idx] = Pos[Idx]; // freeze Verlet while furl-driven
 		}
 	}
 
-	// Headboard collapses onto the foil when fully furled.
-	if (F > 0.5f && HeadRowIndices.Num() > 0)
+	// Headboard eases onto the foil only near full furl (no early collapse).
+	if (F > 0.75f && HeadRowIndices.Num() > 0)
 	{
-		const float Hf = (F - 0.5f) * 2.f;
+		const float Hf = (F - 0.75f) / 0.25f;
 		for (const int32 Idx : HeadRowIndices)
 		{
 			if (!Pos.IsValidIndex(Idx)) continue;
@@ -1911,6 +1907,23 @@ float FSailClothSim::ApplyRollerFurl(float Set01)
 	}
 
 	return WrapRad;
+}
+
+/** Restore free cloth from loft rest so aero Step can resume after unfurl. */
+void FSailClothSim::SeedOpenFromLoft()
+{
+	if (!bGridTopology || Pos.Num() == 0) return;
+	for (int32 I = 0; I < Pos.Num(); ++I)
+	{
+		if (!FlatRest.IsValidIndex(I)) continue;
+		// Leave hard pins alone (luff/head will be reasserted by Step/Snap).
+		if (bPinned.IsValidIndex(I) && bPinned[I] && I != ClewIndex) continue;
+		Pos[I] = Prev[I] = FlatRest[I];
+	}
+	if (bStayValid)
+	{
+		SnapRigToStay();
+	}
 }
 
 void FSailClothSim::SnapRigToStay()

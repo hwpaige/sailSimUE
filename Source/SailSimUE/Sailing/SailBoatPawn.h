@@ -708,6 +708,11 @@ protected:
 	/** Visual furler drum spin (radians), driven by roller-furl amount. */
 	float FurlerSpinRad = 0.f;
 	/**
+	 * True while geometric roller-furl owns the jib mesh (Set01 below full-open).
+	 * Used to seed loft verts once when handing control back to cloth Step.
+	 */
+	bool bJibFurlDriveActive = false;
+	/**
 	 * Manual kite set 0 or 1. When 1, hoist and stay up; when 0, douse.
 	 * Default doused — user hits KITE · SET when they want it.
 	 */
