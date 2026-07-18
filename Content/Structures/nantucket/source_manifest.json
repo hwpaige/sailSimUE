@@ -1,0 +1,1258 @@
+{
+  "id": "nantucket",
+  "heroes": "nantucket-harbor",
+  "enc": "enc-maritime.json",
+  "osm": "osm-footprints.json",
+  "navLights": [
+    {
+      "id": "enc-4386225",
+      "name": null,
+      "lat": 41.30847219999998,
+      "lon": -70.20100000000002,
+      "elevM": 6.6,
+      "color": "#44cc77",
+      "periodS": 1,
+      "segments": [
+        {
+          "on": 0.3,
+          "off": 0.7
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 4,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386226",
+      "name": null,
+      "lat": 41.30508329999998,
+      "lon": -70.19172220000002,
+      "elevM": 6.6,
+      "color": "#ff4444",
+      "periodS": 1,
+      "segments": [
+        {
+          "on": 0.3,
+          "off": 0.7
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 4,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386233",
+      "name": null,
+      "lat": 41.31701099999998,
+      "lon": -70.103699,
+      "elevM": 6.6,
+      "color": "#fff8d2",
+      "periodS": 8,
+      "segments": [
+        {
+          "on": 0.4,
+          "off": 0.6
+        },
+        {
+          "on": 2,
+          "off": 5
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 12,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386237",
+      "name": null,
+      "lat": 41.31090929999999,
+      "lon": -70.10207009999999,
+      "elevM": 6.6,
+      "color": "#ff4444",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.4,
+          "off": 3.6
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 2,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386238",
+      "name": null,
+      "lat": 41.310294,
+      "lon": -70.100031,
+      "elevM": 9.7,
+      "color": "#44cc77",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.4,
+          "off": 3.6
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 2,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386228",
+      "name": null,
+      "lat": 41.28626700000001,
+      "lon": -70.09526699999998,
+      "elevM": 4.8999999999999995,
+      "color": "#44cc77",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.35,
+          "off": 0.65
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 1,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386229",
+      "name": null,
+      "lat": 41.285799999999995,
+      "lon": -70.09506699999997,
+      "elevM": 4.8999999999999995,
+      "color": "#ff4444",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.35,
+          "off": 0.65
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 1,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386227",
+      "name": null,
+      "lat": 41.29348599999997,
+      "lon": -70.09456599999999,
+      "elevM": 6.6,
+      "color": "#ff4444",
+      "periodS": 1,
+      "segments": [
+        {
+          "on": 0.3,
+          "off": 0.7
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 4,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386235",
+      "name": null,
+      "lat": 41.28988670000001,
+      "lon": -70.09232250000002,
+      "elevM": 11.3,
+      "color": "#fff8d2",
+      "periodS": 1,
+      "segments": [
+        {
+          "on": 0.3,
+          "off": 0.7
+        }
+      ],
+      "rangeNm": 5,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 4,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386230",
+      "name": null,
+      "lat": 41.289255000000026,
+      "lon": -70.09204920000002,
+      "elevM": 16.981387922067444,
+      "color": "#fff8d2",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.35,
+          "off": 0.65
+        }
+      ],
+      "rangeNm": 8,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 1,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "brant-point-light",
+      "name": "Brant Point Light",
+      "lat": 41.28917,
+      "lon": -70.09056,
+      "elevM": 11.38784,
+      "color": "#ff6a52",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 1,
+          "off": 3
+        }
+      ],
+      "rangeNm": 12,
+      "sector": null,
+      "catLit": "major",
+      "source": "hero",
+      "kind": "lighthouse"
+    },
+    {
+      "id": "enc-4386232",
+      "name": null,
+      "lat": 41.291867000000025,
+      "lon": -70.09038299999997,
+      "elevM": 6.6,
+      "color": "#44cc77",
+      "periodS": 2.5,
+      "segments": [
+        {
+          "on": 0.3,
+          "off": 2.2
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 2,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386239",
+      "name": null,
+      "lat": 41.29001699999998,
+      "lon": -70.09026699999998,
+      "elevM": 8.5,
+      "color": "#ff4444",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 1,
+          "off": 3
+        }
+      ],
+      "rangeNm": 9,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 8,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-666643",
+      "name": null,
+      "lat": 41.25693669999998,
+      "lon": -70.06352099999998,
+      "elevM": 18.367624487503036,
+      "color": "#fff8d2",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.35,
+          "off": 0.65
+        }
+      ],
+      "rangeNm": 1,
+      "sector": null,
+      "catLit": "aero",
+      "litchr": 19,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "great-point-light",
+      "name": "Great Point Light",
+      "lat": 41.3901,
+      "lon": -70.0483,
+      "elevM": 22.482560000000003,
+      "color": "#fff8d2",
+      "periodS": 5,
+      "segments": [
+        {
+          "on": 1.25,
+          "off": 3.75
+        }
+      ],
+      "rangeNm": 12,
+      "sector": null,
+      "catLit": "major",
+      "source": "hero",
+      "kind": "lighthouse"
+    },
+    {
+      "id": "enc-4386241",
+      "name": null,
+      "lat": 41.30541670000002,
+      "lon": -70.02911110000002,
+      "elevM": 6.6,
+      "color": "#ff4444",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.4,
+          "off": 3.6
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 2,
+      "source": "enc",
+      "kind": "light"
+    },
+    {
+      "id": "enc-4386240",
+      "name": null,
+      "lat": 41.30500000000001,
+      "lon": -70.02694439999999,
+      "elevM": 6.6,
+      "color": "#ff4444",
+      "periodS": 4,
+      "segments": [
+        {
+          "on": 0.4,
+          "off": 3.6
+        }
+      ],
+      "rangeNm": 3,
+      "sector": null,
+      "catLit": "standard",
+      "litchr": 2,
+      "source": "enc",
+      "kind": "light"
+    }
+  ],
+  "beacons": [
+    {
+      "id": "brant-point-light",
+      "name": "Brant Point Light",
+      "lat": 41.28917,
+      "lon": -70.09056,
+      "elevM": 11.38784,
+      "periodS": 4,
+      "color": "#ff6a52"
+    },
+    {
+      "id": "great-point-light",
+      "name": "Great Point Light",
+      "lat": 41.3901,
+      "lon": -70.0483,
+      "elevM": 22.482560000000003,
+      "periodS": 5,
+      "color": "#fff8d2"
+    }
+  ],
+  "bbox": {
+    "west": -70.32,
+    "east": -70.02,
+    "south": 41.235,
+    "north": 41.395
+  },
+  "streamTileCols": 8,
+  "streamTileRows": 8,
+  "lod": {
+    "harbor": {
+      "lat": 41.285,
+      "lon": -70.09
+    },
+    "fullVoxelRadiusFt": 7500,
+    "outer": "box",
+    "runtimeFullRadius": 1,
+    "levels": [
+      "full",
+      "shell"
+    ],
+    "cameraLocalFull": true,
+    "maxFullTiles": 2,
+    "maxFullVerts": 700000,
+    "heavyFullVerts": 100000,
+    "heavyShellVerts": 100000
+  },
+  "stream": {
+    "loadRadius": 3,
+    "unloadRadius": 5,
+    "note": "Shell ring always; full budgeted at runtime"
+  },
+  "bakedAt": "2026-07-11T07:05:40.552Z",
+  "tiles": [
+    {
+      "id": "4_0",
+      "tx": 4,
+      "ty": 0,
+      "file": "tiles/4_0.mesh",
+      "fileLod1": "tiles/4_0_l1.mesh",
+      "bbox": {
+        "west": -70.16999999999999,
+        "east": -70.1325,
+        "south": 41.235,
+        "north": 41.255
+      },
+      "vertices": 9588,
+      "verticesLod1": 6096,
+      "indices": 12888,
+      "bytes": 195388,
+      "bytesLod1": 123736,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 91,
+        "trees": 39,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 26
+      }
+    },
+    {
+      "id": "5_0",
+      "tx": 5,
+      "ty": 0,
+      "file": "tiles/5_0.mesh",
+      "fileLod1": "tiles/5_0_l1.mesh",
+      "bbox": {
+        "west": -70.1325,
+        "east": -70.095,
+        "south": 41.235,
+        "north": 41.255
+      },
+      "vertices": 70050,
+      "verticesLod1": 26625,
+      "indices": 96360,
+      "bytes": 1436208,
+      "bytesLod1": 542972,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 280,
+        "trees": 338,
+        "grass": 137,
+        "seagrass": 70,
+        "treesShell": 145
+      }
+    },
+    {
+      "id": "6_0",
+      "tx": 6,
+      "ty": 0,
+      "file": "tiles/6_0.mesh",
+      "fileLod1": "tiles/6_0_l1.mesh",
+      "bbox": {
+        "west": -70.095,
+        "east": -70.05749999999999,
+        "south": 41.235,
+        "north": 41.255
+      },
+      "vertices": 48382,
+      "verticesLod1": 22660,
+      "indices": 66384,
+      "bytes": 991284,
+      "bytesLod1": 461092,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 280,
+        "trees": 226,
+        "grass": 420,
+        "seagrass": 0,
+        "treesShell": 112
+      }
+    },
+    {
+      "id": "7_0",
+      "tx": 7,
+      "ty": 0,
+      "file": "tiles/7_0.mesh",
+      "fileLod1": "tiles/7_0_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.235,
+        "north": 41.255
+      },
+      "vertices": 8660,
+      "verticesLod1": 3433,
+      "indices": 12042,
+      "bytes": 178084,
+      "bytesLod1": 69884,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 45,
+        "trees": 38,
+        "grass": 198,
+        "seagrass": 0,
+        "treesShell": 17
+      }
+    },
+    {
+      "id": "2_1",
+      "tx": 2,
+      "ty": 1,
+      "file": "tiles/2_1.mesh",
+      "fileLod1": "tiles/2_1_l1.mesh",
+      "bbox": {
+        "west": -70.24499999999999,
+        "east": -70.2075,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 2810,
+      "verticesLod1": 1418,
+      "indices": 3792,
+      "bytes": 57336,
+      "bytesLod1": 28752,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 22,
+        "trees": 12,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 6
+      }
+    },
+    {
+      "id": "3_1",
+      "tx": 3,
+      "ty": 1,
+      "file": "tiles/3_1.mesh",
+      "fileLod1": "tiles/3_1_l1.mesh",
+      "bbox": {
+        "west": -70.2075,
+        "east": -70.16999999999999,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 34681,
+      "verticesLod1": 18340,
+      "indices": 47235,
+      "bytes": 709172,
+      "bytesLod1": 373060,
+      "sources": {
+        "heroes": 0,
+        "enc": 1,
+        "osm": 280,
+        "trees": 139,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 48
+      }
+    },
+    {
+      "id": "4_1",
+      "tx": 4,
+      "ty": 1,
+      "file": "tiles/4_1.mesh",
+      "fileLod1": "tiles/4_1_l1.mesh",
+      "bbox": {
+        "west": -70.16999999999999,
+        "east": -70.1325,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 25211,
+      "verticesLod1": 16021,
+      "indices": 34173,
+      "bytes": 514876,
+      "bytesLod1": 326072,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 206,
+        "trees": 115,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 81
+      }
+    },
+    {
+      "id": "5_1",
+      "tx": 5,
+      "ty": 1,
+      "file": "tiles/5_1.mesh",
+      "fileLod1": "tiles/5_1_l1.mesh",
+      "bbox": {
+        "west": -70.1325,
+        "east": -70.095,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 390555,
+      "verticesLod1": 52351,
+      "indices": 573213,
+      "bytes": 8151196,
+      "bytesLod1": 1080280,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 280,
+        "trees": 330,
+        "grass": 420,
+        "seagrass": 0,
+        "treesShell": 144
+      }
+    },
+    {
+      "id": "6_1",
+      "tx": 6,
+      "ty": 1,
+      "file": "tiles/6_1.mesh",
+      "fileLod1": "tiles/6_1_l1.mesh",
+      "bbox": {
+        "west": -70.095,
+        "east": -70.05749999999999,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 467360,
+      "verticesLod1": 63159,
+      "indices": 683058,
+      "bytes": 9742648,
+      "bytesLod1": 1302784,
+      "sources": {
+        "heroes": 0,
+        "enc": 2,
+        "osm": 280,
+        "trees": 588,
+        "grass": 420,
+        "seagrass": 0,
+        "treesShell": 216
+      }
+    },
+    {
+      "id": "7_1",
+      "tx": 7,
+      "ty": 1,
+      "file": "tiles/7_1.mesh",
+      "fileLod1": "tiles/7_1_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.255,
+        "north": 41.275
+      },
+      "vertices": 9012,
+      "verticesLod1": 5744,
+      "indices": 12150,
+      "bytes": 183796,
+      "bytesLod1": 116536,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 87,
+        "trees": 40,
+        "grass": 10,
+        "seagrass": 0,
+        "treesShell": 24
+      }
+    },
+    {
+      "id": "1_2",
+      "tx": 1,
+      "ty": 2,
+      "file": "tiles/1_2.mesh",
+      "fileLod1": "tiles/1_2_l1.mesh",
+      "bbox": {
+        "west": -70.2825,
+        "east": -70.24499999999999,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 34,
+      "verticesLod1": 34,
+      "indices": 42,
+      "bytes": 696,
+      "bytesLod1": 696,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 1,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "2_2",
+      "tx": 2,
+      "ty": 2,
+      "file": "tiles/2_2.mesh",
+      "fileLod1": "tiles/2_2_l1.mesh",
+      "bbox": {
+        "west": -70.24499999999999,
+        "east": -70.2075,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 1874,
+      "verticesLod1": 545,
+      "indices": 2700,
+      "bytes": 38928,
+      "bytesLod1": 11156,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 5,
+        "trees": 5,
+        "grass": 128,
+        "seagrass": 0,
+        "treesShell": 3
+      }
+    },
+    {
+      "id": "3_2",
+      "tx": 3,
+      "ty": 2,
+      "file": "tiles/3_2.mesh",
+      "fileLod1": "tiles/3_2_l1.mesh",
+      "bbox": {
+        "west": -70.2075,
+        "east": -70.16999999999999,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 31679,
+      "verticesLod1": 15220,
+      "indices": 42663,
+      "bytes": 645856,
+      "bytesLod1": 307540,
+      "sources": {
+        "heroes": 0,
+        "enc": 2,
+        "osm": 282,
+        "trees": 135,
+        "grass": 6,
+        "seagrass": 0,
+        "treesShell": 48
+      }
+    },
+    {
+      "id": "4_2",
+      "tx": 4,
+      "ty": 2,
+      "file": "tiles/4_2.mesh",
+      "fileLod1": "tiles/4_2_l1.mesh",
+      "bbox": {
+        "west": -70.16999999999999,
+        "east": -70.1325,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 32553,
+      "verticesLod1": 20100,
+      "indices": 43875,
+      "bytes": 663812,
+      "bytesLod1": 408340,
+      "sources": {
+        "heroes": 0,
+        "enc": 2,
+        "osm": 280,
+        "trees": 141,
+        "grass": 3,
+        "seagrass": 0,
+        "treesShell": 88
+      }
+    },
+    {
+      "id": "5_2",
+      "tx": 5,
+      "ty": 2,
+      "file": "tiles/5_2.mesh",
+      "fileLod1": "tiles/5_2_l1.mesh",
+      "bbox": {
+        "west": -70.1325,
+        "east": -70.095,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 543249,
+      "verticesLod1": 134881,
+      "indices": 798819,
+      "bytes": 11344028,
+      "bytesLod1": 2788388,
+      "sources": {
+        "heroes": 4,
+        "enc": 30,
+        "osm": 287,
+        "trees": 120,
+        "grass": 326,
+        "seagrass": 182,
+        "treesShell": 81
+      }
+    },
+    {
+      "id": "6_2",
+      "tx": 6,
+      "ty": 2,
+      "file": "tiles/6_2.mesh",
+      "fileLod1": "tiles/6_2_l1.mesh",
+      "bbox": {
+        "west": -70.095,
+        "east": -70.05749999999999,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 522350,
+      "verticesLod1": 165172,
+      "indices": 762048,
+      "bytes": 10883460,
+      "bytesLod1": 3415180,
+      "sources": {
+        "heroes": 6,
+        "enc": 112,
+        "osm": 304,
+        "trees": 172,
+        "grass": 68,
+        "seagrass": 183,
+        "treesShell": 88
+      }
+    },
+    {
+      "id": "7_2",
+      "tx": 7,
+      "ty": 2,
+      "file": "tiles/7_2.mesh",
+      "fileLod1": "tiles/7_2_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.275,
+        "north": 41.295
+      },
+      "vertices": 28999,
+      "verticesLod1": 15448,
+      "indices": 39861,
+      "bytes": 594448,
+      "bytesLod1": 314224,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 206,
+        "trees": 111,
+        "grass": 18,
+        "seagrass": 500,
+        "treesShell": 74
+      }
+    },
+    {
+      "id": "1_3",
+      "tx": 1,
+      "ty": 3,
+      "file": "tiles/1_3.mesh",
+      "fileLod1": "tiles/1_3_l1.mesh",
+      "bbox": {
+        "west": -70.2825,
+        "east": -70.24499999999999,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 6949,
+      "verticesLod1": 4874,
+      "indices": 9309,
+      "bytes": 141488,
+      "bytesLod1": 98976,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 75,
+        "trees": 28,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 20
+      }
+    },
+    {
+      "id": "3_3",
+      "tx": 3,
+      "ty": 3,
+      "file": "tiles/3_3.mesh",
+      "fileLod1": "tiles/3_3_l1.mesh",
+      "bbox": {
+        "west": -70.2075,
+        "east": -70.16999999999999,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 275992,
+      "verticesLod1": 274864,
+      "indices": 413760,
+      "bytes": 5794936,
+      "bytesLod1": 5772160,
+      "sources": {
+        "heroes": 0,
+        "enc": 13,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "5_3",
+      "tx": 5,
+      "ty": 3,
+      "file": "tiles/5_3.mesh",
+      "fileLod1": "tiles/5_3_l1.mesh",
+      "bbox": {
+        "west": -70.1325,
+        "east": -70.095,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 83007,
+      "verticesLod1": 65121,
+      "indices": 119445,
+      "bytes": 1722904,
+      "bytesLod1": 1348796,
+      "sources": {
+        "heroes": 0,
+        "enc": 12,
+        "osm": 15,
+        "trees": 2,
+        "grass": 44,
+        "seagrass": 107,
+        "treesShell": 1
+      }
+    },
+    {
+      "id": "6_3",
+      "tx": 6,
+      "ty": 3,
+      "file": "tiles/6_3.mesh",
+      "fileLod1": "tiles/6_3_l1.mesh",
+      "bbox": {
+        "west": -70.095,
+        "east": -70.05749999999999,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 71340,
+      "verticesLod1": 69968,
+      "indices": 101940,
+      "bytes": 1477876,
+      "bytesLod1": 1449424,
+      "sources": {
+        "heroes": 0,
+        "enc": 6,
+        "osm": 10,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 77,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "7_3",
+      "tx": 7,
+      "ty": 3,
+      "file": "tiles/7_3.mesh",
+      "fileLod1": "tiles/7_3_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 8756,
+      "verticesLod1": 4840,
+      "indices": 11628,
+      "bytes": 177868,
+      "bytesLod1": 97552,
+      "sources": {
+        "heroes": 0,
+        "enc": 9,
+        "osm": 104,
+        "trees": 26,
+        "grass": 4,
+        "seagrass": 22,
+        "treesShell": 12
+      }
+    },
+    {
+      "id": "0_4",
+      "tx": 0,
+      "ty": 4,
+      "file": "tiles/0_4.mesh",
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.32,
+        "east": -70.2825,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "vertices": 1912,
+      "verticesLod1": 0,
+      "indices": 2868,
+      "bytes": 40168,
+      "bytesLod1": 0,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 2,
+        "seagrass": 237,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "3_4",
+      "tx": 3,
+      "ty": 4,
+      "file": "tiles/3_4.mesh",
+      "fileLod1": "tiles/3_4_l1.mesh",
+      "bbox": {
+        "west": -70.2075,
+        "east": -70.16999999999999,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "vertices": 268464,
+      "verticesLod1": 268464,
+      "indices": 402696,
+      "bytes": 5637760,
+      "bytesLod1": 5637760,
+      "sources": {
+        "heroes": 0,
+        "enc": 1,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "5_4",
+      "tx": 5,
+      "ty": 4,
+      "file": "tiles/5_4.mesh",
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.1325,
+        "east": -70.095,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "vertices": 328,
+      "verticesLod1": 0,
+      "indices": 426,
+      "bytes": 6640,
+      "bytesLod1": 0,
+      "sources": {
+        "heroes": 0,
+        "enc": 3,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "7_4",
+      "tx": 7,
+      "ty": 4,
+      "file": "tiles/7_4.mesh",
+      "fileLod1": "tiles/7_4_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "vertices": 4158,
+      "verticesLod1": 1844,
+      "indices": 5652,
+      "bytes": 84996,
+      "bytesLod1": 37468,
+      "sources": {
+        "heroes": 0,
+        "enc": 5,
+        "osm": 28,
+        "trees": 14,
+        "grass": 0,
+        "seagrass": 54,
+        "treesShell": 8
+      }
+    },
+    {
+      "id": "0_5",
+      "tx": 0,
+      "ty": 5,
+      "file": "tiles/0_5.mesh",
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.32,
+        "east": -70.2825,
+        "south": 41.335,
+        "north": 41.355000000000004
+      },
+      "vertices": 2248,
+      "verticesLod1": 0,
+      "indices": 3372,
+      "bytes": 47224,
+      "bytesLod1": 0,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 1,
+        "seagrass": 280,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "6_5",
+      "tx": 6,
+      "ty": 5,
+      "file": "tiles/6_5.mesh",
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.095,
+        "east": -70.05749999999999,
+        "south": 41.335,
+        "north": 41.355000000000004
+      },
+      "vertices": 102,
+      "verticesLod1": 0,
+      "indices": 126,
+      "bytes": 2052,
+      "bytesLod1": 0,
+      "sources": {
+        "heroes": 0,
+        "enc": 1,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 0,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "7_5",
+      "tx": 7,
+      "ty": 5,
+      "file": "tiles/7_5.mesh",
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.335,
+        "north": 41.355000000000004
+      },
+      "vertices": 232,
+      "verticesLod1": 0,
+      "indices": 348,
+      "bytes": 4888,
+      "bytesLod1": 0,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 29,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "7_6",
+      "tx": 7,
+      "ty": 6,
+      "file": "tiles/7_6.mesh",
+      "fileLod1": "tiles/7_6_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.355000000000004,
+        "north": 41.375
+      },
+      "vertices": 226,
+      "verticesLod1": 34,
+      "indices": 330,
+      "bytes": 4728,
+      "bytesLod1": 696,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 1,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 24,
+        "treesShell": 0
+      }
+    },
+    {
+      "id": "7_7",
+      "tx": 7,
+      "ty": 7,
+      "file": "tiles/7_7.mesh",
+      "fileLod1": "tiles/7_7_l1.mesh",
+      "bbox": {
+        "west": -70.05749999999999,
+        "east": -70.02,
+        "south": 41.375,
+        "north": 41.395
+      },
+      "vertices": 1452,
+      "verticesLod1": 700,
+      "indices": 2118,
+      "bytes": 30268,
+      "bytesLod1": 14476,
+      "sources": {
+        "heroes": 1,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 0,
+        "seagrass": 69,
+        "treesShell": 0
+      }
+    }
+  ]
+}

@@ -12,23 +12,26 @@ struct FSeaParams
 	float WindSpeedKn = 18.f;
 	/** Meteorological: direction wind blows FROM (deg). */
 	float WindDirDeg = 225.f;
-	/** Overall wave height scale (cm peak amplitude ballpark for Gerstner). */
-	float AmplitudeCm = 40.f;
-	/** 0 = long swell, 1 = short chop. */
-	float Choppiness = 0.45f;
-	/** Dominant wave direction (propagation, usually wind + 180). */
+	/**
+	 * Wave height scale (cm). Kept for API compatibility; flat-ocean MVP ignores this
+	 * (Gerstner / procedural swell disabled).
+	 */
+	float AmplitudeCm = 0.f;
+	/** 0 = long swell, 1 = short chop (unused while flat). */
+	float Choppiness = 0.f;
+	/** Dominant wave direction (unused while flat). */
 	float WaveDirDeg = 45.f;
-	/** Seconds; used by procedural spectra. */
+	/** Seconds; reserved for future spectra. */
 	float TimeSec = 0.f;
 
 	static FSeaParams DefaultOpenOcean()
 	{
 		FSeaParams P;
-		P.WindSpeedKn = 18.f;
+		P.WindSpeedKn = 16.f;
 		P.WindDirDeg = 225.f;
 		P.WaveDirDeg = 45.f;
-		P.AmplitudeCm = 45.f;
-		P.Choppiness = 0.5f;
+		P.AmplitudeCm = 0.f; // flat plane
+		P.Choppiness = 0.f;
 		return P;
 	}
 };

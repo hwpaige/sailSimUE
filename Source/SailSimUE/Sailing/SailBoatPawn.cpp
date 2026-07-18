@@ -476,48 +476,53 @@ void ASailBoatPawn::PlaceSparFromEndpoints(UStaticMeshComponent* Comp, const FVe
 
 void ASailBoatPawn::UpdateJibFurlerVisuals(float MeshS)
 {
-	// Forestay endpoints from jib cloth stay (unscaled sail-local ≈ boat-cm when mesh at root).
-	FVector Tack = JibCloth.StayTackLocal * MeshS;
-	FVector Head = JibCloth.StayHeadLocal * MeshS;
-	if (!JibCloth.bStayValid || FVector::DistSquared(Tack, Head) < 100.f)
-	{
-		// Fallback: mast + J forward (stemhead) → near masthead
-		const FVector Mast = bMastPivotValid ? (MastBaseLoc * MeshS) : FVector::ZeroVector;
-		const float Jcm = FMath::Max(150.f, ActiveSpec.J * 30.48f * MeshS);
-		const float Icm = FMath::Max(200.f, ActiveSpec.I * 30.48f * MeshS);
-		Tack = Mast + FVector(Jcm, 0.f, 12.f * MeshS);
-		Head = Mast + FVector(0.f, 0.f, Icm * 0.92f);
-	}
-
-	const FVector Axis = (Head - Tack).GetSafeNormal();
-	const float StayLen = FMath::Max(1.f, FVector::Dist(Tack, Head));
-
-	// Extruded foil along the forestay (slightly thicker than the wire).
+	// Never draw the thick "foil" extrusion — standing rig already has a forestay
+	// wire. A bad stay transform made that mesh start mid-deck and cut the mast.
 	if (ForestayFoilMesh)
 	{
-		PlaceSparFromEndpoints(ForestayFoilMesh, Tack, Head);
-		ForestayFoilMesh->SetRelativeScale3D(FVector(0.055f, 0.055f, StayLen / 100.f));
-		ForestayFoilMesh->SetVisibility(true);
-		ForestayFoilMesh->SetHiddenInGame(false);
+		ForestayFoilMesh->SetVisibility(false);
+		ForestayFoilMesh->SetHiddenInGame(true);
 	}
 
-	// Furler drum at the tack: short fat cylinder on the stay axis, spins with furl.
-	if (FurlerDrumMesh)
+	// Furler drum only: place at the real forestay tack in boat space.
+	// Jib cloth stays are sail-local (mesh pivoted at mast) — transform through jib mesh.
+	if (!FurlerDrumMesh || !JibSailMesh || !JibCloth.bStayValid)
 	{
-		const float DrumH = 14.f * MeshS;
-		const float DrumR = 0.16f; // scale units (~16 cm radius visual)
-		const FVector DrumCenter = Tack + Axis * (DrumH * 0.55f);
-		const FVector DrumTop = DrumCenter + Axis * (DrumH * 0.5f);
-		const FVector DrumBot = DrumCenter - Axis * (DrumH * 0.5f);
-		PlaceSparFromEndpoints(FurlerDrumMesh, DrumBot, DrumTop);
-		// Base orientation along stay, then spin around stay by FurlerSpinRad.
-		const FRotator BaseRot = FRotationMatrix::MakeFromZ(Axis).Rotator();
-		const FQuat SpinQ(Axis, FurlerSpinRad);
-		FurlerDrumMesh->SetRelativeRotation((SpinQ * BaseRot.Quaternion()).Rotator());
-		FurlerDrumMesh->SetRelativeScale3D(FVector(DrumR, DrumR, DrumH / 100.f));
-		FurlerDrumMesh->SetVisibility(true);
-		FurlerDrumMesh->SetHiddenInGame(false);
+		if (FurlerDrumMesh)
+		{
+			FurlerDrumMesh->SetVisibility(false);
+			FurlerDrumMesh->SetHiddenInGame(true);
+		}
+		return;
 	}
+
+	const FTransform JibXf = JibSailMesh->GetRelativeTransform();
+	const FVector Tack = JibXf.TransformPosition(JibCloth.StayTackLocal);
+	const FVector Head = JibXf.TransformPosition(JibCloth.StayHeadLocal);
+	FVector Axis = Head - Tack;
+	const float StayLen = Axis.Size();
+	// Sanity: forestay must run forward of the mast and be long enough.
+	if (StayLen < 80.f || Tack.X < (bMastPivotValid ? MastBaseLoc.X * MeshS - 20.f : -1.e9f))
+	{
+		// Stay endpoints look wrong — hide rather than draw a ghost stay.
+		FurlerDrumMesh->SetVisibility(false);
+		FurlerDrumMesh->SetHiddenInGame(true);
+		return;
+	}
+	Axis /= StayLen;
+
+	const float DrumH = 14.f * MeshS;
+	const float DrumR = 0.14f;
+	const FVector DrumCenter = Tack + Axis * (DrumH * 0.55f);
+	const FVector DrumTop = DrumCenter + Axis * (DrumH * 0.5f);
+	const FVector DrumBot = DrumCenter - Axis * (DrumH * 0.5f);
+	PlaceSparFromEndpoints(FurlerDrumMesh, DrumBot, DrumTop);
+	const FRotator BaseRot = FRotationMatrix::MakeFromZ(Axis).Rotator();
+	const FQuat SpinQ(Axis, FurlerSpinRad);
+	FurlerDrumMesh->SetRelativeRotation((SpinQ * BaseRot.Quaternion()).Rotator());
+	FurlerDrumMesh->SetRelativeScale3D(FVector(DrumR, DrumR, DrumH / 100.f));
+	FurlerDrumMesh->SetVisibility(true);
+	FurlerDrumMesh->SetHiddenInGame(false);
 }
 
 void ASailBoatPawn::PlaceBoxAt(UStaticMeshComponent* Comp, const FVector& Center, const FVector& Scale, const FRotator& Rot)
@@ -2084,6 +2089,16 @@ void ASailBoatPawn::SetAutoHeading(bool bEnabled)
 	{
 		// Pilot takes the helm — zero sticky tiller so hand-off is clean
 		HeldHelmStarboardDeg = 0.f;
+		// Web hEngageAutopilot(captureLive): NAV re-seeds the route from the chart.
+		if (Dynamics.AutoMode == FBoatDynamics::EAutoMode::Nav)
+		{
+			if (!AcquireNavRoute())
+			{
+				UE_LOG(LogSailSim, Warning, TEXT("[nav] AUTO engage failed — no waypoints on chart"));
+				Dynamics.DisengageAutopilot();
+			}
+			return;
+		}
 		Dynamics.EngageAutopilot(true);
 	}
 	else
@@ -2187,6 +2202,74 @@ void ASailBoatPawn::ToggleAutoTrim()
 	Dynamics.SetAutoTrim(!Dynamics.bAutoTrim);
 }
 
+/** Resolve chart route store (same GI the mini-map writes into). */
+static UNavWaypointSubsystem* SailSimGetNav(const AActor* Boat)
+{
+	if (!Boat) return nullptr;
+	UGameInstance* GI = Boat->GetGameInstance();
+	if (!GI && Boat->GetWorld())
+	{
+		GI = Boat->GetWorld()->GetGameInstance();
+	}
+	return GI ? GI->GetSubsystem<UNavWaypointSubsystem>() : nullptr;
+}
+
+/**
+ * Bearing (deg) and distance (nm) from boat world XY (cm) to a lat/lon mark.
+ * Same LatLonToWorldCm frame as boat spawn / motion (+X north, +Y east).
+ */
+static void SailSimNavRangeBearing(const FVector& BoatLocCm, double WpLat, double WpLon,
+	double& OutDistNm, double& OutBrgDeg)
+{
+	double Wx = 0.0, Wy = 0.0;
+	FNavGeo::LatLonToWorldCm(WpLat, WpLon, Wx, Wy);
+	const double DxCm = Wx - double(BoatLocCm.X); // +X = north
+	const double DyCm = Wy - double(BoatLocCm.Y); // +Y = east
+	const double DistFt = FMath::Sqrt(DxCm * DxCm + DyCm * DyCm) / FNavGeo::CmPerFt;
+	OutDistNm = DistFt / FNavGeo::FtPerNm;
+	if (DistFt < 1e-3)
+	{
+		OutBrgDeg = 0.0;
+		return;
+	}
+	// atan2(east, north) → 0° north, 90° east (matches Dynamics.Heading).
+	OutBrgDeg = FMath::RadiansToDegrees(FMath::Atan2(DyCm, DxCm));
+	if (OutBrgDeg < 0.0) OutBrgDeg += 360.0;
+}
+
+/**
+ * Heading command so *course over ground* aims at the mark.
+ * Aiming the bow at the WP leaves a leeward miss (Beta / Vsway crab).
+ * With way on: AutoTarget = Heading + (Brg − COG)  →  equilibrium COG = Brg.
+ * Nearly stopped: fall back to raw bearing (no reliable COG).
+ */
+static float SailSimNavHeadingCmd(const FBoatDynamics& Dyn, double BrgDeg)
+{
+	const float Brg = FBoatDynamics::Wrap360(static_cast<float>(BrgDeg));
+	// Need a few tenths of a knot for COG to be meaningful.
+	if (Dyn.V < 0.6f) // ft/s ≈ 0.35 kn
+	{
+		return Brg;
+	}
+	const float Hrad = FMath::DegreesToRadians(Dyn.Heading);
+	const float CosH = FMath::Cos(Hrad);
+	const float SinH = FMath::Sin(Hrad);
+	// World velocity (same axes as ApplyDynamicsToTransform).
+	const float Vx = Dyn.U * CosH - Dyn.Vsway * SinH; // north
+	const float Vy = Dyn.U * SinH + Dyn.Vsway * CosH; // east
+	const float Cog = FBoatDynamics::Wrap360(
+		FMath::RadiansToDegrees(FMath::Atan2(Vy, Vx)));
+	const float CogErr = FBoatDynamics::Wrap180(Brg - Cog);
+	// Command a heading that cancels the COG error (includes leeway).
+	return FBoatDynamics::Wrap360(Dyn.Heading + CogErr);
+}
+
+/** Arrival radius (nm). Fixed 0.01 nm ≈ 61 ft (~1.8 boat lengths on a J/105). */
+static double SailSimNavArrivalNm(float /*SpeedKn*/)
+{
+	return 0.01;
+}
+
 FString ASailBoatPawn::GetAutoTargetDisplayText() const
 {
 	if (Dynamics.AutoMode == FBoatDynamics::EAutoMode::Awa)
@@ -2197,28 +2280,80 @@ FString ASailBoatPawn::GetAutoTargetDisplayText() const
 	}
 	if (Dynamics.AutoMode == FBoatDynamics::EAutoMode::Nav)
 	{
-		const float Brg = FBoatDynamics::Wrap360(Dynamics.AutoTarget);
-		return FString::Printf(TEXT("WP%d %03.0f°"), Dynamics.NavWpIndex + 1, Brg);
+		// Show true bearing to the mark (not leeway-adjusted helm command).
+		float BrgShow = FBoatDynamics::Wrap360(Dynamics.AutoTarget);
+		if (UNavWaypointSubsystem* Nav = SailSimGetNav(this))
+		{
+			FNavWaypoint Wp;
+			if (Nav->GetWaypoint(Dynamics.NavWpIndex, Wp))
+			{
+				double Dist = 0.0, Brg = 0.0;
+				SailSimNavRangeBearing(GetActorLocation(), Wp.Lat, Wp.Lon, Dist, Brg);
+				BrgShow = FBoatDynamics::Wrap360(static_cast<float>(Brg));
+			}
+		}
+		return FString::Printf(TEXT("WP%d %03.0f°"), Dynamics.NavWpIndex + 1, BrgShow);
 	}
 	return FString::Printf(TEXT("%03.0f°"), FBoatDynamics::Wrap360(Dynamics.AutoTarget));
 }
 
 bool ASailBoatPawn::AcquireNavRoute()
 {
-	UGameInstance* GI = GetGameInstance();
-	UNavWaypointSubsystem* Nav = GI ? GI->GetSubsystem<UNavWaypointSubsystem>() : nullptr;
+	UNavWaypointSubsystem* Nav = SailSimGetNav(this);
 	if (!Nav || Nav->Num() == 0)
 	{
+		UE_LOG(LogSailSim, Warning, TEXT("[nav] AcquireNavRoute: no waypoints (Nav=%s Num=%d)"),
+			Nav ? TEXT("ok") : TEXT("null"), Nav ? Nav->Num() : 0);
 		return false;
 	}
-	int32 Sel = Nav->GetSelectedIndex();
-	if (Sel < 0 || Sel >= Nav->Num()) Sel = 0;
+
+	// Always start at WP1 (index 0). Selected index defaults to last-added WP.
+	const FVector Loc = GetActorLocation();
+	constexpr double OnTopNm = 0.025; // only skip if literally under the keel
+	int32 Idx = 0;
+	while (Idx < Nav->Num())
+	{
+		FNavWaypoint W;
+		if (!Nav->GetWaypoint(Idx, W)) break;
+		double D = 0.0, B = 0.0;
+		SailSimNavRangeBearing(Loc, W.Lat, W.Lon, D, B);
+		if (D > OnTopNm) break;
+		UE_LOG(LogSailSim, Log, TEXT("[nav] Acquire: already on WP%d (%.3fnm) — skip"), Idx + 1, D);
+		++Idx;
+	}
+	if (Idx >= Nav->Num())
+	{
+		Dynamics.AutoMode = FBoatDynamics::EAutoMode::Hdg;
+		Dynamics.AutoTarget = Dynamics.Heading;
+		Dynamics.AutoI = 0.f;
+		Dynamics.EngageAutopilot(false);
+		Nav->SetSelectedIndex(Nav->Num() - 1);
+		UE_LOG(LogSailSim, Log, TEXT("[nav] Acquire: all marks under keel — HDG hold"));
+		return true;
+	}
+
+	FNavWaypoint Active;
+	if (!Nav->GetWaypoint(Idx, Active)) return false;
+
+	double DistNm = 0.0, BrgDeg = 0.0;
+	SailSimNavRangeBearing(Loc, Active.Lat, Active.Lon, DistNm, BrgDeg);
+
 	Dynamics.AutoMode = FBoatDynamics::EAutoMode::Nav;
-	Dynamics.NavWpIndex = Sel;
-	Nav->SetSelectedIndex(Sel);
+	Dynamics.NavWpIndex = Idx;
+	NavTrackIndex = Idx;
+	NavTrackMinDistNm = static_cast<float>(DistNm);
+	NavTrackInitialDistNm = static_cast<float>(DistNm);
+	bNavApproachedActive = false;
+	Nav->SetSelectedIndex(Idx);
+	Dynamics.AutoTarget = SailSimNavHeadingCmd(Dynamics, BrgDeg);
 	Dynamics.AutoI = 0.f;
+	HeldHelmStarboardDeg = 0.f;
 	Dynamics.EngageAutopilot(false);
-	UpdateNavTarget();
+
+	UE_LOG(LogSailSim, Log,
+		TEXT("[nav] Acquire → WP%d/%d  dist=%.2fnm  brg=%.0f°  cmd=%.0f°  hdg=%.0f°  beta=%+.1f°  boatXY=(%.0f,%.0f)"),
+		Idx + 1, Nav->Num(), DistNm, BrgDeg, Dynamics.AutoTarget, Dynamics.Heading, Dynamics.Beta,
+		Loc.X, Loc.Y);
 	return true;
 }
 
@@ -2226,52 +2361,103 @@ void ASailBoatPawn::UpdateNavTarget()
 {
 	if (Dynamics.AutoMode != FBoatDynamics::EAutoMode::Nav) return;
 
-	UGameInstance* GI = GetGameInstance();
-	UNavWaypointSubsystem* Nav = GI ? GI->GetSubsystem<UNavWaypointSubsystem>() : nullptr;
+	UNavWaypointSubsystem* Nav = SailSimGetNav(this);
 	if (!Nav || Nav->Num() == 0)
 	{
 		Dynamics.AutoMode = FBoatDynamics::EAutoMode::Hdg;
 		Dynamics.AutoTarget = Dynamics.Heading;
+		Dynamics.AutoI = 0.f;
+		UE_LOG(LogSailSim, Warning, TEXT("[nav] Route empty mid-nav — HDG hold"));
 		return;
 	}
+
 	if (Dynamics.NavWpIndex < 0) Dynamics.NavWpIndex = 0;
 	if (Dynamics.NavWpIndex >= Nav->Num())
 	{
-		// Route complete
 		Dynamics.AutoMode = FBoatDynamics::EAutoMode::Hdg;
 		Dynamics.AutoTarget = Dynamics.Heading;
 		Dynamics.AutoI = 0.f;
 		return;
 	}
 
-	double Lat = 0, Lon = 0;
-	FNavGeo::WorldCmToLatLon(GetActorLocation().X, GetActorLocation().Y, Lat, Lon);
+	const FVector Loc = GetActorLocation();
+	const double ArrivalNm = SailSimNavArrivalNm(Dynamics.GetSpeedKnots());
+
+	// Web hNavUpdateTarget: at most one advance per tick (radial gate only).
 	FNavWaypoint Wp;
 	if (!Nav->GetWaypoint(Dynamics.NavWpIndex, Wp)) return;
 
-	// Arrival gate (nm) scales with SOG — web hNavArrivalNm
-	const float Kn = Dynamics.GetSpeedKnots();
-	const double ArrivalNm = FMath::Clamp(0.025 + double(Kn) * 0.008, 0.02, 0.10);
-	const double Dist = FNavGeo::DistNm(Lat, Lon, Wp.Lat, Wp.Lon);
-	if (Dist <= ArrivalNm)
+	double DistNm = 0.0, BrgDeg = 0.0;
+	SailSimNavRangeBearing(Loc, Wp.Lat, Wp.Lon, DistNm, BrgDeg);
+
+	if (NavTrackIndex != Dynamics.NavWpIndex)
 	{
+		NavTrackIndex = Dynamics.NavWpIndex;
+		NavTrackMinDistNm = static_cast<float>(DistNm);
+		NavTrackInitialDistNm = static_cast<float>(DistNm);
+		bNavApproachedActive = false;
+	}
+	else
+	{
+		NavTrackMinDistNm = FMath::Min(NavTrackMinDistNm, static_cast<float>(DistNm));
+		// "Approached" = we closed range meaningfully (used only for diagnostics).
+		if (DistNm < double(NavTrackInitialDistNm) * 0.9
+			|| DistNm < double(NavTrackInitialDistNm) - 0.03)
+		{
+			bNavApproachedActive = true;
+		}
+	}
+
+	// Advance only when inside the tight radial gate (web hNavUpdateTarget).
+	// No abeam / early-capture — that was peeling off to the next WP too soon.
+	const bool bArrived = DistNm <= ArrivalNm;
+
+	if (bArrived)
+	{
+		const int32 Passed = Dynamics.NavWpIndex;
 		++Dynamics.NavWpIndex;
+		Dynamics.AutoI *= 0.5f;
+		NavTrackIndex = INDEX_NONE;
+		bNavApproachedActive = false;
+		UE_LOG(LogSailSim, Log, TEXT("[nav] Arrived WP%d (%.3fnm ≤ %.3fnm) → aim WP%d / %d"),
+			Passed + 1, DistNm, ArrivalNm, Dynamics.NavWpIndex + 1, Nav->Num());
+
 		if (Dynamics.NavWpIndex >= Nav->Num())
 		{
 			Dynamics.AutoMode = FBoatDynamics::EAutoMode::Hdg;
 			Dynamics.AutoTarget = Dynamics.Heading;
 			Dynamics.AutoI = 0.f;
+			Nav->SetSelectedIndex(Nav->Num() - 1);
+			UE_LOG(LogSailSim, Log, TEXT("[nav] Route complete — HDG hold %.0f°"), Dynamics.Heading);
 			return;
 		}
-		Nav->SetSelectedIndex(Dynamics.NavWpIndex);
-		Dynamics.AutoI *= 0.5f;
 		if (!Nav->GetWaypoint(Dynamics.NavWpIndex, Wp)) return;
+		SailSimNavRangeBearing(Loc, Wp.Lat, Wp.Lon, DistNm, BrgDeg);
+		NavTrackIndex = Dynamics.NavWpIndex;
+		NavTrackMinDistNm = static_cast<float>(DistNm);
+		NavTrackInitialDistNm = static_cast<float>(DistNm);
+		bNavApproachedActive = false;
 	}
-	else if (Nav->GetSelectedIndex() != Dynamics.NavWpIndex)
+
+	if (Nav->GetSelectedIndex() != Dynamics.NavWpIndex)
 	{
 		Nav->SetSelectedIndex(Dynamics.NavWpIndex);
 	}
-	Dynamics.AutoTarget = static_cast<float>(FNavGeo::BearingDeg(Lat, Lon, Wp.Lat, Wp.Lon));
+	// Steer so track (COG) hits the mark — not just the bow bearing.
+	Dynamics.AutoTarget = SailSimNavHeadingCmd(Dynamics, BrgDeg);
+
+	// Periodic diagnostics (every ~2 s).
+	static double LastNavLog = -1000.0;
+	const double Now = FPlatformTime::Seconds();
+	if (Now - LastNavLog > 2.0)
+	{
+		LastNavLog = Now;
+		const float Err = FBoatDynamics::Wrap180(Dynamics.AutoTarget - Dynamics.Heading);
+		UE_LOG(LogSailSim, Log,
+			TEXT("[nav] track WP%d/%d  dist=%.2fnm  brg=%.0f°  cmd=%.0f°  hdg=%.0f°  beta=%+.1f°  err=%+.0f°  sog=%.1fkt"),
+			Dynamics.NavWpIndex + 1, Nav->Num(), DistNm, BrgDeg, Dynamics.AutoTarget,
+			Dynamics.Heading, Dynamics.Beta, Err, Dynamics.GetSpeedKnots());
+	}
 }
 
 void ASailBoatPawn::SetSheetEase(float Ease01)

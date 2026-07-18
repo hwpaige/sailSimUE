@@ -20,10 +20,11 @@ struct FBoatSpec
 	float DispLb = 7750.f;
 	float BallastLb = 3340.f;
 	float SailArea = 545.f;
-	float I = 44.f;
+	// J/Boats published rig (ft). Class rules 6.4.2 max main: P≤12.65 m, E≤4.45 m.
+	float I = 40.6f;
 	float J = 13.5f;
-	float P = 40.f;
-	float E = 13.5f;
+	float P = 41.5f;
+	float E = 14.6f;
 	float Draft = 6.5f;
 
 	/** Live designer scales (1 = catalog). Applied on top of catalog numbers. */
@@ -87,7 +88,7 @@ struct FBoatSpec
 		{
 			S.Name = TEXT("J/105");
 			S.Loa = 34.4f; S.Lwl = 29.5f; S.Beam = 11.f; S.DispLb = 7750.f; S.BallastLb = 3340.f;
-			S.SailArea = 545.f; S.I = 44.f; S.J = 13.5f; S.P = 40.f; S.E = 13.5f; S.Draft = 6.5f;
+			S.SailArea = 545.f; S.I = 40.6f; S.J = 13.5f; S.P = 41.5f; S.E = 14.6f; S.Draft = 6.5f;
 		}
 		else if (PresetId.Equals(TEXT("endeavour"), ESearchCase::IgnoreCase))
 		{

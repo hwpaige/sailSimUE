@@ -1,5 +1,20 @@
 // Port of SailSim web 3-DOF VPP (hBoat in webgl-utils.sailing.js).
 // Internal units match the web model: feet, pounds, degrees (except r in rad/s).
+//
+// === Axis & sign conventions (must stay consistent with web + UE visuals) ===
+// Dynamics body frame (web cloth/VPP): +X bow, +Z starboard, +Y up.
+// UE boat mesh: +X bow, +Y starboard, +Z up  →  map dyn.Z ↔ UE.Y when applying motion.
+//
+// True wind: meteorological FROM (deg). Air velocity = opposite (downwind TO).
+// Apparent wind: air_vel − boat_vel. Signed AWA = FROM angle of apparent wind
+//   (atan2 of −air_vel): + = wind from starboard, − = from port.
+// LeeSign: +1 = leeward is PORT (wind from stbd / starboard tack);
+//          −1 = leeward is STARBOARD (port tack). Matches web _hLeeSign.
+// Phi heel: + = starboard rail down. targetPhi = −LeeSign × heelEq
+//   → wind from stbd → LeeSign+1 → heel to port (negative Phi).
+// Side force (lb, +starboard): on the boat, directed to LEEWARD
+//   → SideLb = −LeeSign × |side|  so lee=port ⇒ SideLb < 0.
+// Boom (UE): aft boom (−X); +yaw around Z → port (−Y). Lee boom angle uses +LeeSign.
 
 #pragma once
 
@@ -9,7 +24,7 @@
 struct FSailForceInput
 {
 	float DriveLb = 0.f; // +bow
-	float SideLb = 0.f;  // +starboard
+	float SideLb = 0.f;  // +starboard (leeward when signed correctly)
 };
 
 /**
@@ -20,31 +35,46 @@ struct FBoatDynamics
 {
 	// Derived display state
 	float V = 0.f;       // ft/s
-	float Beta = 0.f;    // leeway deg
-	float Phi = 0.f;     // heel deg (+ starboard)
+	float Beta = 0.f;    // leeway deg (+ = bow to stbd / crab to port? atan2(v,u))
+	float Phi = 0.f;     // heel deg (+ starboard rail down)
 	float Heading = 0.f; // deg, 0 = north / +X world in our UE mapping
 	float YawRate = 0.f; // deg/s
 	float Rudder = 0.f;  // internal model deg (−35..+35)
 
-	// Body-frame state
+	// Body-frame state (web: +X fwd, +Z stbd as v sway)
 	float U = 0.f; // surge ft/s
-	float Vsway = 0.f;
+	float Vsway = 0.f; // sway ft/s (+ starboard)
 	float R = 0.f; // yaw rad/s
 
 	// Control
 	bool bSailing = true;
 	bool bAutoHeading = true;
-	float AutoTarget = 90.f;
+	/** Autopilot mode: heading-hold / AWA-hold / nav waypoints (web autoMode). */
+	enum class EAutoMode : uint8 { Hdg = 0, Awa = 1, Nav = 2 };
+	EAutoMode AutoMode = EAutoMode::Hdg;
+	float AutoTarget = 90.f;      // compass target (hdg + nav)
+	float AutoAwaTarget = 45.f;   // signed AWA target (deg): + = stbd, − = port
 	float AutoI = 0.f;
-	float ManualRudderTarget = 0.f; // user tiller (starboard +) before model sign flip
+	bool bAutoTrim = false;       // AUTO TRIM — sheet toward AWA groove
+	bool bTacking = false;
+	float TackTarget = 0.f;
+	int32 TackDir = 0;            // +1 / −1 (web tackDir)
+	int32 NavWpIndex = 0;
+	float ManualRudderTarget = 0.f;
 	bool bManualHelm = false;
-	/** 0 = sheeted hard, 1 = fully eased. Affects stub sail force until cloth measure lands. */
-	float SheetEase = 0.20f;
-	/**
-	 * Multiplier from live cloth shape (1 = nominal). Updated by SailBoatPawn when cloth runs.
-	 * Clamped in the force stub so a broken cloth measure can't explode the VPP.
-	 */
+	/** 0 = hard on centerline, 1 = fully eased to leeward. */
+	float SheetEase = 0.25f;
 	float ClothForceScale = 1.f;
+
+	/** Main outhaul 0..1 (web slider/100 → 70–100% of boom E + foot pull). */
+	float Outhaul01 = 0.94f;
+	/** Boom vang 0 = hard on (flat boom), 1 = off (boom free to rise). */
+	float Vang01 = 0.40f;
+	/** Jib car fore/aft on track 0..1. */
+	float JibCar01 = 0.45f;
+	/** Jib luff / leech line tension 0..1 (web defaults 0.35 / 0.15). */
+	float JibLuffTension01 = 0.35f;
+	float JibLeechTension01 = 0.15f;
 
 	// J/105 defaults (imperial)
 	float Xudot = 0.07f;
@@ -92,20 +122,47 @@ struct FBoatDynamics
 	float StabCal = 1.0f;
 	float CrewHikeFtLb = 0.f;
 
-	// Environment
+	// Environment (PHYSICS knots — used by aero / VPP / wind field)
 	float TrueWindSpeedKn = 18.f;
-	float TrueWindDirDeg = 225.f; // from which wind blows (met convention)
+	float TrueWindDirDeg = 225.f; // FROM which wind blows (met)
 
-	// Constants (web)
-	static constexpr float RhoWater = 1.9905f; // slug/ft³ seawater
+	/**
+	 * Wind label calibration (display kn ↔ physics kn).
+	 * Empirically the old physics scale was ~3× too optimistic on the sails:
+	 * labeled 25 kn looked/felt about 8 kn. Prefer relabeling over retuning
+	 * CL/CD so the polar math stays intact.
+	 *   DisplayKn = PhysicsKn * (FeelAt / PhysAt)
+	 *   PhysicsKn = DisplayKn * (PhysAt / FeelAt)
+	 */
+	static constexpr float WindLabelPhysAt = 25.f;
+	static constexpr float WindLabelFeelAt = 8.f;
+	static float WindDisplayFromPhysics(float PhysicsKn)
+	{
+		return PhysicsKn * (WindLabelFeelAt / WindLabelPhysAt);
+	}
+	static float WindPhysicsFromDisplay(float DisplayKn)
+	{
+		return DisplayKn * (WindLabelPhysAt / WindLabelFeelAt);
+	}
+	/** Max display TWS on sliders (kn). Physics max = this × PhysAt/FeelAt. */
+	static constexpr float WindDisplayMaxKn = 40.f;
+	static float WindPhysicsMaxKn()
+	{
+		return WindPhysicsFromDisplay(WindDisplayMaxKn);
+	}
+
+	static constexpr float RhoWater = 1.9905f;
+	static constexpr float RhoAir = 0.00237f; // slug/ft³
 	static constexpr float KnToFts = 1.6878f;
 	static constexpr float G = 32.174f;
-	static constexpr float HeelGmScale = 0.90f;
+	static constexpr float HeelGmScale = 0.82f;
+	/** Web H_HEEL_SIDE_GAIN — was 1.65 (too aggressive, snap heel + weather helm). */
 	static constexpr float HeelSideGain = 0.93f;
-	static constexpr float RudSlewRate = 45.f; // deg/s
+	static constexpr float RudSlewRate = 45.f;
+	/** Second-order roll (deg/s). Exposed for HUD/debug. */
+	float PhiRate = 0.f;
 
 	void InitJ105();
-	/** Apply sail_geom.boat3d `sailing` + `dims_ft` block (imperial). */
 	void ApplySailingParams(
 		float InDispLb, float InBallastLb, float InBeamFt, float InLwlFt, float InDraftFt, float InTcFt,
 		float InLatArea, float InKeelArea, float InRudArea, float InKeelSpan,
@@ -113,19 +170,44 @@ struct FBoatDynamics
 		float InLoaFt, float InMastTopFt);
 	void Reset();
 	void SetRudderStarboardPositive(float Deg);
-	/** Sheet ease 0..1 (hard → eased). */
 	void SetSheetEase(float Ease01);
+	void SetOuthaul(float V01);
+	void SetVang(float V01);
+	void SetJibCar(float V01);
+	void SetJibLuffTension(float V01);
+	void SetJibLeechTension(float V01);
 	void Update(float Dt);
 
-	/**
-	 * Offline settle at fixed TWS/heading; logs SPD/HEEL vs rough ORC-ish bands.
-	 * Returns true if within loose Phase-2 golden band (~not a full polar cert).
-	 */
+	/** Start a tack/gybe through the wind (web startTack / tackBoat). */
+	void StartTack();
+	/** Engage AP capturing live setpoint for current mode (web hEngageAutopilot). */
+	void EngageAutopilot(bool bCaptureLive);
+	void DisengageAutopilot();
+	/** Set mode; re-seeds setpoint if already engaged. */
+	void SetAutoMode(EAutoMode Mode);
+	void SetAutoAwaTarget(float SignedDeg);
+	void SetAutoTrim(bool bOn);
+	/** Closed-loop / open-loop sheet toward optimum AWA groove (web hUpdateAutoTrim). */
+	void UpdateAutoTrim(float Dt);
+
 	static bool RunGoldenSelfCheck(FString* OutReport = nullptr);
 
 	float GetSpeedKnots() const { return V / KnToFts; }
+	/** Signed AWA (deg): wind FROM relative to bow; + = from starboard. */
 	float GetApparentWindAngleDeg() const;
 	float GetApparentWindSpeedKn() const;
+	/** +1 leeward is port (stbd tack); −1 leeward is starboard (port tack). */
+	int32 GetLeeSign() const { return LeeSign; }
+	/** True-wind FROM relative to heading, −180..180; + = from starboard. */
+	float GetTrueWindFromRelDeg() const;
+	/** Apparent wind air-velocity unit in body frame (+X fwd, +Z stbd). */
+	void GetApparentWindAirVelUnit(float& OutDx, float& OutDz) const;
+	/** Last low-passed sail force (lb). */
+	float GetLpDriveLb() const { return LpDrive; }
+	float GetLpSideLb() const { return LpSide; }
+
+	static float Wrap180(float Deg);
+	static float Wrap360(float Deg);
 
 private:
 	float LpDrive = 0.f;
@@ -134,7 +216,11 @@ private:
 	float LpNsail = 0.f;
 	bool bLpNsailInit = false;
 	float NsailYaw = 0.f;
-	int32 LeeSign = 1; // +1 wind from stbd (port leeward)
+	/** Low-passed equilibrium heel so LeeSign / force flips don't snap the rail. */
+	float HeelTargetLp = 0.f;
+	bool bHeelTargetLpInit = false;
+	/** +1 = lee port (wind from stbd); −1 = lee starboard. */
+	int32 LeeSign = 1;
 
 	struct FFoilForce
 	{
@@ -153,6 +239,4 @@ private:
 	float HeelWindMaxDeg(float TwsKn) const;
 	void UpdateLeeSign();
 	FSailForceInput ComputeSailForceStub() const;
-	static float Wrap180(float Deg);
-	static float Wrap360(float Deg);
 };

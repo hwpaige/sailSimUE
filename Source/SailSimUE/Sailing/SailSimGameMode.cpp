@@ -1,11 +1,12 @@
 #include "Sailing/SailSimGameMode.h"
 #include "Sailing/SailBoatPawn.h"
 #include "Sailing/SailSimHUD.h"
+#include "Sailing/Ocean/SailOceanSubsystem.h"
+#include "Sailing/Nav/NavGeo.h"
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
-#include "Landscape.h"
 #include "SailSimUE.h"
 
 ASailSimGameMode::ASailSimGameMode()
@@ -19,13 +20,12 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// Destroy every boat that is not the currently possessed player pawn.
-	// World Partition may re-stream map-placed SailBoatPawns after this; those
-	// self-destroy in SailBoatPawn::Tick when unpossessed.
+	// Destroy every boat that is not the GameMode session boat.
+	// Map-placed SailBoatPawns at origin were being re-possessed → "start on land".
 	TArray<ASailBoatPawn*> ToDestroy;
 	for (TActorIterator<ASailBoatPawn> It(World); It; ++It)
 	{
-		if (!It->IsPlayerControlled() && !It->bPlayerSessionBoat)
+		if (!It->bPlayerSessionBoat)
 		{
 			ToDestroy.Add(*It);
 		}
@@ -34,15 +34,25 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 	{
 		if (IsValid(Boat))
 		{
+			if (AController* C = Boat->GetController())
+			{
+				C->UnPossess();
+			}
 			UE_LOG(LogSailSim, Log, TEXT("GameMode destroying level boat %s"), *GetNameSafe(Boat));
 			Boat->Destroy();
 		}
 	}
 
-	for (TActorIterator<ALandscape> It(World); It; ++It)
+	// Flat open ocean as early as possible (hide island + one Water plane).
+	if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
 	{
-		It->SetActorHiddenInGame(true);
-		It->SetActorEnableCollision(false);
+		const ASailBoatPawn* CDO = GetDefault<ASailBoatPawn>();
+		const FVector2D Harbor = FNavGeo::BoatStartWorldCm2D();
+		const FVector Hint(
+			CDO ? CDO->OpenWaterSpawnXY.X : Harbor.X,
+			CDO ? CDO->OpenWaterSpawnXY.Y : Harbor.Y,
+			0.f);
+		Ocean->PrepareOpenOcean(Hint, 240000.f, 120000.f);
 	}
 }
 

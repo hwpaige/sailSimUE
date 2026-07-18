@@ -1,0 +1,18 @@
+{
+  "file": "heightmap_16bit.r16",
+  "cols": 4608,
+  "rows": 3456,
+  "format": "r16_le",
+  "elevMinM": -2.1096537113189697,
+  "elevMaxM": 29.48970603942871,
+  "zScaleCm": 3159.935975074768,
+  "worldMinXY": [
+    -2718206.3999999715,
+    -831201.969514499
+  ],
+  "worldMaxXY": [
+    -943051.1999999306,
+    1662403.9390291157
+  ],
+  "note": "Import as Landscape heightmap in editor if desired. Runtime path uses streamed NAVT tiles (preferred for sailing sim)."
+}

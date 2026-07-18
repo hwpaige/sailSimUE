@@ -623,6 +623,17 @@ protected:
 	bool bRequireRMBToOrbit = true;
 
 	FBoatDynamics Dynamics;
+	/** Closest approach (nm) to the active NAV mark — used for pass-abeam advance. */
+	float NavTrackMinDistNm = 1.0e9f;
+	/** Distance (nm) when this mark first became active — approach arming. */
+	float NavTrackInitialDistNm = 1.0e9f;
+	int32 NavTrackIndex = INDEX_NONE;
+	/**
+	 * True once we have closed range toward the active mark.
+	 * Abeam / closest-point advance only after this, so engaging NAV never
+	 * skips WP1 just because the bow is not yet pointed at it.
+	 */
+	bool bNavApproachedActive = false;
 	/**
 	 * Sticky tiller angle in degrees (+ starboard). A/D rates this while held;
 	 * release keeps the last value (no spring-to-zero, no snap-to-rail).

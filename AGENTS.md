@@ -18,6 +18,7 @@ Port of [sail-sim](../sail-sim) sailing simulator to Unreal Engine 5.8.
 
 ## Current phase
 
-**P2 done** · **P3** presets/scale/oracle · **P4** cloth scaffold · **P5** ocean interface (Gerstner backend; FFT later).  
+**P2 done** · **P3** presets/scale/oracle (C++ loft open) · **P4** cloth + force scale (trim open) · **P5.2** open-ocean Gerstner done (moods/wake next).  
 Ocean: world-space height field; local tessellation is render-only. Never port water-pro shaders.  
-Trackers: `../sail-sim/unreal-port/PROGRESS.md`, `PHASE5_OCEAN.md`.
+If MCP bind fails on 8765: kill leftover `CrashReportClient`, then restart MCP.  
+Trackers: `../sail-sim/unreal-port/PROGRESS.md`, `PHASE5_OCEAN.md`, `PLAN.md`.

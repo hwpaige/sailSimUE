@@ -5,10 +5,11 @@
 #include "SailSimHUD.generated.h"
 
 class ASailBoatPawn;
+class SSailSimChrome;
 
 /**
- * Phase-2 instrument panel (Canvas HUD).
- * Replaces GEngine on-screen debug messages with a stable sailing readout.
+ * Hosts the modern Slate sailing chrome (rounded glass instruments).
+ * Canvas is unused for chrome — Slate scales correctly on Retina.
  */
 UCLASS()
 class SAILSIMUE_API ASailSimHUD : public AHUD
@@ -16,10 +17,15 @@ class SAILSIMUE_API ASailSimHUD : public AHUD
 	GENERATED_BODY()
 
 public:
-	virtual void DrawHUD() override;
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
-	void DrawPanelBackground(float X, float Y, float W, float H);
-	void DrawLineText(float X, float Y, const FString& Text, const FLinearColor& Color, float Scale = 1.15f);
+	void EnsureChrome();
+	void EnsureMouseForUI();
 	ASailBoatPawn* FindBoat() const;
+
+	TSharedPtr<SSailSimChrome> Chrome;
+	TWeakObjectPtr<ASailBoatPawn> BoundBoat;
 };
