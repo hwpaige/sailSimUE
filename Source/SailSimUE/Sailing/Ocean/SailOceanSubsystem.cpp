@@ -1290,10 +1290,9 @@ void USailOceanSubsystem::EnsureGerstnerWaterWaves()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// Stock Water plugin ocean Gerstner (Engine/Plugins/.../Content/Waves).
-	UWaterWavesAsset* OceanAsset = LoadObject<UWaterWavesAsset>(
-		nullptr, TEXT("/Water/Waves/GerstnerWaves_Ocean.GerstnerWaves_Ocean"));
-
+	// Calm sailing Gerstner (cm). Stock /Water/Waves/GerstnerWaves_Ocean is often too energetic
+	// and left the localTess SLW patch as a black square (Design FAIL) even with Enable Waves=0.
+	// Always install this mild runtime spectrum so WaterInfo stays shadeable.
 	int32 Ensured = 0;
 	int32 Assigned = 0;
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
@@ -1301,45 +1300,25 @@ void USailOceanSubsystem::EnsureGerstnerWaterWaves()
 		AWaterBody* Body = *It;
 		if (!IsValid(Body)) continue;
 
-		UWaterWavesBase* Existing = Body->GetWaterWaves();
-		const bool bHasWaves = Existing && Existing->GetWaterWaves() != nullptr;
-		if (!bHasWaves)
-		{
-			if (OceanAsset)
-			{
-				UWaterWavesAssetReference* Ref = NewObject<UWaterWavesAssetReference>(
-					Body, NAME_None, RF_Transactional);
-				Ref->SetWaterWavesAsset(OceanAsset);
-				Body->SetWaterWaves(Ref);
-			}
-			else
-			{
-				// Fallback: runtime Gerstner in NATIVE_OCEAN_UE58 calm→open cruise band (cm).
-				UGerstnerWaterWaves* Waves = NewObject<UGerstnerWaterWaves>(
-					Body, NAME_None, RF_Transactional);
-				UGerstnerWaterWaveGeneratorSimple* Gen = NewObject<UGerstnerWaterWaveGeneratorSimple>(Waves);
-				Gen->NumWaves = 24;
-				Gen->MinWavelength = 500.f;
-				Gen->MaxWavelength = 4000.f;
-				Gen->MinAmplitude = 8.f;
-				Gen->MaxAmplitude = 45.f;
-				Gen->WindAngleDeg = 225.f;
-				Gen->DirectionAngularSpreadDeg = 40.f;
-				Gen->SmallWaveSteepness = 0.35f;
-				Gen->LargeWaveSteepness = 0.2f;
-				Waves->GerstnerWaveGenerator = Gen;
-				Waves->RecomputeWaves(true);
-				Body->SetWaterWaves(Waves);
-			}
-			++Assigned;
-		}
+		UGerstnerWaterWaves* Waves = NewObject<UGerstnerWaterWaves>(Body, NAME_None, RF_Transactional);
+		UGerstnerWaterWaveGeneratorSimple* Gen = NewObject<UGerstnerWaterWaveGeneratorSimple>(Waves);
+		Gen->NumWaves = 16;
+		Gen->MinWavelength = 800.f;   // 8 m
+		Gen->MaxWavelength = 2800.f;  // 28 m
+		Gen->MinAmplitude = 2.f;      // 2 cm — visible but WaterInfo-safe
+		Gen->MaxAmplitude = 12.f;     // 12 cm
+		Gen->WindAngleDeg = 225.f;
+		Gen->DirectionAngularSpreadDeg = 35.f;
+		Gen->SmallWaveSteepness = 0.25f;
+		Gen->LargeWaveSteepness = 0.15f;
+		Waves->GerstnerWaveGenerator = Gen;
+		Waves->RecomputeWaves(true);
+		Body->SetWaterWaves(Waves);
+		++Assigned;
 		++Ensured;
 
-		// Always nudge GPU wave buffers — needed when waves were already on the body
-		// but WaterInfo was built while flattened / before Live Coding.
 		if (UWaterBodyComponent* Comp = Body->GetWaterBodyComponent())
 		{
-			// Public path only (RequestGPUWaveDataUpdate is protected).
 			FOnWaterBodyChangedParams BodyParams;
 			BodyParams.bShapeOrPositionChanged = true;
 			Comp->UpdateAll(BodyParams);
@@ -1348,8 +1327,8 @@ void USailOceanSubsystem::EnsureGerstnerWaterWaves()
 
 	bGerstnerWavesEnsured = true;
 	UE_LOG(LogSailSim, Log,
-		TEXT("Continuous ocean: Gerstner WaterWaves on %d body(s) (assigned=%d, asset=%s) — localTess budget unchanged"),
-		Ensured, Assigned, OceanAsset ? TEXT("GerstnerWaves_Ocean") : TEXT("runtime-fallback"));
+		TEXT("Continuous ocean: calm Gerstner WaterWaves on %d body(s) (assigned=%d, amp=2–12cm) — localTess budget unchanged"),
+		Ensured, Assigned);
 }
 
 void USailOceanSubsystem::RefreshWaterWaveRenderData()
@@ -1357,6 +1336,9 @@ void USailOceanSubsystem::RefreshWaterWaveRenderData()
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// Do NOT MarkForRebuild(WaterInfo|mesh) here — that path left the localTess SLW patch
+	// as a black square under the boat (Design FAIL). SetWaterWaves + UpdateAll already
+	// nudges GPU wave data via the public OnWaterBodyChanged path.
 	int32 Bodies = 0;
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
 	{
@@ -1364,36 +1346,22 @@ void USailOceanSubsystem::RefreshWaterWaveRenderData()
 		if (!IsValid(Body)) continue;
 		if (UWaterBodyComponent* Comp = Body->GetWaterBodyComponent())
 		{
-			// Public path only (RequestGPUWaveDataUpdate is protected).
 			FOnWaterBodyChangedParams BodyParams;
 			BodyParams.bShapeOrPositionChanged = true;
 			Comp->UpdateAll(BodyParams);
-			// Ensure MIDs exist so PolishWaterMaterials can stick Enable Waves / absorption.
 			Comp->GetWaterMaterialInstance();
 			Comp->GetWaterStaticMeshMaterialInstance();
+			Comp->GetWaterInfoMaterialInstance();
 			++Bodies;
 		}
 	}
 
-	int32 Zones = 0;
-	for (TActorIterator<AWaterZone> It(World); It; ++It)
-	{
-		AWaterZone* Zone = *It;
-		if (!IsValid(Zone)) continue;
-		// Public MarkForRebuild only (ForceUpdateWaterInfoTexture is private).
-		// WaterInfo+mesh flags resample Gerstner after waves are assigned (fixes black void).
-		Zone->MarkForRebuild(
-			EWaterZoneRebuildFlags::UpdateWaterInfoTexture | EWaterZoneRebuildFlags::UpdateWaterMesh);
-		++Zones;
-	}
-
 	UE_LOG(LogSailSim, Log,
-		TEXT("Continuous ocean: refreshed wave render data (bodies=%d zones=%d WaterInfo+mesh)"),
-		Bodies, Zones);
+		TEXT("Continuous ocean: refreshed wave render data (bodies=%d, UpdateAll only — no WaterInfo MarkForRebuild)"),
+		Bodies);
 	bWaveRenderDataRefreshed = true;
-	// MarkForRebuild recreates water MIDs asynchronously — re-polish next few ticks.
 	bMaterialsPolished = false;
-	PolishFramesRemaining = 3;
+	PolishFramesRemaining = 5;
 }
 
 void USailOceanSubsystem::PolishWaterMaterials()
@@ -1419,10 +1387,10 @@ void USailOceanSubsystem::PolishWaterMaterials()
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.85f);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.50f);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.35f);
-			// Flat-era open-sea extinction (rendered correctly without material waves).
-			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.45f, 0.08f, 0.04f, 1.f));
-			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.02f, 0.12f, 0.14f, 1.f));
-			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.12f, 0.28f, 0.32f, 1.f));
+			// Light extinction so localTess SLW reads as water, not a black square.
+			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.12f, 0.04f, 0.03f, 1.f));
+			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.04f, 0.16f, 0.18f, 1.f));
+			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.18f, 0.36f, 0.40f, 1.f));
 			Comp->SetDynamicParametersOnMID(MID);
 			return true;
 		};
@@ -1430,6 +1398,8 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		bool bAny = false;
 		bAny |= ApplyToMid(Comp->GetWaterMaterialInstance());
 		bAny |= ApplyToMid(Comp->GetWaterStaticMeshMaterialInstance());
+		// Never polish GetWaterInfoMaterialInstance — it encodes height/depth for WaterInfo.
+		// Writing SLW Absorption/Enable Waves there black-outs the localTess patch.
 		if (bAny)
 		{
 			++Polished;
@@ -1444,7 +1414,7 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		SurfaceChopIntensity = -1.f;
 		SetSurfaceChopIntensity(Keep);
 	}
-	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (Enable Waves=0, body Gerstner, soft far normals)"), Polished);
+	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (Enable Waves=0, calm Gerstner 2–12cm, light absorption)"), Polished);
 }
 
 void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
