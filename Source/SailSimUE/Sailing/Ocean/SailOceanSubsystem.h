@@ -237,6 +237,8 @@ private:
 	bool bTerrainHidden = false;
 	bool bIslandHoleCollapsed = false;
 	bool bGerstnerWavesEnsured = false;
+	/** False until RefreshWaterWaveRenderData runs this session (WaterInfo after Gerstner). */
+	bool bWaveRenderDataRefreshed = false;
 	bool bMaterialsPolished = false;
 	bool bSkySeamsFixed = false;
 	bool bLegacySkyDomeHidden = false;
@@ -296,6 +298,8 @@ private:
 	void ApplyFogIntensity();
 	/** Keep or assign Gerstner WaterWaves (stock ocean asset or runtime fallback). */
 	void EnsureGerstnerWaterWaves();
+	/** After Gerstner assign: GPU wave buffers + WaterInfo/mesh rebuild (kills black void). */
+	void RefreshWaterWaveRenderData();
 	void PolishWaterMaterials();
 	void SoftenHorizonFog();
 };
