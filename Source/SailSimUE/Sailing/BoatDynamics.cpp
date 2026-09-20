@@ -454,10 +454,11 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 	// even when ClothForceScale alone under-reports depower.
 	// Harder vang (Vang01→0): flatten/depower slightly. Eased (→1): more power/twist.
 	const float Vang01c = FMath::Clamp(Vang01, 0.f, 1.f);
-	const float VangClScale = FMath::Lerp(0.92f, 1.06f, Vang01c);
+	// Gate capture (vang 0% / outhaul 97%): ±8% was too subtle — widen hard-vang depower.
+	const float VangClScale = FMath::Lerp(0.84f, 1.08f, Vang01c);
 	// Tighter outhaul (Outhaul01→1): flatten foot → slight Cl cut. Eased foot → fuller.
 	const float Outhaul01c = FMath::Clamp(Outhaul01, 0.f, 1.f);
-	const float OuthaulClScale = FMath::Lerp(1.04f, 0.94f, Outhaul01c);
+	const float OuthaulClScale = FMath::Lerp(1.05f, 0.92f, Outhaul01c);
 	Cl *= VangClScale * OuthaulClScale;
 
 	const float Va = Aws * KnToFts;
@@ -466,7 +467,7 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 	const float SAwa = FMath::Square(FMath::Sin(FMath::DegreesToRadians(AwaAbs * 0.5f)));
 	float Cd = 0.116f + (0.80f - 0.116f) * SAwa;
 	// Mild Cd with vang: hard vang slightly cleaner (flatter); eased a touch dirtier.
-	Cd *= FMath::Lerp(0.97f, 1.03f, Vang01c);
+	Cd *= FMath::Lerp(0.95f, 1.04f, Vang01c);
 	// Deep in irons (Fill≈0): keep a little reverse drag so she still washes off
 	// without a discontinuous force rewrite at 22°.
 	const float IronsBlend = 1.f - Fill; // 1 head-to-wind → 0 once filled
