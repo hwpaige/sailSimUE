@@ -78,6 +78,7 @@ void FBoatDynamics::Reset()
 	TackDir = 0;
 	NavWpIndex = 0;
 	AutoI = 0.f;
+	AutoYawRateLp = 0.f;
 	bLpInit = false;
 	bLpNsailInit = false;
 	LpDrive = LpSide = LpNsail = NsailYaw = 0.f;
@@ -105,9 +106,13 @@ void FBoatDynamics::EngageAutopilot(bool bCaptureLive)
 			AutoTarget = Heading;
 		}
 	}
-	Rudder = 0.f;
-	ManualRudderTarget = 0.f;
-	AutoI = 0.f;
+	// Bumpless: keep live rudder (weather helm already on the blade).
+	// Zeroing here caused a slam to midships then full hunting re-entry.
+	ManualRudderTarget = Rudder;
+	// Seed I so standing helm is not thrown away: Want ≈ -Ki*I when Err≈0.
+	const float Ki = FMath::Max(0.15f, KiAuto);
+	AutoI = FMath::Clamp(-Rudder / Ki, -AutoILimit, AutoILimit);
+	AutoYawRateLp = R * 180.f / PI;
 	bLpNsailInit = false;
 }
 
@@ -190,10 +195,13 @@ void FBoatDynamics::SetRudderStarboardPositive(float Deg)
 {
 	// UI +starboard → model needs negate (web setRudder)
 	ManualRudderTarget = -FMath::Clamp(Deg, -35.f, 35.f);
-	if (FMath::Abs(Deg) > 0.5f && bAutoHeading)
+	// Intentional hand-on-tiller only. Was 0.5° — gamepad stick noise / one frame of
+	// A-D would disengage the pilot and leave weather helm free to spin the bow.
+	if (FMath::Abs(Deg) > 4.f && bAutoHeading)
 	{
 		bAutoHeading = false;
 		bManualHelm = true;
+		UE_LOG(LogSailSim, Log, TEXT("AP standby: hand on tiller (helm %+.1f°)"), Deg);
 	}
 }
 
@@ -386,6 +394,28 @@ float FBoatDynamics::GetApparentWindSpeedKn() const
 	return FMath::Sqrt(Ax * Ax + Az * Az);
 }
 
+float FBoatDynamics::SailDepowerScale(float TwsDisplayKn)
+{
+	// Port of web hMeasureSailForce depower (webgl-utils.sailing.js).
+	// Thresholds are REAL / display knots (web hWind.speed has no Phys/Feel remap).
+	// Without this, UE physics TWS = display × 25/8 (~3.1×) drives q ~ 10× web at
+	// the same label; weather helm saturates the rudder and heading hunts wildly
+	// above ~20–25 kn display (saved prefs often land at ~32 kn).
+	//
+	// Web: full to 9.2 kn, linear to 0.55 by 17.3 kn, floor 0.55 above.
+	// Extra UE reef above 17.3: continue to ~0.32 by 32 kn so q·Cl stays in the
+	// band the J/105 rudder + AP can balance close-hauled (offline plant check).
+	const float T = FMath::Max(0.f, TwsDisplayKn);
+	if (T <= 9.2f) return 1.f;
+	if (T <= 17.3f)
+	{
+		return 1.f - (T - 9.2f) / 8.1f * (1.f - 0.55f);
+	}
+	if (T >= 32.f) return 0.32f;
+	// 17.3 → 0.55, 32 → 0.32
+	return 0.55f + (0.32f - 0.55f) * ((T - 17.3f) / (32.f - 17.3f));
+}
+
 FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 {
 	// Lift+drag style force in boat axes, side directed to LEEWARD (web hMeasureSailForce).
@@ -418,11 +448,25 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 			* FMath::Clamp(ClothForceScale, 0.3f, 1.25f);
 	}
 
+	// P4 web trim feel (vang/outhaul → VPP). SheetEase IdealEase path above stays as-is.
+	// Web: vangT 0=hard on / 1=eased; outhaulFrac high = foot flat. Cloth already
+	// shapes boom/leech; these mild Cl/Cd scales close the force gap so trim is felt
+	// even when ClothForceScale alone under-reports depower.
+	// Harder vang (Vang01→0): flatten/depower slightly. Eased (→1): more power/twist.
+	const float Vang01c = FMath::Clamp(Vang01, 0.f, 1.f);
+	const float VangClScale = FMath::Lerp(0.92f, 1.06f, Vang01c);
+	// Tighter outhaul (Outhaul01→1): flatten foot → slight Cl cut. Eased foot → fuller.
+	const float Outhaul01c = FMath::Clamp(Outhaul01, 0.f, 1.f);
+	const float OuthaulClScale = FMath::Lerp(1.04f, 0.94f, Outhaul01c);
+	Cl *= VangClScale * OuthaulClScale;
+
 	const float Va = Aws * KnToFts;
 	const float Q = 0.5f * RhoAir * Va * Va;
 	// CD rises off the wind (running); mild luff drag near irons (no hard replace)
 	const float SAwa = FMath::Square(FMath::Sin(FMath::DegreesToRadians(AwaAbs * 0.5f)));
 	float Cd = 0.116f + (0.80f - 0.116f) * SAwa;
+	// Mild Cd with vang: hard vang slightly cleaner (flatter); eased a touch dirtier.
+	Cd *= FMath::Lerp(0.97f, 1.03f, Vang01c);
 	// Deep in irons (Fill≈0): keep a little reverse drag so she still washes off
 	// without a discontinuous force rewrite at 22°.
 	const float IronsBlend = 1.f - Fill; // 1 head-to-wind → 0 once filled
@@ -431,6 +475,14 @@ FSailForceInput FBoatDynamics::ComputeSailForceStub() const
 		// Reduce parasitic run-drag while luffing; small aft force remains via Whx
 		Cd = FMath::Lerp(Cd, 0.08f, IronsBlend);
 	}
+
+	// Web depower + reach boost (was never ported — primary heading thrash root cause).
+	// TrueWindSpeedKn is PHYSICS; depower thresholds are display/real kn.
+	const float TwsDisp = WindDisplayFromPhysics(TrueWindSpeedKn);
+	const float Depower = SailDepowerScale(TwsDisp);
+	const float ReachBoost = (AwaAbs > 45.f && AwaAbs < 110.f) ? 1.25f : 1.f;
+	Cl *= Depower * ReachBoost;
+	Cd *= Depower;
 
 	const float Lift = Q * SATotal * Cl;
 	// When still luffing, add a small continuous reverse drive (was the old 0.02·Q·SA
@@ -496,6 +548,8 @@ void FBoatDynamics::UpdateHelm(float Dt)
 	}
 	else if (bAutoHeading)
 	{
+		// SIGN (web): +rudder → heading decreases. err>0 (need higher hdg) → −P/I.
+		// +Kd·yaw damps rate.
 		float Err = 0.f;
 		if (AutoMode == EAutoMode::Awa)
 		{
@@ -506,12 +560,41 @@ void FBoatDynamics::UpdateHelm(float Dt)
 			// hdg + nav both track AutoTarget as compass heading
 			Err = Wrap180(AutoTarget - Heading);
 		}
-		const float ErrP = FMath::Abs(Err) < 2.f ? 0.f : Err;
-		if (FMath::Abs(Err) < 2.f) AutoI *= 0.90f;
-		else AutoI += Err * Dt;
-		AutoI = FMath::Clamp(AutoI, -6.f, 6.f);
+
+		// Soft deadband on P only — residual (Err − db). Hard gate at 2° with Kp=14
+		// was bang-bang: off below 2°, full helm just above → heading hunt.
+		const float Db = FMath::Max(0.f, AutoDeadbandDeg);
+		const float AbsErr = FMath::Abs(Err);
+		float ErrP = 0.f;
+		if (AbsErr > Db)
+		{
+			ErrP = Err - Db * ((Err > 0.f) ? 1.f : -1.f);
+		}
+
+		// I: weather-helm autotrim. Leak gently on target; anti-windup at stops.
+		const float ILim = FMath::Max(1.f, AutoILimit);
+		if (AbsErr < Db)
+		{
+			AutoI *= 0.94f;
+		}
+		else
+		{
+			const bool bSat = (FMath::Abs(Rudder) > 32.f) && (Rudder * (-Err) > 0.f);
+			if (!bSat)
+			{
+				AutoI += Err * Dt;
+			}
+		}
+		AutoI = FMath::Clamp(AutoI, -ILim, ILim);
+
+		// Filter yaw for D (raw r is noisy from force LP + 4 substeps).
 		const float YawDegS = R * 180.f / PI;
-		Want = FMath::Clamp(-(KpAuto * ErrP + KiAuto * AutoI) + KdAuto * YawDegS, -35.f, 35.f);
+		const float AYaw = 1.f - FMath::Exp(-Dt / 0.15f);
+		AutoYawRateLp += AYaw * (YawDegS - AutoYawRateLp);
+
+		Want = FMath::Clamp(
+			-(KpAuto * ErrP + KiAuto * AutoI) + KdAuto * AutoYawRateLp,
+			-32.f, 32.f);
 		bHaveWant = true;
 	}
 	else
@@ -620,10 +703,16 @@ void FBoatDynamics::Update(float Dt)
 	UpdateHelm(Dt);
 	constexpr int32 NSub = 4;
 	const float H = Dt / NSub;
+	// Hard clamp yaw rate so a single force spike cannot teleport heading.
+	// ~45°/s is already extreme for a J/105 under autopilot.
+	constexpr float MaxYawRateRad = 45.f * PI / 180.f;
 	for (int32 I = 0; I < NSub; ++I)
 	{
 		PhysStep(H, Xsail, Ysail);
+		R = FMath::Clamp(R, -MaxYawRateRad, MaxYawRateRad);
+		if (!FMath::IsFinite(R)) R = 0.f;
 		Heading = Wrap360(Heading + R * H * 180.f / PI);
+		if (!FMath::IsFinite(Heading)) Heading = AutoTarget;
 	}
 
 	V = FMath::Sqrt(U * U + Vsway * Vsway);
@@ -689,7 +778,7 @@ void FBoatDynamics::Update(float Dt)
 
 bool FBoatDynamics::RunGoldenSelfCheck(FString* OutReport)
 {
-	// Settle close-hauled-ish at TWS 12 kn (wind from 225°, head ~185° → AWA ~40°).
+	// Settle close-hauled-ish at TWS 12 kn PHYSICS (wind from 225°, head ~185° → AWA ~40°).
 	FBoatDynamics D;
 	D.InitJ105();
 	D.TrueWindSpeedKn = 12.f;
@@ -714,12 +803,43 @@ bool FBoatDynamics::RunGoldenSelfCheck(FString* OutReport)
 	const bool bHeelOk = HeelAbs >= 5.f && HeelAbs <= 32.f;
 	const bool bAwaOk = Awa > 15.f && Awa < 70.f;
 	const bool bLeeOk = D.GetLeeSign() > 0 && D.Phi < 0.f && D.GetLpSideLb() < 0.f;
-	const bool bOk = bSpdOk && bHeelOk && bAwaOk && bLeeOk
+	const bool bOkLight = bSpdOk && bHeelOk && bAwaOk && bLeeOk
 		&& FMath::IsFinite(Spd) && FMath::IsFinite(HeelAbs);
 
+	// Heavy-air AP hold: display 32 kn (physics via label remap) close-hauled.
+	// Without sail depower this rounds up / hunts — regression guard for heading thrash.
+	FBoatDynamics H;
+	H.InitJ105();
+	H.TrueWindSpeedKn = WindPhysicsFromDisplay(32.f);
+	H.TrueWindDirDeg = 225.f;
+	H.Heading = 185.f;
+	H.AutoTarget = 185.f;
+	H.bAutoHeading = true;
+	H.bSailing = true;
+	H.SheetEase = 0.12f;
+	H.U = 4.f * KnToFts;
+	float MaxAbsErr = 0.f;
+	float PathDeg = 0.f;
+	float PrevHdg = H.Heading;
+	for (int32 I = 0; I < 1200; ++I)
+	{
+		H.Update(Dt);
+		if (I >= 400)
+		{
+			const float Err = FMath::Abs(Wrap180(H.AutoTarget - H.Heading));
+			MaxAbsErr = FMath::Max(MaxAbsErr, Err);
+			PathDeg += FMath::Abs(Wrap180(H.Heading - PrevHdg));
+		}
+		PrevHdg = H.Heading;
+	}
+	const bool bHoldOk = MaxAbsErr < 4.f && PathDeg < 40.f && H.bAutoHeading;
+	const bool bOk = bOkLight && bHoldOk;
+
 	const FString Report = FString::Printf(
-		TEXT("VPP golden TWS12 HDG185: SPD=%.2f kn HEEL=%+.1f° AWA=%+.0f° Lee=%d Side=%.0f %s"),
+		TEXT("VPP golden TWS12 HDG185: SPD=%.2f kn HEEL=%+.1f° AWA=%+.0f° Lee=%d Side=%.0f | ")
+		TEXT("heavy32 hold maxErr=%.1f path=%.0f %s"),
 		Spd, D.Phi, Awa, D.GetLeeSign(), D.GetLpSideLb(),
+		MaxAbsErr, PathDeg,
 		bOk ? TEXT("PASS") : TEXT("FAIL"));
 	UE_LOG(LogSailSim, Log, TEXT("%s"), *Report);
 	if (OutReport) *OutReport = Report;

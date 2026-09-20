@@ -25,6 +25,8 @@ Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verif
 - Chase cam raised; heel golden retuned.
 - **MCP tip:** after editor crash, `CrashReportClient` can steal port **8765** — kill it, then `ModelContextProtocol.StartServer 8765`.
 
+**P4 note (sheet/vang → VPP):** `Vang01`/`Outhaul01` now scale Cl (and mild Cd) inside `FBoatDynamics::ComputeSailForceStub` to match web trim feel; `SheetEase` IdealEase path unchanged. `UpdateSailCloth` already pushes Outhaul01/Vang01 and passes SheetEase into `MainCloth.Step` each tick.
+
 ## Immediate backlog (execution queue)
 
 | # | Task | Where | Risk | Verify |
@@ -37,8 +39,9 @@ Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verif
 | 6 | ✅ Chase camera raised (−28°, higher arm offsets) | `SailBoatPawn` | done | re-verify after 0042 |
 | 7 | Dynamics calibration vs web + j105 calibrate scripts | C++ | med | golden ~10% |
 | 8 | Lighting / sea moods (P5.3) | map + data | low | Lit capture |
+| 8b | AAA lighting/water/island perf stack (A–C in progress) | `docs/perf/AAA_STACK_IMPLEMENTATION_PLAN.md` | med | `docs/perf/GPU_ABL_LOG.md` |
 | 9 | ✅ P5.2 open ocean (Gerstner + no island + single boat) | ocean subsystem | done | PIE capture |
-| 10 | **Next:** P4 trim (sheet/vang) or P3 C++ loft | cloth / loft | med | |
+| 10 | ✅ P4 trim: Vang01/Outhaul01 → ComputeSailForceStub Cl/Cd (sheet IdealEase unchanged; cloth still gets sheet/vang/outhaul each tick) | `BoatDynamics.cpp` | low | PIE sheet/vang/outhaul vs speed/heel |
 
 ### C++ recompile loop — SOLVED ✅
 Editor MCP can't trigger a C++ build, so Claude drives it via **computer-use**:
