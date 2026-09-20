@@ -131,8 +131,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
 	float GetNightAmount() const;
 
+	/**
+	 * Calendar season 0..1 over the year:
+	 * 0 = Winter, 0.25 = Spring, 0.5 = Summer, 0.75 = Autumn.
+	 * Drives foliage/terrain green → autumn → winter tint via MPC_Season + MIDs.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	void SetSeason01(float Season01);
+
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	float GetSeason01() const { return Season01; }
+
+	/** e.g. "Summer" / "Early Autumn". */
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	FString GetSeasonLabel() const;
+
 	/** Capture sun/sky/fog baseline once (current map look = Fair Day). */
 	void CaptureEnvBaselineIfNeeded();
+
+	/**
+	 * Queue a SkyLight cubemap recapture (not real-time every frame).
+	 * Coalesced by MinSkyCaptureIntervalSec; used on env/TOD/long move.
+	 */
+	void RequestSkyLightRecapture(const TCHAR* Reason);
 
 private:
 	struct FEnvBaseline
@@ -166,6 +187,11 @@ private:
 	bool bTimeOfDayDriven = true;
 	/** Local solar time hours; 12 = Fair Day baseline. */
 	float TimeOfDayHours = 12.f;
+	/** Calendar season 0..1 (0 winter … 0.5 summer … 1 winter). Default summer. */
+	float Season01 = 0.5f;
+
+	/** Push Season01 to MPC_Season and structure/terrain materials. */
+	void ApplySeasonToWorld();
 
 	void ApplySunAndSky(const FSailEnvPresetDesc& Desc);
 	void ApplyFogLook(const FSailEnvPresetDesc& Desc);
@@ -191,6 +217,20 @@ private:
 	TWeakObjectPtr<UMaterialInstanceDynamic> NightMoonDiscMid;
 	bool bNightSkyActive = false;
 
+	/** Last sun/sky apply — skip sky recapture when unchanged (prevents lighting flash). */
+	float LastAppliedSunInt = -1.f;
+	float LastAppliedSkyInt = -1.f;
+	FRotator LastAppliedSunRot = FRotator::ZeroRotator;
+	FLinearColor LastAppliedSunCol = FLinearColor::Black;
+	FLinearColor LastAppliedSkyCol = FLinearColor::Black;
+	bool bLastAppliedNight = false;
+
+	/** SkyLight: never force real-time capture; recapture on demand only. */
+	float MinSkyCaptureIntervalSec = 0.75f;
+	float LastSkyCaptureWorldTime = -1000.f;
+	bool bSkyCapturePending = false;
+	FVector LastSkyCaptureBoatXY = FVector::ZeroVector;
+
 	TUniquePtr<IOceanHeightSampler> Sampler;
 	bool bOpenOceanPrepared = false;
 	bool bWaterZonesConfigured = false;
@@ -200,6 +240,8 @@ private:
 	bool bMaterialsPolished = false;
 	bool bSkySeamsFixed = false;
 	bool bLegacySkyDomeHidden = false;
+	bool bNantucketWaterExclusionReady = false;
+	TWeakObjectPtr<class AWaterBodyExclusionVolume> NantucketWaterExclusion;
 	float FollowAccum = 0.f;
 	float TerrainHideAccum = 0.f;
 	FVector LastZoneBoatXY = FVector::ZeroVector;
@@ -227,6 +269,12 @@ private:
 	void HideLegacySkyDome();
 	/** Collapse Water Body Ocean spline island hole so water fills the zone solidly. */
 	void CollapseOceanIslandHole();
+	/**
+	 * AAA water/land: keep a WaterBodyExclusionVolume over Nantucket so the
+	 * infinite ocean does not draw through dry DEM land (houses-in-water).
+	 * Only destroy *template* exclusions near map origin — never this volume.
+	 */
+	void EnsureNantucketWaterExclusion();
 	/**
 	 * Full water setup (extent, local tess, materials). Only MarkForRebuild when
 	 * extents/tess actually change or on first configure — not on every boat move.

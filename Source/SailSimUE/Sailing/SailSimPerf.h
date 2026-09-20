@@ -6,6 +6,7 @@
 #include "RenderTimer.h"
 #include "Engine/Engine.h"
 #include "DynamicRHI.h"
+#include "SailSimUE.h"
 
 // Engine CalculateFPSTimings() — same source as console "stat fps".
 extern ENGINE_API float GAverageFPS;
@@ -96,6 +97,9 @@ struct FSailSimPerf
 	int32 TerrainVerts = 0;
 	int32 StructureTiles = 0;
 	int32 StructureVerts = 0;
+	/** Resident structure tiles drawn as cooked StaticMesh vs PMC fallback. */
+	int32 StructureSmTiles = 0;
+	int32 StructurePmcTiles = 0;
 	int32 MooredCount = 0;
 	int32 AidCount = 0;
 	int32 WindPuffs = 0;
@@ -260,6 +264,36 @@ struct FSailSimPerf
 			Bottleneck = EBottleneck::Balanced;
 			BottleneckLabel = TEXT("balanced / idle");
 			AdviceLabel = TEXT("Frame budget OK. Peaks reset when Settings re-opens.");
+		}
+
+		// Periodic log for offline profiling (filter: [perf]).
+		static double LastPerfLog = 0.0;
+		const double NowSec = FPlatformTime::Seconds();
+		if (NowSec - LastPerfLog > 3.0)
+		{
+			LastPerfLog = NowSec;
+			// Rank SailSim GT buckets by EMA ms.
+			struct FRow { int32 I; float Ms; };
+			TArray<FRow, TInlineAllocator<16>> Rows;
+			for (int32 I = 0; I < NumBuckets; ++I)
+			{
+				if (EmaMs[I] > 0.05f) Rows.Add({ I, EmaMs[I] });
+			}
+			Rows.Sort([](const FRow& A, const FRow& B) { return A.Ms > B.Ms; });
+			FString BucketLine;
+			for (int32 R = 0; R < FMath::Min(6, Rows.Num()); ++R)
+			{
+				if (R) BucketLine += TEXT("  ");
+				BucketLine += FString::Printf(TEXT("%s=%.2f"),
+					BucketName(static_cast<EBucket>(Rows[R].I)), Rows[R].Ms);
+			}
+			UE_LOG(LogSailSim, Log,
+				TEXT("[perf] wall=%.1fms (%.0f fps)  GT=%.1f  GTwait=%.1f  RT=%.1f  RHI=%.1f  GPU=%.1f  | %s  | bottleneck=%s | tiles T=%d/%dk H=%d/%dk moored=%d aids=%d"),
+				WallFrameEmaMs, WallFrameEmaMs > 0.1f ? 1000.f / WallFrameEmaMs : 0.f,
+				GameThreadEmaMs, GameWaitEmaMs, RenderThreadEmaMs, RhiThreadEmaMs, GpuFrameEmaMs,
+				*BucketLine, *BottleneckLabel,
+				TerrainTiles, TerrainVerts / 1000, StructureTiles, StructureVerts / 1000,
+				MooredCount, AidCount);
 		}
 	}
 

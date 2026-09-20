@@ -15,6 +15,7 @@
 #include "GameFramework/Pawn.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "ProceduralMeshComponent.h"
@@ -162,8 +163,8 @@ TStatId UMooredBoatSubsystem::GetStatId() const
 
 FString UMooredBoatSubsystem::GetStatusLine() const
 {
-	if (!bSlotsReady) return TEXT("moored — no slots");
-	return FString::Printf(TEXT("moored %d/%d"), Resident.Num(), Slots.Num());
+	return FString::Printf(TEXT("moored near=%d hism=%d (cap %d)"),
+		Resident.Num(), MidHismSlotToInstance.Num(), MaxBoats);
 }
 
 bool UMooredBoatSubsystem::ResolveAidsPath(FString& OutPath) const
@@ -1018,6 +1019,8 @@ void UMooredBoatSubsystem::ApplyKeelTo(UProceduralMeshComponent* KeelMesh) const
 
 void UMooredBoatSubsystem::ClearAll()
 {
+	ClearMidHism();
+
 	for (auto& Pair : Resident)
 	{
 		if (IsValid(Pair.Value))
@@ -1615,26 +1618,30 @@ void UMooredBoatSubsystem::AddAnchorLight(AActor* Boat, USceneComponent* Root) c
 	SetEmissiveGlobe(Globe, EmNight, 0.55f);
 	SetEmissiveGlobe(Halo, EmNight * 0.35f, 0.25f);
 
-	UPointLightComponent* Pt = NewObject<UPointLightComponent>(Boat, TEXT("PointAnchor"), RF_Transient);
-	Pt->SetupAttachment(Root);
-	Pt->SetMobility(EComponentMobility::Movable);
-	Pt->SetRelativeLocation(PosLight);
-	Pt->SetLightColor(AnchorWhite);
-	Pt->SetIntensityUnits(ELightUnits::Candelas);
-	Pt->SetIntensity(AnchorLightCandelas);
-	Pt->SetAttenuationRadius(AnchorLightAttenuationCm);
-	// Larger source = softer pool, less temporal sparkle when many boats are lit.
-	Pt->SetSourceRadius(12.f);
-	Pt->SetSoftSourceRadius(28.f);
-	Pt->SetSpecularScale(0.05f);
-	Pt->SetVolumetricScatteringIntensity(0.02f);
-	Pt->SetIndirectLightingIntensity(0.15f);
-	Pt->SetCastShadows(false);
-	Pt->SetUseInverseSquaredFalloff(true);
-	Pt->SetVisibility(true);
-	Pt->SetHiddenInGame(false);
-	Pt->RegisterComponent();
-	Boat->AddInstanceComponent(Pt);
+	// Optional real point light — OFF by default (see bAnchorPointLights).
+	// Emissive globe/halo above already reads as a lantern without deferred light cost.
+	if (bAnchorPointLights)
+	{
+		UPointLightComponent* Pt = NewObject<UPointLightComponent>(Boat, TEXT("PointAnchor"), RF_Transient);
+		Pt->SetupAttachment(Root);
+		Pt->SetMobility(EComponentMobility::Movable);
+		Pt->SetRelativeLocation(PosLight);
+		Pt->SetLightColor(AnchorWhite);
+		Pt->SetIntensityUnits(ELightUnits::Candelas);
+		Pt->SetIntensity(AnchorLightCandelas);
+		Pt->SetAttenuationRadius(AnchorLightAttenuationCm);
+		Pt->SetSourceRadius(12.f);
+		Pt->SetSoftSourceRadius(28.f);
+		Pt->SetSpecularScale(0.05f);
+		Pt->SetVolumetricScatteringIntensity(0.02f);
+		Pt->SetIndirectLightingIntensity(0.15f);
+		Pt->SetCastShadows(false);
+		Pt->SetUseInverseSquaredFalloff(true);
+		Pt->SetVisibility(true);
+		Pt->SetHiddenInGame(false);
+		Pt->RegisterComponent();
+		Boat->AddInstanceComponent(Pt);
+	}
 }
 
 void UMooredBoatSubsystem::UpdateAllAnchorLights()
@@ -1965,57 +1972,212 @@ void UMooredBoatSubsystem::RebuildAround(const FVector& Focus)
 	LastFocus = Focus;
 	if (!bEnabled || !bSlotsReady || Slots.Num() == 0) return;
 
+	const float NearR2 = NearFullRadiusCm * NearFullRadiusCm;
+	const float MidR2 = MidHismRadiusCm * MidHismRadiusCm;
 	const float LoadR2 = LoadRadiusCm * LoadRadiusCm;
 	const float UnloadR2 = UnloadRadiusCm * UnloadRadiusCm;
 	const FVector2D F2(Focus.X, Focus.Y);
 
-	TSet<int32> Want;
+	// Classify every slot within unload hysteresis.
+	TSet<int32> WantNear;
+	TSet<int32> WantMid;
 	for (int32 I = 0; I < Slots.Num(); ++I)
 	{
 		const FVector2D P(Slots[I].MooringWorldCm.X, Slots[I].MooringWorldCm.Y);
 		const float D2 = FVector2D::DistSquared(F2, P);
-		if (Resident.Contains(I))
+		const bool bWasNear = Resident.Contains(I);
+		const bool bWasMid = MidHismSlotToInstance.Contains(I);
+		const float KeepR2 = (bWasNear || bWasMid) ? UnloadR2 : LoadR2;
+		if (D2 > KeepR2) continue;
+		if (D2 <= NearR2)
 		{
-			if (D2 <= UnloadR2) Want.Add(I);
+			WantNear.Add(I);
 		}
-		else if (D2 <= LoadR2)
+		else if (D2 <= MidR2 || D2 <= LoadR2)
 		{
-			Want.Add(I);
+			// Mid band: HISM only (also covers Near..Load if Mid < Load).
+			WantMid.Add(I);
 		}
 	}
 
-	TArray<int32> ToRemove;
+	// Drop near actors no longer wanted (or demoted to mid).
+	TArray<int32> DropNear;
 	for (auto& Pair : Resident)
 	{
-		if (!Want.Contains(Pair.Key))
+		if (!WantNear.Contains(Pair.Key))
 		{
 			if (IsValid(Pair.Value)) Pair.Value->Destroy();
-			ToRemove.Add(Pair.Key);
+			DropNear.Add(Pair.Key);
 		}
 	}
-	for (int32 K : ToRemove)
+	for (int32 K : DropNear)
 	{
 		Resident.Remove(K);
 		SwayState.Remove(K);
 	}
 
-	int32 Spawned = 0;
-	for (int32 I : Want)
+	// Drop mid instances no longer wanted (or promoted to near).
+	TArray<int32> DropMid;
+	for (const auto& Pair : MidHismSlotToInstance)
 	{
+		if (!WantMid.Contains(Pair.Key) || WantNear.Contains(Pair.Key))
+		{
+			DropMid.Add(Pair.Key);
+		}
+	}
+	for (int32 K : DropMid)
+	{
+		RemoveMidHism(K);
+	}
+
+	// Spawn near full boats.
+	int32 SpawnedNear = 0;
+	for (int32 I : WantNear)
+	{
+		// Must not also be mid.
+		RemoveMidHism(I);
 		if (Resident.Contains(I)) continue;
 		if (AActor* A = SpawnMooredBoat(Slots[I], I))
 		{
 			Resident.Add(I, A);
-			++Spawned;
+			++SpawnedNear;
 		}
 	}
 
-	if (Spawned > 0 || ToRemove.Num() > 0)
+	// Mid HISM hulls.
+	int32 SpawnedMid = 0;
+	for (int32 I : WantMid)
 	{
-		UE_LOG(LogSailSim, Log, TEXT("MooredBoats: resident=%d (+%d -%d) near (%.0f,%.0f)"),
-			Resident.Num(), Spawned, ToRemove.Num(), Focus.X, Focus.Y);
+		if (WantNear.Contains(I) || Resident.Contains(I)) continue;
+		const bool bHad = MidHismSlotToInstance.Contains(I);
+		AddOrUpdateMidHism(I, Slots[I]);
+		if (!bHad) ++SpawnedMid;
+	}
+
+	if (SpawnedNear > 0 || DropNear.Num() > 0 || SpawnedMid > 0 || DropMid.Num() > 0)
+	{
+		UE_LOG(LogSailSim, Log,
+			TEXT("MooredBoats: near=%d (+%d -%d) hism=%d (+%d -%d) focus=(%.0f,%.0f)"),
+			Resident.Num(), SpawnedNear, DropNear.Num(),
+			MidHismSlotToInstance.Num(), SpawnedMid, DropMid.Num(),
+			Focus.X, Focus.Y);
 	}
 }
+
+
+FTransform UMooredBoatSubsystem::MakeMooredHullTransform(const FMooredBoatSlot& Slot) const
+{
+	const float YawRad = FMath::DegreesToRadians(Slot.HeadingDeg);
+	const FVector Forward(FMath::Cos(YawRad), FMath::Sin(YawRad), 0.f);
+	const float StemToBall = Slot.LineLenCm;
+	const FVector OriginXY = Slot.MooringWorldCm - Forward * (BowOffsetCm + StemToBall);
+	const FVector Origin(OriginXY.X, OriginXY.Y, WaterlineOffsetCm);
+	return FTransform(FRotator(0.f, Slot.HeadingDeg, 0.f), Origin);
+}
+
+void UMooredBoatSubsystem::EnsureMidHism()
+{
+	if (MidHullHism && IsValid(MidHismOwner)) return;
+	UWorld* World = GetWorld();
+	if (!World || !HullNaniteMesh) return;
+
+	FActorSpawnParameters Sp;
+	Sp.ObjectFlags = RF_Transient;
+	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Owner = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, Sp);
+	if (!Owner) return;
+#if WITH_EDITOR
+	Owner->SetActorLabel(TEXT("MooredMidHISM"));
+#endif
+	Owner->Tags.Add(FName(TEXT("MooredBoat")));
+	Owner->Tags.Add(FName(TEXT("MooredHISM")));
+	USceneComponent* Root = NewObject<USceneComponent>(Owner, TEXT("Root"), RF_Transient);
+	Root->SetMobility(EComponentMobility::Static);
+	Owner->SetRootComponent(Root);
+	Root->RegisterComponent();
+	Owner->AddInstanceComponent(Root);
+
+	UHierarchicalInstancedStaticMeshComponent* H =
+		NewObject<UHierarchicalInstancedStaticMeshComponent>(Owner, TEXT("MidHullHISM"), RF_Transient);
+	H->SetupAttachment(Root);
+	H->SetMobility(EComponentMobility::Static);
+	H->SetStaticMesh(HullNaniteMesh.Get());
+	H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	H->SetCastShadow(false);
+	H->bDisallowNanite = !bHullUseNanite;
+	H->bNeverDistanceCull = false;
+	H->SetCullDistances(MidHismRadiusCm * 0.5f, LoadRadiusCm * 1.1f);
+	ApplyHullMaterialsToStaticMesh(H);
+	H->RegisterComponent();
+	Owner->AddInstanceComponent(H);
+
+	MidHismOwner = Owner;
+	MidHullHism = H;
+}
+
+void UMooredBoatSubsystem::ClearMidHism()
+{
+	MidHismSlotToInstance.Reset();
+	if (IsValid(MidHismOwner))
+	{
+		MidHismOwner->Destroy();
+	}
+	MidHismOwner = nullptr;
+	MidHullHism = nullptr;
+}
+
+void UMooredBoatSubsystem::AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot)
+{
+	if (!EnsureTemplate() || !bHullNaniteReady || !HullNaniteMesh) return;
+	EnsureMidHism();
+	if (!MidHullHism) return;
+
+	const FTransform Xf = MakeMooredHullTransform(Slot);
+	if (int32* Existing = MidHismSlotToInstance.Find(SlotIndex))
+	{
+		MidHullHism->UpdateInstanceTransform(*Existing, Xf, true, true, true);
+		return;
+	}
+	const int32 Id = MidHullHism->AddInstance(Xf, /*bWorldSpace*/ true);
+	MidHismSlotToInstance.Add(SlotIndex, Id);
+}
+
+void UMooredBoatSubsystem::RemoveMidHism(int32 SlotIndex)
+{
+	int32* InstId = MidHismSlotToInstance.Find(SlotIndex);
+	if (!InstId || !MidHullHism)
+	{
+		MidHismSlotToInstance.Remove(SlotIndex);
+		return;
+	}
+	// Swap-remove: HISM removes by index and may reorder — rebuild map if needed.
+	const int32 RemoveIdx = *InstId;
+	const int32 LastIdx = MidHullHism->GetInstanceCount() - 1;
+	if (RemoveIdx < 0 || RemoveIdx > LastIdx)
+	{
+		MidHismSlotToInstance.Remove(SlotIndex);
+		return;
+	}
+	if (RemoveIdx != LastIdx)
+	{
+		// Find which slot owns LastIdx and retarget.
+		for (auto& Pair : MidHismSlotToInstance)
+		{
+			if (Pair.Value == LastIdx)
+			{
+				Pair.Value = RemoveIdx;
+				break;
+			}
+		}
+	}
+	MidHullHism->RemoveInstance(RemoveIdx);
+	MidHismSlotToInstance.Remove(SlotIndex);
+	if (MidHismSlotToInstance.Num() == 0)
+	{
+		ClearMidHism();
+	}
+}
+
 
 FVector UMooredBoatSubsystem::GetFocusLocation() const
 {
@@ -2038,7 +2200,7 @@ void UMooredBoatSubsystem::Tick(float DeltaTime)
 	if (!World || World->IsPreviewWorld()) return;
 
 	SAIL_PERF_SCOPE(Moored);
-	FSailSimPerf::Get().MooredCount = Resident.Num();
+	FSailSimPerf::Get().MooredCount = Resident.Num() + MidHismSlotToInstance.Num();
 
 	if (StreamDebounceLeft > 0.f)
 	{

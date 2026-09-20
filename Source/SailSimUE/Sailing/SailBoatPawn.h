@@ -17,6 +17,7 @@ class UCameraComponent;
 class USceneComponent;
 class UProceduralMeshComponent;
 class UBoxComponent;
+class UMaterialInstanceDynamic;
 
 /**
  * J/105 from sail_geom.boat3d (procedural mesh) + FBoatDynamics 3-DOF VPP.
@@ -496,6 +497,12 @@ protected:
 	bool bBreakerDeck = false;
 	bool bBreakerCabin = false;
 	bool bBoatLightsBuilt = false;
+	/** Avoid per-frame MID recreate / intensity spam (causes lighting flash with Lumen). */
+	float CachedBoatLightVisScale = -1.f;
+	uint8 CachedBoatLightBreakerMask = 0xFF;
+	/** Cached MIDs for housings / lenses (created once). */
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> LightHousingMids;
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> LightLensMids;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USpringArmComponent> SpringArm;
@@ -588,9 +595,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
 	float WaterZoneExtentCm = 240000.f;
 
-	/** Sliding-window water mesh diameter (cm). ~1.2 km — local tess rebuilds every frame. */
+	/**
+	 * Sliding-window water mesh diameter (cm) — high-detail water around the view.
+	 * Must cover the streamed land disc (~1–2+ km). If smaller than land, far water
+	 * LOD (huge tiles) draws over near land and “eats” the shoreline / LOD edge.
+	 * ~2 km default; physics height queries stay independent.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float LocalWaterTessellationDiameterCm = 120000.f;
+	float LocalWaterTessellationDiameterCm = 200000.f;
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")

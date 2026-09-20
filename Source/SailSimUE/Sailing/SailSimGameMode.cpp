@@ -52,7 +52,7 @@ void ASailSimGameMode::DestroyLevelPlacedBoats()
 			CDO ? CDO->OpenWaterSpawnXY.X : Harbor.X,
 			CDO ? CDO->OpenWaterSpawnXY.Y : Harbor.Y,
 			0.f);
-		Ocean->PrepareOpenOcean(Hint, 240000.f, 120000.f);
+		Ocean->PrepareOpenOcean(Hint, 240000.f, 60000.f);
 	}
 }
 

@@ -89,9 +89,20 @@ struct FBoatDynamics
 	float CrS = 0.71f;
 	float CdCrossY = 0.50f;
 	float CdCrossN = 1.5f;
-	float KpAuto = 14.f;
-	float KiAuto = 4.f;
-	float KdAuto = 14.f;
+	/**
+	 * Autopilot PID → rudder°. Web used 14/4/14 which saturates full tiller by
+	 * ~2.5° error (hard deadband) → bang-bang heading hunt. These hold course
+	 * under weather helm without slamming: firm P, strong D, modest I.
+	 */
+	float KpAuto = 6.5f;
+	float KiAuto = 1.4f;
+	float KdAuto = 8.0f;
+	/** Soft deadband (deg) — residual error only; avoids hard on/off at 2°. */
+	float AutoDeadbandDeg = 0.6f;
+	/** Max |∫err| (deg·s); Ki*limit ≈ max standing weather-helm offset. */
+	float AutoILimit = 10.f;
+	/** Filtered yaw rate (°/s) for D term. */
+	float AutoYawRateLp = 0.f;
 
 	float Mass = 7750.f / 32.174f;
 	float Iz = 1.f;
@@ -205,6 +216,8 @@ struct FBoatDynamics
 	/** Last low-passed sail force (lb). */
 	float GetLpDriveLb() const { return LpDrive; }
 	float GetLpSideLb() const { return LpSide; }
+	/** Weather-helm yaw moment (ft·lb) fed into PhysStep. */
+	float GetNsailYaw() const { return NsailYaw; }
 
 	static float Wrap180(float Deg);
 	static float Wrap360(float Deg);
@@ -239,4 +252,6 @@ private:
 	float HeelWindMaxDeg(float TwsKn) const;
 	void UpdateLeeSign();
 	FSailForceInput ComputeSailForceStub() const;
+	/** Web-style CL/CD depower vs display TWS (flatten/reef). See ComputeSailForceStub. */
+	static float SailDepowerScale(float TwsDisplayKn);
 };

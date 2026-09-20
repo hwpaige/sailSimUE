@@ -1,5 +1,7 @@
 #include "Sailing/Ocean/SailOceanSubsystem.h"
 #include "Sailing/Ocean/GerstnerWaterBodySampler.h"
+#include "Sailing/Terrain/NantucketTerrainSubsystem.h"
+#include "Sailing/Terrain/NantucketStructuresSubsystem.h"
 #include "Sailing/SailBoatPawn.h"
 #include "Sailing/SailSimPerf.h"
 #include "SailSimUE.h"
@@ -11,6 +13,9 @@
 #include "WaterBodyOceanComponent.h"
 #include "WaterBodyExclusionVolume.h"
 #include "WaterBodyIslandActor.h"
+#include "Sailing/Nav/NavGeo.h"
+#include "Components/BrushComponent.h"
+#include "Engine/Brush.h"
 #include "WaterBodyTypes.h"
 #include "WaterSplineComponent.h"
 #include "Landscape.h"
@@ -36,6 +41,8 @@
 #include "GameFramework/Pawn.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialParameterCollectionInstance.h"
 #include "UObject/UnrealType.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
@@ -213,7 +220,7 @@ void USailOceanSubsystem::PrepareOpenOcean(
 	if (bWaterZonesConfigured && bOpenOceanPrepared)
 	{
 		const float NeedFull = FMath::Clamp(ZoneExtentCm, 200000.f, 400000.f);
-		const float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 100000.f, 280000.f);
+		const float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 80000.f, 280000.f);
 		const bool bExtentChanged =
 			FMath::Abs(NeedFull - LastAppliedZoneExtentCm) > 1000.f
 			|| FMath::Abs(LocalDiam - LastAppliedLocalTessCm) > 1000.f;
@@ -233,11 +240,13 @@ void USailOceanSubsystem::PrepareOpenOcean(
 	// First setup: full zone configure (one MarkForRebuild).
 	ConfigureWaterZones(BoatWorldPos, ZoneExtentCm, LocalTessDiameterCm);
 
-	// Dual sky: SM_SkySphere mesh + SkyAtmosphere fight (light/dark seam).
-	// Also re-center atmosphere/fog and apply intensity sliders.
-	FixSkyAndAtmosphereSeams(BoatWorldPos);
-	// Lock Fair Day = current polished map look (sun / fog / clouds as authored).
+	// Order matters for light→dark pop (AAA TOD pattern):
+	// 1) Capture map sun/sky baseline while still bright
+	// 2) Re-anchor atmosphere under the boat (no skylight bake)
+	// 3) Apply TOD / intensity on top of baseline
+	// 4) Leave SkyLight RealTimeCapture on so ambient tracks the sun
 	CaptureEnvBaselineIfNeeded();
+	FixSkyAndAtmosphereSeams(BoatWorldPos);
 	ApplyVolumetricCloudIntensity();
 	ApplyFogIntensity();
 	LastZoneBoatXY = BoatWorldPos;
@@ -324,6 +333,81 @@ void USailOceanSubsystem::EnsureOceanVisualCoverage(
 {
 	// Flat Water plane coverage (no second wave system / no fill plane).
 	PrepareOpenOcean(BoatWorldPos, ZoneExtentCm, LocalTessDiameterCm);
+}
+
+void USailOceanSubsystem::EnsureNantucketWaterExclusion()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	if (NantucketWaterExclusion.IsValid())
+	{
+		bNantucketWaterExclusionReady = true;
+		return;
+	}
+
+	// DEM / ENC Nantucket bbox (matches nantucket-geo NANTUCKET_BBOX + heightmap_meta).
+	// Slight pad so the beach apron still meets water outside the box edge.
+	constexpr double South = 41.235;
+	constexpr double North = 41.395;
+	constexpr double West = -70.32;
+	constexpr double East = -70.02;
+	double X0 = 0, Y0 = 0, X1 = 0, Y1 = 0;
+	FNavGeo::LatLonToWorldCm(South, West, X0, Y0);
+	FNavGeo::LatLonToWorldCm(North, East, X1, Y1);
+	const float MinX = static_cast<float>(FMath::Min(X0, X1));
+	const float MaxX = static_cast<float>(FMath::Max(X0, X1));
+	const float MinY = static_cast<float>(FMath::Min(Y0, Y1));
+	const float MaxY = static_cast<float>(FMath::Max(Y0, Y1));
+	const float Pad = 25000.f; // 250 m pad
+	const FVector Center((MinX + MaxX) * 0.5f, (MinY + MaxY) * 0.5f, 5000.f);
+	// Default PhysicsVolume brush is ~200 cm cube (half-extent 100). Scale to cover island.
+	const float HalfX = (MaxX - MinX) * 0.5f + Pad;
+	const float HalfY = (MaxY - MinY) * 0.5f + Pad;
+	const float HalfZ = 15000.f; // ±150 m vertical — covers DEM peaks + freeboard
+	const FVector Scale(HalfX / 100.f, HalfY / 100.f, HalfZ / 100.f);
+
+	FActorSpawnParameters Sp;
+	Sp.Name = NAME_None;
+	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AWaterBodyExclusionVolume* Vol = World->SpawnActor<AWaterBodyExclusionVolume>(
+		AWaterBodyExclusionVolume::StaticClass(), Center, FRotator::ZeroRotator, Sp);
+	if (!Vol)
+	{
+		UE_LOG(LogSailSim, Warning, TEXT("Failed to spawn Nantucket water exclusion volume"));
+		return;
+	}
+	Vol->SetActorLabel(TEXT("SailSim_NantucketWaterExclusion"));
+	Vol->Tags.Add(FName(TEXT("SailSim_NantucketWaterExclusion")));
+	// Empty list + RemoveWaterBodiesListFromExclusion ⇒ exclude ALL overlapping water bodies.
+	Vol->ExclusionMode = EWaterExclusionMode::RemoveWaterBodiesListFromExclusion;
+	Vol->WaterBodies.Reset();
+	Vol->SetActorScale3D(Scale);
+	if (UBrushComponent* Brush = Vol->GetBrushComponent())
+	{
+		Brush->SetMobility(EComponentMobility::Movable);
+		Brush->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	// Register with every ocean body so mesh gen punches a dry hole over the island.
+	for (TActorIterator<AWaterBody> It(World); It; ++It)
+	{
+		if (UWaterBodyComponent* Comp = It->GetWaterBodyComponent())
+		{
+			Comp->AddExclusionVolume(Vol);
+			FOnWaterBodyChangedParams BodyParams;
+			BodyParams.bShapeOrPositionChanged = true;
+			Comp->UpdateAll(BodyParams);
+		}
+	}
+	FWaterExclusionVolumeChangedParams Params;
+	Params.bUserTriggered = false;
+	Vol->UpdateOverlappingWaterBodies(Params);
+
+	NantucketWaterExclusion = Vol;
+	bNantucketWaterExclusionReady = true;
+	UE_LOG(LogSailSim, Log,
+		TEXT("Nantucket water exclusion: center=(%.0f,%.0f) half=(%.0f x %.0f) cm — ocean sheet stops over land"),
+		Center.X, Center.Y, HalfX, HalfY);
 }
 
 void USailOceanSubsystem::HideIslandTerrain()
@@ -511,8 +595,26 @@ void USailOceanSubsystem::ConfigureWaterZones(
 	// Harbor spawn is ~24 km from map origin — zone MUST be moved under the boat.
 	// Extent alone (2–3 km) cannot cover a boat at NAV harbor coordinates.
 	const float NeedFull = FMath::Clamp(ZoneExtentCm, 200000.f, 400000.f);
-	// Local tess = every-frame water-info + quadtree window. Prefer ~1.2 km (was 1.8–2.8).
-	const float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 100000.f, 280000.f);
+	// Local tess = high-detail water draw window (not physics). Must cover the
+	// streamed Nantucket land disc; otherwise far water LOD tiles (14 km-ish)
+	// sit over near land and look like water is “displacing” the LOD edge.
+	// Cap at 2800 m for Mac GPU budget.
+	float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 80000.f, 280000.f);
+	if (UNantucketTerrainSubsystem* Terrain = World->GetSubsystem<UNantucketTerrainSubsystem>())
+	{
+		// Tile XY span ≈ 1.12 km; disc diameter ≈ (2*LoadR+1) * tileSize.
+		// Cover at least the full load disc so water LOD matches land LOD.
+		const float TileSpanCm = 112000.f;
+		const float LandDiscCm = (2.f * float(Terrain->LoadRadius) + 1.f) * TileSpanCm;
+		const float Want = FMath::Min(LandDiscCm, 280000.f);
+		if (Want > LocalDiam)
+		{
+			UE_LOG(LogSailSim, Log,
+				TEXT("Flat ocean: expanding localTess %.0f→%.0f cm to cover land load disc (loadR=%d)"),
+				LocalDiam, Want, Terrain->LoadRadius);
+			LocalDiam = Want;
+		}
+	}
 	const FVector ZoneLoc(BoatWorldPos.X, BoatWorldPos.Y, 0.f);
 
 	// SetZoneExtent → OnExtentChanged → MarkForRebuild(All). Only call when values change.
@@ -522,8 +624,9 @@ void USailOceanSubsystem::ConfigureWaterZones(
 		|| FMath::Abs(NeedFull - LastAppliedZoneExtentCm) > 1000.f
 		|| FMath::Abs(LocalDiam - LastAppliedLocalTessCm) > 1000.f;
 
-	// Landscape water-brush carve left exclusion volumes / holes where the island was.
-	// Only scan/destroy once — re-running on every follow was pure hitch cost.
+	// Template Open World left exclusion volumes / holes at the *map origin* island.
+	// Only destroy those near origin. Keep / create the Nantucket exclusion so the
+	// ocean sheet does not draw through dry DEM land (AAA water/land contract).
 	if (bFirstConfigure)
 	{
 		int32 ExclDestroyed = 0;
@@ -536,6 +639,18 @@ void USailOceanSubsystem::ConfigureWaterZones(
 			for (AWaterBodyExclusionVolume* V : Excl)
 			{
 				if (!IsValid(V)) continue;
+				// Preserve our Nantucket dry-land exclusion (and anything far from origin).
+				const FString Label = V->GetActorNameOrLabel();
+				if (Label.Contains(TEXT("NantucketWaterExclusion"))
+					|| Label.Contains(TEXT("SailSim_Nantucket")))
+				{
+					continue;
+				}
+				// Template island exclusions live near map origin; Nantucket is ~20 km away.
+				if (V->GetActorLocation().Size2D() > 120000.f)
+				{
+					continue;
+				}
 				for (TActorIterator<AWaterBody> Bit(World); Bit; ++Bit)
 				{
 					if (UWaterBodyComponent* Comp = Bit->GetWaterBodyComponent())
@@ -549,8 +664,11 @@ void USailOceanSubsystem::ConfigureWaterZones(
 		}
 		if (ExclDestroyed > 0)
 		{
-			UE_LOG(LogSailSim, Log, TEXT("Open ocean: destroyed %d water exclusion volume(s)"), ExclDestroyed);
+			UE_LOG(LogSailSim, Log,
+				TEXT("Open ocean: destroyed %d template water exclusion volume(s) near origin"),
+				ExclDestroyed);
 		}
+		EnsureNantucketWaterExclusion();
 	}
 
 	// Harbor is ~24 km from map origin; Static mobility blocks SetActorLocation.
@@ -583,7 +701,8 @@ void USailOceanSubsystem::ConfigureWaterZones(
 			Zone->SetActorLocation(ZoneLoc, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 
-		// Local tess = one big render window that follows the view.
+		// Local tess = high-detail water under the view (and land). Far mesh
+		// still fills the horizon outside this window.
 		if (FBoolProperty* bLocalProp = FindFProperty<FBoolProperty>(
 				AWaterZone::StaticClass(), TEXT("bEnableLocalOnlyTessellation")))
 		{
@@ -594,10 +713,13 @@ void USailOceanSubsystem::ConfigureWaterZones(
 		{
 			if (FVector* Ext = LocalExtProp->ContainerPtrToValuePtr<FVector>(Zone))
 			{
+				// Half-extent style in some UE versions is full diameter in others —
+				// we store full diameter in LocalDiam and set XY equal (square window).
 				*Ext = FVector(LocalDiam, LocalDiam, 20000.f);
 			}
 		}
-		// Hidden landscape must NOT punch dry holes into the water-info texture.
+		// PMC Nantucket land is not Landscape — auto-include does nothing useful
+		// and can punch dry holes from the hidden origin island landscape.
 		if (FBoolProperty* bLandProp = FindFProperty<FBoolProperty>(
 				AWaterZone::StaticClass(), TEXT("bAutoIncludeLandscapesAsTerrain")))
 		{
@@ -624,20 +746,22 @@ void USailOceanSubsystem::ConfigureWaterZones(
 		{
 			WaterMesh->SetVisibility(true);
 			WaterMesh->SetHiddenInGame(false);
-			// Slightly larger tiles → fewer water quads (was 10 km). Far mesh still covers horizon.
+			// Smaller tiles near the local/far transition reduce huge quads that
+			// climb over shoreline land (looks like water “displacing” terrain LOD).
 			const float Tile = WaterMesh->GetTileSize();
-			if (Tile < 8000.f || Tile > 18000.f)
+			if (Tile < 6000.f || Tile > 12000.f)
 			{
-				WaterMesh->SetTileSize(14000.f);
+				WaterMesh->SetTileSize(10000.f); // 100 m
 			}
-			// Far-distance patch must reach true horizon. Previous ~5 km extent left a hard
-			// ring where water ended and pure sky began (light→dark seam when looking around).
-			// 50 km keeps the water material continuous to the atmospheric horizon.
+			// Far-distance patch must reach true horizon (50 km).
 			if (FFloatProperty* FarExt = FindFProperty<FFloatProperty>(
 					UWaterMeshComponent::StaticClass(), TEXT("FarDistanceMeshExtent")))
 			{
-				FarExt->SetPropertyValue_InContainer(WaterMesh, 5000000.f); // 50 km
+				FarExt->SetPropertyValue_InContainer(WaterMesh, 5000000.f);
 			}
+			// Prefer water that depth-tests cleanly against opaque land PMC.
+			WaterMesh->SetCastShadow(false);
+			WaterMesh->bAffectDynamicIndirectLighting = false;
 		}
 
 		++ZonesConfigured;
@@ -1039,18 +1163,18 @@ void USailOceanSubsystem::FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos)
 				ModeProp->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, static_cast<int64>(Mode));
 			}
 		}
-		// km units. 350 km was a large RT/GPU cost for little visible gain beyond
-		// ~horizon band; 120 km still covers sailing sky without hard clip for most views.
-		Cloud->SetTracingMaxDistance(120.f);
-		Cloud->SetTracingStartMaxDistance(180.f);
-		// Mild sample reduction (default scale is often 1). Keeps cloud shape, less march cost.
-		if (Cloud->ViewSampleCountScale > 0.75f)
+		// km units. 120 km was still a large volumetric march for sailing sky.
+		// 50 km covers the visual dome; fog sells the far band.
+		Cloud->SetTracingMaxDistance(50.f);
+		Cloud->SetTracingStartMaxDistance(80.f);
+		// Sample scales: keep shape, cut march cost (was 0.75).
+		if (Cloud->ViewSampleCountScale > 0.55f)
 		{
-			Cloud->SetViewSampleCountScale(0.75f);
+			Cloud->SetViewSampleCountScale(0.55f);
 		}
-		if (Cloud->ShadowViewSampleCountScale > 0.75f)
+		if (Cloud->ShadowViewSampleCountScale > 0.55f)
 		{
-			Cloud->SetShadowViewSampleCountScale(0.75f);
+			Cloud->SetShadowViewSampleCountScale(0.55f);
 		}
 
 		// Zero aerial-perspective start on clouds so cloud→sky doesn't hard-cut.
@@ -1120,7 +1244,13 @@ void USailOceanSubsystem::FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos)
 	}
 
 	// --- Sky light ---
-	// Real-time capture keeps ambient sky color consistent as the view rotates.
+	// KEEP RealTimeCapture ON for open-ocean + TOD. Forcing it off and baking a
+	// one-shot cubemap was the light→dark flash: first frames used the bright
+	// map/realtime look, then UpdateSkyCaptureContents replaced ambient with a
+	// dark/stale capture (especially with Lumen + sun moved under the boat).
+	// AAA open-world day/night (Fortnite-style TOD, many UE5 samples) either:
+	//   • leave SkyLight Real Time Capture enabled, or
+	//   • recapture only after the final sun pose, never mid-setup.
 	for (TActorIterator<ASkyLight> It(World); It; ++It)
 	{
 		ASkyLight* Sky = *It;
@@ -1132,19 +1262,19 @@ void USailOceanSubsystem::FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos)
 				Comp->bRealTimeCapture = true;
 				Comp->MarkRenderStateDirty();
 			}
-			// Recapture so harbor view doesn't keep origin lighting.
-			Comp->SetCaptureIsDirty();
+			// Outdoor floor so Lumen + land don't sink to black ambient.
+			if (Comp->Intensity < 0.5f)
+			{
+				Comp->SetIntensity(1.f);
+			}
 			++SkyLightFixed;
 		}
 	}
-	if (SkyLightFixed > 0)
-	{
-		USkyLightComponent::UpdateSkyCaptureContents(World);
-	}
+	// Do NOT RequestSkyLightRecapture here — sun/TOD apply next and would thrash.
 
 	bSkySeamsFixed = true;
 	UE_LOG(LogSailSim, Log,
-		TEXT("Sky seams: atm=%d clouds=%d fog=%d skylight=%d under boat=(%.0f,%.0f)"),
+		TEXT("Sky seams: atm=%d clouds=%d fog=%d skylight=%d (realtime kept) under boat=(%.0f,%.0f)"),
 		SkyMoved, CloudFixed, FogFixed, SkyLightFixed, FocusXY.X, FocusXY.Y);
 }
 
@@ -1193,10 +1323,10 @@ void USailOceanSubsystem::PolishWaterMaterials()
 			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.f);
 			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.f);
 			MID->SetScalarParameterValue(TEXT("Enable Waves"), 0.f);
-			// Soft open-sea color only.
+			// Soft open-sea color; keep near normals readable, flatten far (W3 hero budget).
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.35f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.25f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.2f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.10f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.06f);
 			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.45f, 0.08f, 0.04f, 1.f));
 			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.02f, 0.12f, 0.14f, 1.f));
 			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.12f, 0.28f, 0.32f, 1.f));
@@ -1235,10 +1365,11 @@ void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// Calm baseline from PolishWaterMaterials; puff boost adds short high-frequency detail.
+	// Near: high-frequency chop stays readable. Distant: much flatter so far water
+	// doesn't fight the small local-tess draw window (W3). Prefer near >> distant always.
 	const float NearN = FMath::Lerp(0.35f, 1.35f, I);
-	const float DistN = FMath::Lerp(0.25f, 0.85f, I);
-	const float DistNB = FMath::Lerp(0.20f, 0.70f, I);
+	const float DistN = FMath::Lerp(0.10f, 0.40f, I);
+	const float DistNB = FMath::Lerp(0.06f, 0.28f, I);
 	// Slight foam only in strong chop (reads as cat's-paw texture, not whitecaps).
 	const float Foam = FMath::Lerp(0.f, 0.22f, I * I);
 
@@ -1266,6 +1397,62 @@ void USailOceanSubsystem::SoftenHorizonFog()
 	// Intentionally empty. Earlier open-ocean fog density/color overrides
 	// crushed the map's SkyAtmosphere / directional light / cloud look.
 	// Horizon blend is better done with water material far opacity, not global fog.
+}
+
+
+void USailOceanSubsystem::RequestSkyLightRecapture(const TCHAR* Reason)
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// With RealTimeCapture left on (open ocean), a manual bake is unnecessary and
+	// causes the classic bright→dark pop when it replaces a good realtime probe.
+	bool bAnyRealtime = false;
+	for (TActorIterator<ASkyLight> It(World); It; ++It)
+	{
+		if (!IsValid(*It)) continue;
+		if (USkyLightComponent* Comp = It->GetLightComponent())
+		{
+			if (Comp->bRealTimeCapture)
+			{
+				bAnyRealtime = true;
+				break;
+			}
+		}
+	}
+	if (bAnyRealtime)
+	{
+		UE_LOG(LogSailSim, Verbose,
+			TEXT("SkyLight recapture skipped (%s) — RealTimeCapture active"),
+			Reason ? Reason : TEXT("?"));
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	if (Now - LastSkyCaptureWorldTime < MinSkyCaptureIntervalSec && LastSkyCaptureWorldTime >= 0.f)
+	{
+		bSkyCapturePending = true;
+		return;
+	}
+
+	int32 N = 0;
+	for (TActorIterator<ASkyLight> It(World); It; ++It)
+	{
+		if (!IsValid(*It)) continue;
+		if (USkyLightComponent* Comp = It->GetLightComponent())
+		{
+			Comp->SetCaptureIsDirty();
+			Comp->MarkRenderStateDirty();
+			++N;
+		}
+	}
+	if (N > 0)
+	{
+		USkyLightComponent::UpdateSkyCaptureContents(World);
+		LastSkyCaptureWorldTime = Now;
+		bSkyCapturePending = false;
+		UE_LOG(LogSailSim, Verbose, TEXT("SkyLight recapture (%s) n=%d"), Reason ? Reason : TEXT("?"), N);
+	}
 }
 
 void USailOceanSubsystem::CaptureEnvBaselineIfNeeded()
@@ -1310,8 +1497,56 @@ void USailOceanSubsystem::CaptureEnvBaselineIfNeeded()
 	else
 	{
 		EnvBaseline.SunIntensity = 10.f;
-		EnvBaseline.SunRotation = FRotator(0.f, 0.f, 0.f);
+		// UE pitch = -elevation. Noon ~55° above horizon → pitch -55.
+		EnvBaseline.SunRotation = FRotator(-55.f, -40.f, 0.f);
 		EnvBaseline.SunSourceAngle = 0.5357f;
+	}
+	// UE convention: directional light +X is light travel direction, so
+	// Pitch = -Elevation (negative pitch = sun above horizon). Map templates
+	// often ship pitch≈0 (horizon) or even positive (below horizon = black).
+	// Elevation = -Pitch; require elev ≥ 20° for a usable Fair Day noon.
+	{
+		const float Elev = -EnvBaseline.SunRotation.Pitch;
+		if (Elev < 20.f)
+		{
+			UE_LOG(LogSailSim, Log,
+				TEXT("Env baseline sun elev=%.1f° (pitch=%.1f) too low for noon — clamping elev to 55° (pitch -55)"),
+				Elev, EnvBaseline.SunRotation.Pitch);
+			EnvBaseline.SunRotation.Pitch = -55.f;
+			if (FMath::IsNearlyZero(EnvBaseline.SunRotation.Yaw))
+			{
+				EnvBaseline.SunRotation.Yaw = -40.f;
+			}
+		}
+	}
+	if (EnvBaseline.SunIntensity < 1.f)
+	{
+		EnvBaseline.SunIntensity = 10.f;
+	}
+
+	// AAA outdoor: mark the sun as atmosphere light and apply pose immediately so
+	// the first lit frame is not "horizon pitch 0 → then dark after TOD".
+	if (BestComp && BestActor)
+	{
+		if (USceneComponent* Root = BestActor->GetRootComponent())
+		{
+			if (Root->Mobility != EComponentMobility::Movable)
+			{
+				Root->SetMobility(EComponentMobility::Movable);
+			}
+		}
+		if (BestComp->Mobility != EComponentMobility::Movable)
+		{
+			BestComp->SetMobility(EComponentMobility::Movable);
+		}
+		BestActor->SetActorRotation(EnvBaseline.SunRotation);
+		BestComp->SetWorldRotation(EnvBaseline.SunRotation);
+		BestComp->SetIntensity(EnvBaseline.SunIntensity);
+		BestComp->SetLightColor(EnvBaseline.SunColor);
+		BestComp->SetAtmosphereSunLight(true);
+		BestComp->SetAtmosphereSunLightIndex(0);
+		BestComp->SetVisibility(true);
+		BestComp->MarkRenderStateDirty();
 	}
 
 	for (TActorIterator<ASkyLight> It(World); It; ++It)
@@ -1321,6 +1556,18 @@ void USailOceanSubsystem::CaptureEnvBaselineIfNeeded()
 			EnvBaseline.SkyLightIntensity = C->Intensity;
 			EnvBaseline.SkyLightColor = C->LightColor;
 			break;
+		}
+	}
+	// Empty/zero skylight capture → near-black ambient after first recapture.
+	if (EnvBaseline.SkyLightIntensity < 0.35f)
+	{
+		UE_LOG(LogSailSim, Log,
+			TEXT("Env baseline skylight intensity=%.3f too low — using 1.0"),
+			EnvBaseline.SkyLightIntensity);
+		EnvBaseline.SkyLightIntensity = 1.f;
+		if (EnvBaseline.SkyLightColor.GetLuminance() < 0.05f)
+		{
+			EnvBaseline.SkyLightColor = FLinearColor::White;
 		}
 	}
 
@@ -1372,9 +1619,9 @@ void USailOceanSubsystem::CaptureEnvBaselineIfNeeded()
 	EnvBaseline.FogIntensity = FogIntensity;
 	EnvBaseline.bValid = true;
 	UE_LOG(LogSailSim, Log,
-		TEXT("Env baseline captured: sunPitch=%.1f yaw=%.1f elev≈%.1f int=%.2f fogDens=%.5f falloff=%.2f clouds=%.2f (Fair Day)"),
+		TEXT("Env baseline captured: sunPitch=%.1f yaw=%.1f elev=%.1f int=%.2f fogDens=%.5f falloff=%.2f clouds=%.2f (Fair Day)"),
 		EnvBaseline.SunRotation.Pitch, EnvBaseline.SunRotation.Yaw,
-		EnvBaseline.SunRotation.Pitch, // Pitch == elevation (UE +X axis)
+		-EnvBaseline.SunRotation.Pitch, // elev = -pitch (UE directional)
 		EnvBaseline.SunIntensity, EnvBaseline.FogDensity,
 		EnvBaseline.FogHeightFalloff, EnvBaseline.CloudIntensity);
 
@@ -1431,7 +1678,9 @@ FSailEnvPresetDesc USailOceanSubsystem::BuildTimeOfDayDesc() const
 	const FSailEnvPresetDesc NightTable = GetSailEnvPresetDesc(ESailEnvPreset::Night);
 
 	FSailEnvPresetDesc Fair = GetSailEnvPresetDesc(ESailEnvPreset::FairDay);
-	const float FairElev = EnvBaseline.bValid ? EnvBaseline.SunRotation.Pitch : Fair.SunElevationDeg;
+	// Elevation (deg above horizon) — not UE pitch. elev = -pitch.
+	const float CapturedElev = EnvBaseline.bValid ? (-EnvBaseline.SunRotation.Pitch) : Fair.SunElevationDeg;
+	const float FairElev = (CapturedElev >= 20.f) ? CapturedElev : FMath::Max(Fair.SunElevationDeg, 55.f);
 	const FLinearColor FairSun = EnvBaseline.bValid ? EnvBaseline.SunColor : Fair.SunColor;
 	const FLinearColor FairSky = EnvBaseline.bValid ? EnvBaseline.SkyLightColor : Fair.SkyLightColor;
 	if (EnvBaseline.bValid)
@@ -1606,6 +1855,54 @@ void USailOceanSubsystem::SetTimeOfDay01(float Norm01)
 	SetTimeOfDayHours(FMath::Clamp(Norm01, 0.f, 1.f) * 24.f);
 }
 
+void USailOceanSubsystem::SetSeason01(float InSeason01)
+{
+	Season01 = FMath::Clamp(InSeason01, 0.f, 1.f);
+	// Always push (prefs restore / first tile stream may share the default 0.5).
+	ApplySeasonToWorld();
+}
+
+FString USailOceanSubsystem::GetSeasonLabel() const
+{
+	// Continuous year labels (peaks at W/Sp/Su/A).
+	const float S = FMath::Clamp(Season01, 0.f, 1.f);
+	if (S < 0.0625f || S >= 0.9375f) return TEXT("Winter");
+	if (S < 0.1875f) return TEXT("Late Winter");
+	if (S < 0.3125f) return TEXT("Spring");
+	if (S < 0.4375f) return TEXT("Late Spring");
+	if (S < 0.5625f) return TEXT("Summer");
+	if (S < 0.6875f) return TEXT("Late Summer");
+	if (S < 0.8125f) return TEXT("Autumn");
+	return TEXT("Late Autumn");
+}
+
+void USailOceanSubsystem::ApplySeasonToWorld()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// Global MPC so any material with CollectionParameter "Season01" updates instantly.
+	static const TCHAR* MpcPath = TEXT("/Game/Materials/Navt/MPC_Season.MPC_Season");
+	if (UMaterialParameterCollection* Mpc = LoadObject<UMaterialParameterCollection>(nullptr, MpcPath))
+	{
+		if (UMaterialParameterCollectionInstance* Inst = World->GetParameterCollectionInstance(Mpc))
+		{
+			Inst->SetScalarParameterValue(FName(TEXT("Season01")), Season01);
+		}
+	}
+
+	// Structure / veg MIDs (Night + Season scalars).
+	if (UNantucketStructuresSubsystem* Structs = World->GetSubsystem<UNantucketStructuresSubsystem>())
+	{
+		Structs->SetSeason(Season01);
+	}
+	// Terrain land cover MIDs.
+	if (UNantucketTerrainSubsystem* Terrain = World->GetSubsystem<UNantucketTerrainSubsystem>())
+	{
+		Terrain->SetSeason(Season01);
+	}
+}
+
 FString USailOceanSubsystem::GetTimeOfDayLabel() const
 {
 	const float H = FMath::Fmod(FMath::Max(0.f, TimeOfDayHours), 24.f);
@@ -1634,19 +1931,32 @@ void USailOceanSubsystem::ApplySunAndSky(const FSailEnvPresetDesc& Desc)
 	UWorld* World = GetWorld();
 	if (!World || !EnvBaseline.bValid) return;
 
-	const bool bFair = (ActiveEnvPreset == ESailEnvPreset::FairDay) && !bTimeOfDayDriven;
+	// Fair Day restore: discrete Fair button OR time-of-day near noon.
+	// Previously TOD noon forced the non-fair path and rebuilt sun pitch from the
+	// desc table — that could darken the scene one frame after the map's bright
+	// authored look (user saw "loads light then turns dark").
+	const bool bFair = ((ActiveEnvPreset == ESailEnvPreset::FairDay) && !bTimeOfDayDriven)
+		|| (bTimeOfDayDriven && GetNightAmount() < 0.08f
+			&& FMath::Abs(TimeOfDayHours - 12.f) < 3.5f);
 	const bool bNight = (ActiveEnvPreset == ESailEnvPreset::Night)
 		|| (bTimeOfDayDriven && GetNightAmount() > 0.92f);
 	ADirectionalLight* Moon = NightMoonLight.Get();
 
-	// UE: sun sits along component +X (FRotator::Vector). Positive pitch = above horizon.
-	// Pitch = +Elevation. Night uses negative elevation → negative pitch.
+	// UE directional: light travels along +X. Pitch = -Elevation so noon elev +55
+	// → pitch -55 (rays into the world). Positive pitch = sun below horizon = black.
+	// Fair / noon TOD restores the captured rotator (already in UE pitch).
 	FRotator SunRot = EnvBaseline.SunRotation;
-	if (!bFair)
 	{
-		const float Pitch = Desc.SunElevationDeg;
 		const float Yaw = EnvBaseline.SunRotation.Yaw + Desc.SunYawOffsetDeg;
-		SunRot = FRotator(Pitch, Yaw, 0.f);
+		if (bFair && (-EnvBaseline.SunRotation.Pitch) >= 20.f)
+		{
+			SunRot = FRotator(EnvBaseline.SunRotation.Pitch, Yaw, 0.f);
+		}
+		else
+		{
+			// Desc.SunElevationDeg is above-horizon degrees (may be negative at night).
+			SunRot = FRotator(-Desc.SunElevationDeg, Yaw, 0.f);
+		}
 	}
 
 	// Night: force absolute zero on the day sun — residual atm light washes stars.
@@ -1660,6 +1970,16 @@ void USailOceanSubsystem::ApplySunAndSky(const FSailEnvPresetDesc& Desc)
 	const float SkyFloor = bNight ? 0.005f : 0.01f;
 	const float SkyInt = FMath::Max(SkyFloor, EnvBaseline.SkyLightIntensity * Desc.SkyLightIntensityMul);
 	const FLinearColor SkyCol = bFair ? EnvBaseline.SkyLightColor : Desc.SkyLightColor;
+
+	// Skip sky-capture rebuild if sun/sky haven't meaningfully changed (avoids lighting flash).
+	const bool bSameAsLast =
+		LastAppliedSunInt >= 0.f
+		&& FMath::IsNearlyEqual(SunInt, LastAppliedSunInt, 0.02f)
+		&& FMath::IsNearlyEqual(SkyInt, LastAppliedSkyInt, 0.02f)
+		&& SunRot.Equals(LastAppliedSunRot, 0.15f)
+		&& SunCol.Equals(LastAppliedSunCol, 0.01f)
+		&& SkyCol.Equals(LastAppliedSkyCol, 0.01f)
+		&& bNight == bLastAppliedNight;
 
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
@@ -1700,7 +2020,10 @@ void USailOceanSubsystem::ApplySunAndSky(const FSailEnvPresetDesc& Desc)
 				C->SetAtmosphereSunLightIndex(0);
 				C->SetVisibility(true);
 			}
-			C->MarkRenderStateDirty();
+			if (!bSameAsLast)
+			{
+				C->MarkRenderStateDirty();
+			}
 		}
 	}
 
@@ -1710,11 +2033,22 @@ void USailOceanSubsystem::ApplySunAndSky(const FSailEnvPresetDesc& Desc)
 		{
 			C->SetIntensity(SkyInt);
 			C->SetLightColor(SkyCol);
-			C->SetCaptureIsDirty();
-			C->MarkRenderStateDirty();
+			if (!bSameAsLast)
+			{
+				C->MarkRenderStateDirty();
+			}
 		}
 	}
-	USkyLightComponent::UpdateSkyCaptureContents(World);
+	if (!bSameAsLast)
+	{
+		RequestSkyLightRecapture(TEXT("sun-sky-change"));
+		LastAppliedSunInt = SunInt;
+		LastAppliedSkyInt = SkyInt;
+		LastAppliedSunRot = SunRot;
+		LastAppliedSunCol = SunCol;
+		LastAppliedSkyCol = SkyCol;
+		bLastAppliedNight = bNight;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1854,7 +2188,7 @@ void USailOceanSubsystem::EnsureNightSkyActors()
 		SP.Name = MakeUniqueObjectName(World->GetCurrentLevel(), ADirectionalLight::StaticClass(), TEXT("SailSim_Moon"));
 		SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		ADirectionalLight* Moon = World->SpawnActor<ADirectionalLight>(
-			ADirectionalLight::StaticClass(), FVector::ZeroVector, FRotator(42.f, 200.f, 0.f), SP);
+			ADirectionalLight::StaticClass(), FVector::ZeroVector, FRotator(-42.f, 200.f, 0.f), SP);
 		if (Moon)
 		{
 #if WITH_EDITOR
@@ -2053,6 +2387,14 @@ void USailOceanSubsystem::ApplyNightSky(bool bNight)
 	UWorld* World = GetWorld();
 	if (!World) return;
 
+	// No-op when already in this night state (avoid per-call sky recapture flash).
+	const bool bAlready = (bNightSkyActive == bNight)
+		&& (!bNight || (NightMoonLight.IsValid() && NightStarDome.IsValid()));
+	if (bAlready)
+	{
+		return;
+	}
+
 	if (bNight)
 	{
 		EnsureNightSkyActors();
@@ -2063,9 +2405,10 @@ void USailOceanSubsystem::ApplyNightSky(bool bNight)
 	// Moon light — dim scene fill + bright atmosphere disk (mesh disc is the main moon).
 	if (ADirectionalLight* Moon = NightMoonLight.Get())
 	{
-		const float MoonElev = 42.f;
+		const float MoonElev = 42.f; // above horizon
 		const float MoonYaw = EnvBaseline.SunRotation.Yaw + 160.f;
-		const FRotator MoonRot(MoonElev, MoonYaw, 0.f);
+		// UE pitch = -elevation (same convention as day sun).
+		const FRotator MoonRot(-MoonElev, MoonYaw, 0.f);
 		Moon->SetActorRotation(MoonRot);
 		if (UDirectionalLightComponent* C = Cast<UDirectionalLightComponent>(Moon->GetLightComponent()))
 		{
@@ -2153,8 +2496,11 @@ void USailOceanSubsystem::ApplyNightSky(bool bNight)
 		UpdateNightSkyFollow(Focus);
 	}
 
-	// Refresh sky capture so moon/stars affect reflections
-	USkyLightComponent::UpdateSkyCaptureContents(World);
+	// Realtime skylight follows moon/stars without a forced bake (avoids day flash).
+	if (bNight)
+	{
+		RequestSkyLightRecapture(TEXT("night-sky-on"));
+	}
 
 	UE_LOG(LogSailSim, Log, TEXT("Night sky %s (moon=%s stars=%s disc=%s)"),
 		bNight ? TEXT("ON") : TEXT("OFF"),
@@ -2221,8 +2567,10 @@ void USailOceanSubsystem::ApplyAtmosphereLook(const FSailEnvPresetDesc& Desc)
 		Atm->MarkRenderStateDirty();
 	}
 
-	// Camera exposure: night gets a small negative bias so auto-exposure doesn't
-	// lift the sky back up and wash the star field.
+	// Camera exposure via PPS. IMPORTANT: do NOT clamp Min/Max brightness on day
+	// after first frames — that was the light→dark pop (default AE is bright, then
+	// we overwrote with a tight EV range and the image sank). AAA outdoor: slow
+	// adaptation + small bias only; night keeps a tighter range for stars.
 	for (TActorIterator<APawn> It(World); It; ++It)
 	{
 		APawn* Pawn = *It;
@@ -2234,17 +2582,22 @@ void USailOceanSubsystem::ApplyAtmosphereLook(const FSailEnvPresetDesc& Desc)
 			if (!Cam) continue;
 			FPostProcessSettings& PPS = Cam->PostProcessSettings;
 			Cam->PostProcessBlendWeight = 1.f;
+			PPS.bOverride_AutoExposureSpeedUp = true;
+			PPS.AutoExposureSpeedUp = 2.0f;
+			PPS.bOverride_AutoExposureSpeedDown = true;
+			PPS.AutoExposureSpeedDown = 1.0f;
 			PPS.bOverride_AutoExposureBias = true;
-			PPS.AutoExposureBias = bNight ? -1.4f : 0.f;
+			PPS.AutoExposureBias = bNight ? -1.2f : 0.35f; // slight day lift for land
 			if (bNight)
 			{
 				PPS.bOverride_AutoExposureMaxBrightness = true;
-				PPS.AutoExposureMaxBrightness = 0.6f;
 				PPS.bOverride_AutoExposureMinBrightness = true;
-				PPS.AutoExposureMinBrightness = 0.03f;
+				PPS.AutoExposureMaxBrightness = 0.8f;
+				PPS.AutoExposureMinBrightness = 0.04f;
 			}
 			else
 			{
+				// Day: leave engine default EV histogram range alone (no min/max override).
 				PPS.bOverride_AutoExposureMaxBrightness = false;
 				PPS.bOverride_AutoExposureMinBrightness = false;
 			}

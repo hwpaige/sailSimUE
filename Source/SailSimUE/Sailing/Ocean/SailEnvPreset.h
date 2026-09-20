@@ -19,10 +19,13 @@ enum class ESailEnvPreset : uint8
 /**
  * Preset knobs. Sun uses *elevation* (deg above horizon).
  *
- * UE directional light: GetDirection() is the component +X axis, and that
- * direction is where the sun sits in the sky. FRotator::Vector maps
- * Pitch = +Elevation (positive pitch = sun above the horizon).
- * Fair Day ignores elevation and restores the captured rotator.
+ * UE directional light shines along component +X. That is the light travel
+ * direction (from sun toward the scene), so:
+ *   Pitch = -Elevation
+ *   elev +55° (noon) → Pitch -55 (light points down into the world)
+ *   elev 0° (horizon) → Pitch 0
+ *   elev -28° (night) → Pitch +28 (light from below horizon)
+ * ApplySunAndSky converts elevation → pitch. Do not store UE pitch here.
  *
  * Intensity muls are relative to the captured Fair Day baseline.
  */
@@ -33,7 +36,7 @@ struct FSailEnvPresetDesc
 
 	/**
 	 * Sun height above horizon (deg). 90 = zenith, 0 = on horizon, negative = below.
-	 * Fair Day ignores this and restores the captured rotator.
+	 * Converted to UE pitch via Pitch = -Elevation in ApplySunAndSky.
 	 */
 	float SunElevationDeg = 50.f;
 	/** Added to captured Fair Day sun yaw (keeps azimuth relative to map). */
@@ -89,9 +92,8 @@ struct FSailEnvPresetDesc
 
 inline const FSailEnvPresetDesc& GetSailEnvPresetDesc(ESailEnvPreset Id)
 {
-	// Tuned against the live map: Fair Day sun is at pitch≈0 (horizon), int≈10,
-	// fog dens≈0.02 with black inscattering (atmosphere drives sky).
-	// Non-fair presets use absolute elevation; Pitch = +Elevation in ApplySunAndSky.
+	// Fair Day elev 50° is the noon default when map capture is horizon-flat.
+	// Non-fair / TOD presets use absolute elevation; ApplySunAndSky uses Pitch = -Elev.
 	static const FSailEnvPresetDesc Table[] = {
 		// Fair Day — capture restore only
 		{
