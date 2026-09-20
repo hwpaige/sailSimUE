@@ -40,10 +40,12 @@ python3 SailSimUE/Scripts/export_nantucket_terrain_ue.py
 | Hysteresis | **unloadRadius=5** — no thrash at boundaries |
 | LOD | LOD0 within **lod0Radius=3** (full ring = no LOD seams) |
 | Seams | Absolute DEM mesh step + tile edge overlap (shared verts) |
-| Coast | Beach ramp into water (subtidal apron to −seaward ft) |
+| Coast | Seaward apron only below MSL; inland DEM + single `LAND_LIFT_M` |
+| Water align | DEM m MSL × 100 = UE Z; water plane **Z = 0**; exclusion over island |
+| Land elev | Shared `lib/land-elev.mjs` — terrain + houses use same lift |
 | Memory | Resident tiles only; destroy components on unload |
 | Collision | Complex mesh for land contact (query+physics) |
-| Coordinates | NAVT ft/m → UE cm via `FNavtMeshLoader` |
+| Coordinates | NAVT ft/m → UE cm via `FNavtMeshLoader` (local-space tiles) |
 
 Tick (~4 Hz): focus = player boat → nearest tile → ensure ring → drop far tiles.
 
@@ -56,6 +58,17 @@ For shipping a WP-authored map later:
 3. Keep streamed tiles **or** replace them with Landscape once authored.
 
 Runtime NAVT streaming is the default for PIE (no manual Landscape import).
+
+## Vertical contract (water ↔ land)
+
+| Source | Value |
+|--------|--------|
+| Sea level | UE **Z = 0** = 0 m MSL |
+| DEM | USGS 3DEP metres (≈ NAVD88 / LMSL) |
+| Dry land elev | `dryLandElevM(dem) = max(dem, DRY_FLOOR_M) + LAND_LIFT_M` (`scripts/lib/land-elev.mjs`) |
+| Structures | `structurePadElevM` / `groundElevM` — same lift |
+| Seaward apron | Below Z=0 only (`signedFt < 0`); does **not** lift |
+| Water over island | `SailSim_NantucketWaterExclusion` (do not destroy on open-ocean prep) |
 
 ## Spawn
 

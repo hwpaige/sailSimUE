@@ -6,6 +6,7 @@
 
 class UProceduralMeshComponent;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
 
 /** One streamed terrain cell (matches web stream tile). */
 USTRUCT()
@@ -48,20 +49,22 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Terrain")
 	bool bEnabled = true;
 
-	/** Chebyshev tile radius to load (web loadRadius). */
+	/** Chebyshev tile radius to load. 2 ≈ ~5×5 disc; 3 was ~1M verts all-LOD0. */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "1", ClampMax = "8"))
-	int32 LoadRadius = 3;
+	int32 LoadRadius = 2;
 
 	/** Unload outside this radius (web unloadRadius ≥ load). */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "2", ClampMax = "10"))
-	int32 UnloadRadius = 5;
+	int32 UnloadRadius = 4;
 
 	/**
-	 * Chebyshev radius using full-res LOD0. Keep ≥ LoadRadius when possible so
-	 * LOD0/LOD1 edges don't leave water gaps between mismatched mesh densities.
+	 * Full-res LOD0 within this Chebyshev radius; beyond uses LOD1 when valid.
+	 * Many baked *_l1.mesh files are corrupt (nI=0) — EnsureTile falls back to
+	 * LOD0 so the outer load ring is never empty. Prefer Lod0Radius == LoadRadius
+	 * until shell meshes are re-baked.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "0", ClampMax = "8"))
-	int32 Lod0Radius = 3;
+	int32 Lod0Radius = 2;
 
 	/** Seconds between stream updates. */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream")
@@ -90,6 +93,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Terrain")
 	int32 GetResidentVertexCount() const { return ResidentVerts; }
 
+	/** Calendar season 0..1 for land-cover grass tint. */
+	UFUNCTION(BlueprintCallable, Category = "Terrain|Season")
+	void SetSeason(float Season01);
+
+	UFUNCTION(BlueprintCallable, Category = "Terrain|Season")
+	float GetSeason() const { return Season01; }
+
 private:
 	struct FResidentTile
 	{
@@ -98,6 +108,7 @@ private:
 		int32 Lod = 0; // 0 full, 1 reduced
 		int32 VertCount = 0;
 		TObjectPtr<UProceduralMeshComponent> Mesh;
+		TObjectPtr<UMaterialInstanceDynamic> Mid;
 	};
 
 	bool bManifestLoaded = false;
@@ -105,12 +116,21 @@ private:
 	TArray<FNantucketTileDesc> TileDescs;
 	TMap<uint64, int32> KeyToDescIndex;
 	TMap<uint64, FResidentTile> Resident;
+	/** Tiles that failed NAVT parse (nI=0 / truncated) — do not re-read every stream tick. */
+	TSet<uint64> FailedTileKeys;
 	float TimeSinceUpdate = 0.f;
 	int32 StreamCols = 16;
 	int32 StreamRows = 16;
 	int32 ResidentVerts = 0;
+	float Season01 = 0.5f;
 
 	static uint64 TileKey(int32 Tx, int32 Ty) { return (uint64(uint32(Tx)) << 32) | uint32(Ty); }
+	void ApplySeasonToMid(UMaterialInstanceDynamic* Mid) const;
+	/** Key that includes LOD so LOD0 fail still allows LOD1 try (and vice versa). */
+	static uint64 FailKey(int32 Tx, int32 Ty, int32 Lod)
+	{
+		return (TileKey(Tx, Ty) << 1) | uint64(Lod & 1);
+	}
 
 	bool ResolveTerrainRoot(FString& OutRoot) const;
 	bool LoadManifestFromRoot(const FString& Root);

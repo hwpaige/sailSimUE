@@ -17,8 +17,8 @@
   ],
   "coastRefineStep": 1,
   "coastRefineDistFt": 2800,
-  "beachSeawardFt": 320,
-  "beachInlandFt": 380,
+  "beachSeawardFt": 380,
+  "beachInlandFt": 420,
   "tileEdgeOverlapCells": 2,
   "streamTileCols": 16,
   "streamTileRows": 16,
@@ -29,7 +29,7 @@
   "minElev": -2.1096537113189697,
   "maxElev": 29.48970603942871,
   "imagery": "imagery.rgb",
-  "bakedAt": "2026-07-18T03:50:53.812Z",
+  "bakedAt": "2026-07-20T02:58:32.727Z",
   "tiles": [
     {
       "id": "10_0",
@@ -43,11 +43,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 11484,
-      "indices": 67236,
-      "bytes": 441220,
-      "verticesLod1": 2891,
-      "bytesLod1": 43384
+      "vertices": 11569,
+      "indices": 67005,
+      "bytes": 441572,
+      "verticesLod1": 2913,
+      "bytesLod1": 43712
     },
     {
       "id": "11_0",
@@ -61,11 +61,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 29138,
-      "indices": 172599,
-      "bytes": 1127484,
-      "verticesLod1": 7321,
-      "bytesLod1": 109832
+      "vertices": 29035,
+      "indices": 170805,
+      "bytes": 1118764,
+      "verticesLod1": 7292,
+      "bytesLod1": 109396
     },
     {
       "id": "12_0",
@@ -79,11 +79,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 13202,
-      "indices": 77139,
-      "bytes": 506604,
-      "verticesLod1": 3347,
-      "bytesLod1": 50224
+      "vertices": 13564,
+      "indices": 78852,
+      "bytes": 518884,
+      "verticesLod1": 3434,
+      "bytesLod1": 51528
     },
     {
       "id": "13_0",
@@ -97,11 +97,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 10717,
-      "indices": 62328,
-      "bytes": 410084,
-      "verticesLod1": 2710,
-      "bytesLod1": 40668
+      "vertices": 11752,
+      "indices": 68517,
+      "bytes": 450364,
+      "verticesLod1": 2964,
+      "bytesLod1": 44476
     },
     {
       "id": "14_0",
@@ -115,11 +115,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 18278,
-      "indices": 107514,
-      "bytes": 704244,
-      "verticesLod1": 4599,
-      "bytesLod1": 69004
+      "vertices": 16478,
+      "indices": 95691,
+      "bytes": 629952,
+      "verticesLod1": 4145,
+      "bytesLod1": 62192
     },
     {
       "id": "15_0",
@@ -133,11 +133,11 @@
         "south": 41.235,
         "north": 41.245
       },
-      "vertices": 32640,
-      "indices": 193422,
-      "bytes": 1263304,
-      "verticesLod1": 8189,
-      "bytesLod1": 122852
+      "vertices": 29317,
+      "indices": 171828,
+      "bytes": 1127084,
+      "verticesLod1": 7359,
+      "bytesLod1": 110404
     },
     {
       "id": "8_1",
@@ -151,11 +151,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 12215,
-      "indices": 71586,
-      "bytes": 469588,
-      "verticesLod1": 3070,
-      "bytesLod1": 46068
+      "vertices": 12930,
+      "indices": 75825,
+      "bytes": 497268,
+      "verticesLod1": 3250,
+      "bytesLod1": 48768
     },
     {
       "id": "9_1",
@@ -169,11 +169,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 38883,
-      "indices": 224754,
-      "bytes": 1482280,
-      "verticesLod1": 9729,
-      "bytesLod1": 145952
+      "vertices": 39763,
+      "indices": 229530,
+      "bytes": 1514584,
+      "verticesLod1": 9946,
+      "bytesLod1": 149208
     },
     {
       "id": "10_1",
@@ -187,11 +187,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 40239,
-      "indices": 192888,
-      "bytes": 1375156,
-      "verticesLod1": 10025,
-      "bytesLod1": 150392
+      "vertices": 39616,
+      "indices": 188133,
+      "bytes": 1346788,
+      "verticesLod1": 9868,
+      "bytesLod1": 148036
     },
     {
       "id": "11_1",
@@ -223,11 +223,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 34456,
-      "indices": 144918,
-      "bytes": 1096528,
-      "verticesLod1": 8614,
-      "bytesLod1": 129228
+      "vertices": 32101,
+      "indices": 129696,
+      "bytes": 1000316,
+      "verticesLod1": 8031,
+      "bytesLod1": 120484
     },
     {
       "id": "13_1",
@@ -241,11 +241,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 34456,
-      "indices": 144918,
-      "bytes": 1096528,
-      "verticesLod1": 8614,
-      "bytesLod1": 129228
+      "vertices": 31756,
+      "indices": 127026,
+      "bytes": 984460,
+      "verticesLod1": 7931,
+      "bytesLod1": 118984
     },
     {
       "id": "14_1",
@@ -259,11 +259,11 @@
         "south": 41.245,
         "north": 41.255
       },
-      "vertices": 31568,
-      "indices": 121893,
-      "bytes": 961108,
-      "verticesLod1": 7889,
-      "bytesLod1": 118352
+      "vertices": 30645,
+      "indices": 115968,
+      "bytes": 923564,
+      "verticesLod1": 7667,
+      "bytesLod1": 115024
     },
     {
       "id": "15_1",
@@ -295,11 +295,11 @@
         "south": 41.255,
         "north": 41.265
       },
-      "vertices": 627,
-      "indices": 3408,
-      "bytes": 23056,
-      "verticesLod1": 159,
-      "bytesLod1": 2404
+      "vertices": 829,
+      "indices": 4569,
+      "bytes": 30728,
+      "verticesLod1": 211,
+      "bytesLod1": 3184
     },
     {
       "id": "7_2",
@@ -313,11 +313,11 @@
         "south": 41.255,
         "north": 41.265
       },
-      "vertices": 30049,
-      "indices": 176673,
-      "bytes": 1157444,
-      "verticesLod1": 7516,
-      "bytesLod1": 112756
+      "vertices": 31230,
+      "indices": 183732,
+      "bytes": 1203396,
+      "verticesLod1": 7815,
+      "bytesLod1": 117244
     },
     {
       "id": "8_2",
@@ -331,11 +331,11 @@
         "south": 41.255,
         "north": 41.265
       },
-      "vertices": 52952,
-      "indices": 294531,
-      "bytes": 1972420,
-      "verticesLod1": 13162,
-      "bytesLod1": 197448
+      "vertices": 53184,
+      "indices": 295911,
+      "bytes": 1981420,
+      "verticesLod1": 13220,
+      "bytesLod1": 198316
     },
     {
       "id": "9_2",
@@ -475,11 +475,11 @@
         "south": 41.265,
         "north": 41.275
       },
-      "vertices": 6907,
-      "indices": 40170,
-      "bytes": 264304,
-      "verticesLod1": 1739,
-      "bytesLod1": 26104
+      "vertices": 7604,
+      "indices": 44286,
+      "bytes": 291220,
+      "verticesLod1": 1913,
+      "bytesLod1": 28712
     },
     {
       "id": "6_3",
@@ -493,11 +493,11 @@
         "south": 41.265,
         "north": 41.275
       },
-      "vertices": 45875,
-      "indices": 272097,
-      "bytes": 1776532,
-      "verticesLod1": 11496,
-      "bytesLod1": 172456
+      "vertices": 46787,
+      "indices": 277557,
+      "bytes": 1812052,
+      "verticesLod1": 11725,
+      "bytesLod1": 175892
     },
     {
       "id": "7_3",
@@ -673,11 +673,11 @@
         "south": 41.275,
         "north": 41.285000000000004
       },
-      "vertices": 11735,
-      "indices": 69117,
-      "bytes": 452512,
-      "verticesLod1": 2934,
-      "bytesLod1": 44028
+      "vertices": 12791,
+      "indices": 75402,
+      "bytes": 493492,
+      "verticesLod1": 3193,
+      "bytesLod1": 47912
     },
     {
       "id": "5_4",
@@ -691,11 +691,11 @@
         "south": 41.275,
         "north": 41.285000000000004
       },
-      "vertices": 23299,
-      "indices": 137508,
-      "bytes": 899536,
-      "verticesLod1": 5812,
-      "bytesLod1": 87196
+      "vertices": 25203,
+      "indices": 148908,
+      "bytes": 973696,
+      "verticesLod1": 6287,
+      "bytesLod1": 94324
     },
     {
       "id": "6_4",
@@ -709,11 +709,11 @@
         "south": 41.275,
         "north": 41.285000000000004
       },
-      "vertices": 30309,
-      "indices": 179205,
-      "bytes": 1171472,
-      "verticesLod1": 7527,
-      "bytesLod1": 112924
+      "vertices": 31514,
+      "indices": 186420,
+      "bytes": 1218408,
+      "verticesLod1": 7824,
+      "bytesLod1": 117376
     },
     {
       "id": "7_4",
@@ -799,11 +799,11 @@
         "south": 41.275,
         "north": 41.285000000000004
       },
-      "vertices": 28134,
-      "indices": 95451,
-      "bytes": 803832,
-      "verticesLod1": 6976,
-      "bytesLod1": 104656
+      "vertices": 27991,
+      "indices": 94527,
+      "bytes": 797992,
+      "verticesLod1": 6943,
+      "bytesLod1": 104164
     },
     {
       "id": "12_4",
@@ -817,11 +817,11 @@
         "south": 41.275,
         "north": 41.285000000000004
       },
-      "vertices": 47937,
-      "indices": 282672,
-      "bytes": 1849760,
-      "verticesLod1": 11961,
-      "bytesLod1": 179432
+      "vertices": 41049,
+      "indices": 241674,
+      "bytes": 1582448,
+      "verticesLod1": 10231,
+      "bytesLod1": 153484
     },
     {
       "id": "13_4",
@@ -889,11 +889,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 20404,
-      "indices": 120216,
-      "bytes": 786940,
-      "verticesLod1": 5114,
-      "bytesLod1": 76728
+      "vertices": 21008,
+      "indices": 123837,
+      "bytes": 810484,
+      "verticesLod1": 5261,
+      "bytesLod1": 78932
     },
     {
       "id": "4_5",
@@ -907,11 +907,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 5221,
-      "indices": 29814,
-      "bytes": 197588,
-      "verticesLod1": 1320,
-      "bytesLod1": 19816
+      "vertices": 4644,
+      "indices": 26505,
+      "bytes": 175696,
+      "verticesLod1": 1171,
+      "bytesLod1": 17584
     },
     {
       "id": "6_5",
@@ -925,11 +925,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 42076,
-      "indices": 249561,
-      "bytes": 1629400,
-      "verticesLod1": 10513,
-      "bytesLod1": 157712
+      "vertices": 43712,
+      "indices": 259374,
+      "bytes": 1693192,
+      "verticesLod1": 10923,
+      "bytesLod1": 163864
     },
     {
       "id": "7_5",
@@ -943,11 +943,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 40647,
-      "indices": 195795,
-      "bytes": 1392904,
-      "verticesLod1": 10202,
-      "bytesLod1": 153048
+      "vertices": 41071,
+      "indices": 198339,
+      "bytes": 1409440,
+      "verticesLod1": 10318,
+      "bytesLod1": 154788
     },
     {
       "id": "8_5",
@@ -961,11 +961,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 45703,
-      "indices": 235431,
-      "bytes": 1627288,
-      "verticesLod1": 11426,
-      "bytesLod1": 171408
+      "vertices": 45015,
+      "indices": 231327,
+      "bytes": 1600552,
+      "verticesLod1": 11229,
+      "bytesLod1": 168452
     },
     {
       "id": "9_5",
@@ -979,11 +979,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 47596,
-      "indices": 250551,
-      "bytes": 1716160,
-      "verticesLod1": 11899,
-      "bytesLod1": 178504
+      "vertices": 46197,
+      "indices": 242184,
+      "bytes": 1661708,
+      "verticesLod1": 11511,
+      "bytesLod1": 172684
     },
     {
       "id": "10_5",
@@ -997,11 +997,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 41288,
-      "indices": 200163,
-      "bytes": 1419988,
-      "verticesLod1": 10359,
-      "bytesLod1": 155404
+      "vertices": 41030,
+      "indices": 198618,
+      "bytes": 1409940,
+      "verticesLod1": 10281,
+      "bytesLod1": 154232
     },
     {
       "id": "11_5",
@@ -1015,11 +1015,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 47357,
-      "indices": 254325,
-      "bytes": 1727672,
-      "verticesLod1": 11846,
-      "bytesLod1": 177708
+      "vertices": 46636,
+      "indices": 250017,
+      "bytes": 1699624,
+      "verticesLod1": 11663,
+      "bytesLod1": 174964
     },
     {
       "id": "12_5",
@@ -1033,11 +1033,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 16883,
-      "indices": 97797,
-      "bytes": 644452,
-      "verticesLod1": 4237,
-      "bytesLod1": 63572
+      "vertices": 15646,
+      "indices": 90891,
+      "bytes": 598272,
+      "verticesLod1": 3940,
+      "bytesLod1": 59116
     },
     {
       "id": "13_5",
@@ -1051,11 +1051,11 @@
         "south": 41.285000000000004,
         "north": 41.295
       },
-      "vertices": 48580,
-      "indices": 278526,
-      "bytes": 1842820,
-      "verticesLod1": 12139,
-      "bytesLod1": 182104
+      "vertices": 43607,
+      "indices": 248739,
+      "bytes": 1649080,
+      "verticesLod1": 10878,
+      "bytesLod1": 163188
     },
     {
       "id": "14_5",
@@ -1105,11 +1105,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 12552,
-      "indices": 73914,
-      "bytes": 483952,
-      "verticesLod1": 3138,
-      "bytesLod1": 47088
+      "vertices": 11839,
+      "indices": 69309,
+      "bytes": 454840,
+      "verticesLod1": 2958,
+      "bytesLod1": 44388
     },
     {
       "id": "3_6",
@@ -1123,11 +1123,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 60043,
-      "indices": 355524,
-      "bytes": 2322760,
-      "verticesLod1": 15023,
-      "bytesLod1": 225364
+      "vertices": 59560,
+      "indices": 352152,
+      "bytes": 2302024,
+      "verticesLod1": 14908,
+      "bytesLod1": 223636
     },
     {
       "id": "4_6",
@@ -1141,11 +1141,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 15629,
-      "indices": 92133,
-      "bytes": 602984,
-      "verticesLod1": 3930,
-      "bytesLod1": 58968
+      "vertices": 16478,
+      "indices": 97197,
+      "bytes": 635976,
+      "verticesLod1": 4140,
+      "bytesLod1": 62116
     },
     {
       "id": "6_6",
@@ -1159,11 +1159,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 10810,
-      "indices": 63318,
-      "bytes": 415440,
-      "verticesLod1": 2666,
-      "bytesLod1": 40008
+      "vertices": 11747,
+      "indices": 68799,
+      "bytes": 451420,
+      "verticesLod1": 2911,
+      "bytesLod1": 43684
     },
     {
       "id": "7_6",
@@ -1177,11 +1177,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 1364,
-      "indices": 6801,
-      "bytes": 47680,
-      "verticesLod1": 311,
-      "bytesLod1": 4684
+      "vertices": 2306,
+      "indices": 11982,
+      "bytes": 82536,
+      "verticesLod1": 539,
+      "bytesLod1": 8104
     },
     {
       "id": "8_6",
@@ -1195,11 +1195,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 3917,
-      "indices": 21687,
-      "bytes": 145520,
-      "verticesLod1": 942,
-      "bytesLod1": 14148
+      "vertices": 1070,
+      "indices": 5076,
+      "bytes": 36372,
+      "verticesLod1": 234,
+      "bytesLod1": 3528
     },
     {
       "id": "9_6",
@@ -1213,11 +1213,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 7204,
-      "indices": 41334,
-      "bytes": 273412,
-      "verticesLod1": 1778,
-      "bytesLod1": 26688
+      "vertices": 92,
+      "indices": 174,
+      "bytes": 2092,
+      "verticesLod1": 14,
+      "bytesLod1": 228
     },
     {
       "id": "10_6",
@@ -1231,11 +1231,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 10816,
-      "indices": 62928,
-      "bytes": 413968,
-      "verticesLod1": 2665,
-      "bytesLod1": 39992
+      "vertices": 2188,
+      "indices": 11304,
+      "bytes": 78052,
+      "verticesLod1": 510,
+      "bytesLod1": 7668
     },
     {
       "id": "11_6",
@@ -1249,11 +1249,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 9429,
-      "indices": 55104,
-      "bytes": 361868,
-      "verticesLod1": 2337,
-      "bytesLod1": 35072
+      "vertices": 9117,
+      "indices": 53343,
+      "bytes": 350144,
+      "verticesLod1": 2261,
+      "bytesLod1": 33932
     },
     {
       "id": "12_6",
@@ -1267,11 +1267,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 28861,
-      "indices": 170826,
-      "bytes": 1116236,
-      "verticesLod1": 7187,
-      "bytesLod1": 107824
+      "vertices": 30640,
+      "indices": 181389,
+      "bytes": 1185172,
+      "verticesLod1": 7628,
+      "bytesLod1": 114436
     },
     {
       "id": "13_6",
@@ -1285,11 +1285,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 21846,
-      "indices": 128325,
-      "bytes": 841008,
-      "verticesLod1": 5452,
-      "bytesLod1": 81796
+      "vertices": 21720,
+      "indices": 127527,
+      "bytes": 835924,
+      "verticesLod1": 5428,
+      "bytesLod1": 81436
     },
     {
       "id": "14_6",
@@ -1303,11 +1303,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 12841,
-      "indices": 74892,
-      "bytes": 492200,
-      "verticesLod1": 3171,
-      "bytesLod1": 47584
+      "vertices": 11347,
+      "indices": 65979,
+      "bytes": 434140,
+      "verticesLod1": 2793,
+      "bytesLod1": 41912
     },
     {
       "id": "15_6",
@@ -1321,11 +1321,11 @@
         "south": 41.295,
         "north": 41.305
       },
-      "vertices": 51751,
-      "indices": 306795,
-      "bytes": 2003464,
-      "verticesLod1": 12905,
-      "bytesLod1": 193592
+      "vertices": 47100,
+      "indices": 279234,
+      "bytes": 1823452,
+      "verticesLod1": 11733,
+      "bytesLod1": 176012
     },
     {
       "id": "2_7",
@@ -1339,11 +1339,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 31372,
-      "indices": 186024,
-      "bytes": 1214692,
-      "verticesLod1": 7809,
-      "bytesLod1": 117152
+      "vertices": 32012,
+      "indices": 189474,
+      "bytes": 1238092,
+      "verticesLod1": 7975,
+      "bytesLod1": 119644
     },
     {
       "id": "3_7",
@@ -1357,11 +1357,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 31017,
-      "indices": 183789,
-      "bytes": 1200428,
-      "verticesLod1": 7737,
-      "bytesLod1": 116072
+      "vertices": 29997,
+      "indices": 176469,
+      "bytes": 1155848,
+      "verticesLod1": 7476,
+      "bytesLod1": 112156
     },
     {
       "id": "4_7",
@@ -1375,11 +1375,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 508,
-      "indices": 2769,
-      "bytes": 18712,
-      "verticesLod1": 129,
-      "bytesLod1": 1952
+      "vertices": 673,
+      "indices": 3717,
+      "bytes": 24980,
+      "verticesLod1": 167,
+      "bytesLod1": 2524
     },
     {
       "id": "13_7",
@@ -1393,11 +1393,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 14356,
-      "indices": 84405,
-      "bytes": 552976,
-      "verticesLod1": 3562,
-      "bytesLod1": 53448
+      "vertices": 15781,
+      "indices": 92832,
+      "bytes": 608060,
+      "verticesLod1": 3910,
+      "bytesLod1": 58668
     },
     {
       "id": "14_7",
@@ -1411,11 +1411,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 11946,
-      "indices": 69870,
-      "bytes": 458688,
-      "verticesLod1": 3026,
-      "bytesLod1": 45408
+      "vertices": 13007,
+      "indices": 76014,
+      "bytes": 499180,
+      "verticesLod1": 3289,
+      "bytesLod1": 49352
     },
     {
       "id": "15_7",
@@ -1429,11 +1429,11 @@
         "south": 41.305,
         "north": 41.315
       },
-      "vertices": 33852,
-      "indices": 200226,
-      "bytes": 1308700,
-      "verticesLod1": 8443,
-      "bytesLod1": 126664
+      "vertices": 29910,
+      "indices": 175962,
+      "bytes": 1152516,
+      "verticesLod1": 7462,
+      "bytesLod1": 111948
     },
     {
       "id": "1_8",
@@ -1447,11 +1447,11 @@
         "south": 41.315,
         "north": 41.325
       },
-      "vertices": 3249,
-      "indices": 18894,
-      "bytes": 124328,
-      "verticesLod1": 806,
-      "bytesLod1": 12108
+      "vertices": 3810,
+      "indices": 22209,
+      "bytes": 146004,
+      "verticesLod1": 942,
+      "bytesLod1": 14148
     },
     {
       "id": "2_8",
@@ -1465,11 +1465,11 @@
         "south": 41.315,
         "north": 41.325
       },
-      "vertices": 1387,
-      "indices": 7899,
-      "bytes": 52420,
-      "verticesLod1": 354,
-      "bytesLod1": 5328
+      "vertices": 1734,
+      "indices": 9927,
+      "bytes": 65736,
+      "verticesLod1": 444,
+      "bytesLod1": 6676
     },
     {
       "id": "14_8",
@@ -1483,11 +1483,11 @@
         "south": 41.315,
         "north": 41.325
       },
-      "vertices": 21158,
-      "indices": 124719,
-      "bytes": 816264,
-      "verticesLod1": 5278,
-      "bytesLod1": 79188
+      "vertices": 22549,
+      "indices": 132741,
+      "bytes": 869216,
+      "verticesLod1": 5625,
+      "bytesLod1": 84392
     },
     {
       "id": "15_8",
@@ -1501,11 +1501,11 @@
         "south": 41.315,
         "north": 41.325
       },
-      "vertices": 14632,
-      "indices": 85479,
-      "bytes": 561412,
-      "verticesLod1": 3636,
-      "bytesLod1": 54556
+      "vertices": 13498,
+      "indices": 78807,
+      "bytes": 517716,
+      "verticesLod1": 3352,
+      "bytesLod1": 50296
     },
     {
       "id": "0_9",
@@ -1519,11 +1519,11 @@
         "south": 41.325,
         "north": 41.335
       },
-      "vertices": 17542,
-      "indices": 103377,
-      "bytes": 676656,
-      "verticesLod1": 4395,
-      "bytesLod1": 65944
+      "vertices": 18837,
+      "indices": 110883,
+      "bytes": 726104,
+      "verticesLod1": 4718,
+      "bytesLod1": 70788
     },
     {
       "id": "1_9",
@@ -1537,11 +1537,11 @@
         "south": 41.325,
         "north": 41.335
       },
-      "vertices": 9845,
-      "indices": 57555,
-      "bytes": 377912,
-      "verticesLod1": 2500,
-      "bytesLod1": 37516
+      "vertices": 10380,
+      "indices": 60726,
+      "bytes": 398620,
+      "verticesLod1": 2634,
+      "bytesLod1": 39528
     },
     {
       "id": "14_9",
@@ -1555,11 +1555,11 @@
         "south": 41.325,
         "north": 41.335
       },
-      "vertices": 7193,
-      "indices": 41961,
-      "bytes": 275756,
-      "verticesLod1": 1767,
-      "bytesLod1": 26524
+      "vertices": 7657,
+      "indices": 44523,
+      "bytes": 292964,
+      "verticesLod1": 1881,
+      "bytesLod1": 28232
     },
     {
       "id": "15_9",
@@ -1573,11 +1573,11 @@
         "south": 41.325,
         "north": 41.335
       },
-      "vertices": 18435,
-      "indices": 108570,
-      "bytes": 710824,
-      "verticesLod1": 4636,
-      "bytesLod1": 69556
+      "vertices": 19617,
+      "indices": 115560,
+      "bytes": 756512,
+      "verticesLod1": 4934,
+      "bytesLod1": 74028
     },
     {
       "id": "0_10",
@@ -1591,11 +1591,11 @@
         "south": 41.335,
         "north": 41.345
       },
-      "vertices": 10895,
-      "indices": 64149,
-      "bytes": 420040,
-      "verticesLod1": 2695,
-      "bytesLod1": 40444
+      "vertices": 10743,
+      "indices": 63234,
+      "bytes": 414100,
+      "verticesLod1": 2656,
+      "bytesLod1": 39856
     },
     {
       "id": "1_10",
@@ -1609,11 +1609,11 @@
         "south": 41.335,
         "north": 41.345
       },
-      "vertices": 19448,
-      "indices": 114966,
-      "bytes": 751600,
-      "verticesLod1": 4856,
-      "bytesLod1": 72856
+      "vertices": 20045,
+      "indices": 118575,
+      "bytes": 774992,
+      "verticesLod1": 4997,
+      "bytesLod1": 74972
     },
     {
       "id": "15_10",
@@ -1627,11 +1627,11 @@
         "south": 41.335,
         "north": 41.345
       },
-      "vertices": 25291,
-      "indices": 149469,
-      "bytes": 977260,
-      "verticesLod1": 6329,
-      "bytesLod1": 94952
+      "vertices": 26996,
+      "indices": 159672,
+      "bytes": 1043644,
+      "verticesLod1": 6758,
+      "bytesLod1": 101388
     },
     {
       "id": "15_11",
@@ -1645,11 +1645,11 @@
         "south": 41.345,
         "north": 41.355000000000004
       },
-      "vertices": 30968,
-      "indices": 183645,
-      "bytes": 1199116,
-      "verticesLod1": 7707,
-      "bytesLod1": 115624
+      "vertices": 31745,
+      "indices": 188286,
+      "bytes": 1229336,
+      "verticesLod1": 7901,
+      "bytesLod1": 118532
     },
     {
       "id": "15_12",
@@ -1663,11 +1663,11 @@
         "south": 41.355000000000004,
         "north": 41.365
       },
-      "vertices": 19906,
-      "indices": 117561,
-      "bytes": 768852,
-      "verticesLod1": 4944,
-      "bytesLod1": 74176
+      "vertices": 20657,
+      "indices": 122046,
+      "bytes": 798056,
+      "verticesLod1": 5133,
+      "bytesLod1": 77012
     },
     {
       "id": "15_13",
@@ -1681,11 +1681,11 @@
         "south": 41.365,
         "north": 41.375
       },
-      "vertices": 17462,
-      "indices": 102939,
-      "bytes": 673704,
-      "verticesLod1": 4363,
-      "bytesLod1": 65464
+      "vertices": 17210,
+      "indices": 101463,
+      "bytes": 664020,
+      "verticesLod1": 4294,
+      "bytesLod1": 64428
     },
     {
       "id": "14_14",
@@ -1699,11 +1699,11 @@
         "south": 41.375,
         "north": 41.385000000000005
       },
-      "vertices": 11926,
-      "indices": 70233,
-      "bytes": 459840,
-      "verticesLod1": 2980,
-      "bytesLod1": 44716
+      "vertices": 12562,
+      "indices": 74013,
+      "bytes": 484500,
+      "verticesLod1": 3144,
+      "bytesLod1": 47176
     },
     {
       "id": "15_14",
@@ -1717,11 +1717,11 @@
         "south": 41.375,
         "north": 41.385000000000005
       },
-      "vertices": 17312,
-      "indices": 102048,
-      "bytes": 667888,
-      "verticesLod1": 4338,
-      "bytesLod1": 65088
+      "vertices": 16164,
+      "indices": 95214,
+      "bytes": 623332,
+      "verticesLod1": 4045,
+      "bytesLod1": 60692
     },
     {
       "id": "14_15",
@@ -1735,11 +1735,11 @@
         "south": 41.385000000000005,
         "north": 41.395
       },
-      "vertices": 21376,
-      "indices": 126618,
-      "bytes": 827128,
-      "verticesLod1": 5325,
-      "bytesLod1": 79892
+      "vertices": 21136,
+      "indices": 125022,
+      "bytes": 817144,
+      "verticesLod1": 5270,
+      "bytesLod1": 79068
     },
     {
       "id": "15_15",
@@ -1753,11 +1753,11 @@
         "south": 41.385000000000005,
         "north": 41.395
       },
-      "vertices": 228,
-      "indices": 1179,
-      "bytes": 8152,
-      "verticesLod1": 58,
-      "bytesLod1": 888
+      "vertices": 182,
+      "indices": 924,
+      "bytes": 6444,
+      "verticesLod1": 46,
+      "bytesLod1": 708
     }
   ]
 }

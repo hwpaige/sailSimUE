@@ -2,11 +2,13 @@
 """
 Create / rebuild M_NavtVertexColor under /Game/Materials/Navt.
 
-Base Color = VertexColor * Tint * ColorBoost
+Base Color = VertexColor * Tint * ColorBoost, then season-tint green foliage
 Emissive   = night window glow (dark blue glass verts) + street-lamp / lantern glow
 
+Also ensures /Game/Materials/Navt/MPC_Season (scalar Season01) exists.
+
 Runtime scalars (set on MIDs by UNantucketStructuresSubsystem):
-  Night01, WindowEmissive, LampEmissive, DayGlassGlint, ColorBoost, Tint, Roughness, Metallic
+  Night01, Season01, WindowEmissive, LampEmissive, DayGlassGlint, ColorBoost, Tint, Roughness, Metallic
 """
 from __future__ import annotations
 
@@ -14,7 +16,47 @@ import unreal
 
 FOLDER = "/Game/Materials/Navt"
 MASTER = "M_NavtVertexColor"
+MPC_NAME = "MPC_Season"
 MEL = unreal.MaterialEditingLibrary
+
+# Season foliage: green-dominant verts only (trees/grass). Trunks, shingles, hydrangeas untouched.
+SEASON_CODE = r"""
+float3 c = saturate(Base);
+float R = c.r, G = c.g, B = c.b;
+// Foliage: green-dominant, not blue (hydrangea) and not brown trunk
+float foliage = saturate((G - R) * 9.0) * saturate((G - B) * 7.0) * saturate((G - 0.16) * 5.0);
+float hydrangea = saturate((B - G) * 8.0) * saturate((B - R) * 6.0);
+foliage *= saturate(1.0 - hydrangea);
+
+float s = saturate(Season);
+float3 springC = float3(c.r * 0.88, min(1.0, c.g * 1.18 + 0.03), c.b * 0.92);
+float3 summerC = c;
+float3 autumnC = float3(min(1.0, c.r * 1.40 + 0.14), c.g * 0.52 + 0.05, c.b * 0.18 + 0.02);
+float3 winterC = float3(c.r * 0.42 + 0.20, c.g * 0.40 + 0.18, c.b * 0.38 + 0.16);
+
+float3 seas = summerC;
+if (s < 0.25)
+{
+    float t = s / 0.25;
+    seas = lerp(winterC, springC, t);
+}
+else if (s < 0.5)
+{
+    float t = (s - 0.25) / 0.25;
+    seas = lerp(springC, summerC, t);
+}
+else if (s < 0.75)
+{
+    float t = (s - 0.5) / 0.25;
+    seas = lerp(summerC, autumnC, t);
+}
+else
+{
+    float t = (s - 0.75) / 0.25;
+    seas = lerp(autumnC, winterC, t);
+}
+return lerp(c, seas, foliage);
+"""
 
 
 def ensure_folder(path: str) -> None:
@@ -73,6 +115,27 @@ def sat(mat, a, a_out, x, y):
     return n
 
 
+def ensure_mpc() -> unreal.MaterialParameterCollection:
+    """Create MPC_Season with scalar Season01 (0 winter … 0.5 summer … 1 winter)."""
+    path = f"{FOLDER}/{MPC_NAME}"
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        mpc = unreal.EditorAssetLibrary.load_asset(path)
+    else:
+        tools = unreal.AssetToolsHelpers.get_asset_tools()
+        factory = unreal.MaterialParameterCollectionFactoryNew()
+        mpc = tools.create_asset(MPC_NAME, FOLDER, unreal.MaterialParameterCollection, factory)
+        unreal.log(f"Created {path}")
+
+    # Rebuild scalar parameters list
+    sp = unreal.CollectionScalarParameter()
+    sp.set_editor_property("parameter_name", "Season01")
+    sp.set_editor_property("default_value", 0.5)
+    mpc.set_editor_property("scalar_parameters", [sp])
+    unreal.EditorAssetLibrary.save_asset(path)
+    unreal.log(f"Saved {path} Season01=0.5 (summer)")
+    return mpc
+
+
 def build(mat: unreal.Material) -> None:
     mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_OPAQUE)
     mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
@@ -81,14 +144,30 @@ def build(mat: unreal.Material) -> None:
     vcol = MEL.create_material_expression(mat, unreal.MaterialExpressionVertexColor, -1200, 0)
     tint = vector(mat, "Tint", unreal.LinearColor(1, 1, 1, 1), -1200, 120)
     boost = scalar(mat, "ColorBoost", 1.15, -1200, 220, lo=0.5, hi=2.5)
+    season = scalar(mat, "Season01", 0.5, -1200, 300, group="Season", lo=0.0, hi=1.0)
     base = mul(mat, vcol, "", tint, "", -900, 40)
     base = mul(mat, base, "", boost, "", -700, 40)
+
+    # Season-tint green foliage only
+    season_fx = MEL.create_material_expression(mat, unreal.MaterialExpressionCustom, -480, 40)
+    season_fx.set_editor_property("description", "Season foliage tint")
+    season_fx.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    def make_custom_input(name: str):
+        ci = unreal.CustomInput()
+        ci.set_editor_property("input_name", name)
+        return ci
+
+    season_fx.set_editor_property("inputs", [])
+    season_fx.set_editor_property("inputs", [make_custom_input("Base"), make_custom_input("Season")])
+    season_fx.set_editor_property("code", SEASON_CODE)
+    MEL.connect_material_expressions(base, "", season_fx, "Base")
+    MEL.connect_material_expressions(season, "", season_fx, "Season")
 
     metal = scalar(mat, "Metallic", 0.0, -1200, 400)
     rough = scalar(mat, "Roughness", 0.72, -1200, 480)
     spec = scalar(mat, "Specular", 0.35, -1200, 560)
 
-    MEL.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    MEL.connect_material_property(season_fx, "", unreal.MaterialProperty.MP_BASE_COLOR)
     MEL.connect_material_property(metal, "", unreal.MaterialProperty.MP_METALLIC)
     MEL.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
     MEL.connect_material_property(spec, "", unreal.MaterialProperty.MP_SPECULAR)
@@ -186,6 +265,7 @@ def build(mat: unreal.Material) -> None:
 
 def main() -> None:
     ensure_folder(FOLDER)
+    ensure_mpc()
     asset_path = f"{FOLDER}/{MASTER}"
     if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
         mat = unreal.EditorAssetLibrary.load_asset(asset_path)
@@ -201,7 +281,7 @@ def main() -> None:
     MEL.layout_material_expressions(mat)
     MEL.recompile_material(mat)
     unreal.EditorAssetLibrary.save_asset(asset_path)
-    unreal.log(f"Saved {asset_path} — windows + street lamps")
+    unreal.log(f"Saved {asset_path} — windows + street lamps + season foliage")
 
 
 if __name__ == "__main__":

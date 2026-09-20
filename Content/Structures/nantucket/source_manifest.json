@@ -9,7 +9,7 @@
       "name": null,
       "lat": 41.30847219999998,
       "lon": -70.20100000000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#44cc77",
       "periodS": 1,
       "segments": [
@@ -30,7 +30,7 @@
       "name": null,
       "lat": 41.30508329999998,
       "lon": -70.19172220000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 1,
       "segments": [
@@ -51,7 +51,7 @@
       "name": null,
       "lat": 41.31701099999998,
       "lon": -70.103699,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#fff8d2",
       "periodS": 8,
       "segments": [
@@ -76,7 +76,7 @@
       "name": null,
       "lat": 41.31090929999999,
       "lon": -70.10207009999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -97,7 +97,7 @@
       "name": null,
       "lat": 41.310294,
       "lon": -70.100031,
-      "elevM": 9.7,
+      "elevM": 10.5,
       "color": "#44cc77",
       "periodS": 4,
       "segments": [
@@ -118,7 +118,7 @@
       "name": null,
       "lat": 41.28626700000001,
       "lon": -70.09526699999998,
-      "elevM": 4.8999999999999995,
+      "elevM": 5.7,
       "color": "#44cc77",
       "periodS": 4,
       "segments": [
@@ -139,7 +139,7 @@
       "name": null,
       "lat": 41.285799999999995,
       "lon": -70.09506699999997,
-      "elevM": 4.8999999999999995,
+      "elevM": 5.7,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -160,7 +160,7 @@
       "name": null,
       "lat": 41.29348599999997,
       "lon": -70.09456599999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 1,
       "segments": [
@@ -181,7 +181,7 @@
       "name": null,
       "lat": 41.28988670000001,
       "lon": -70.09232250000002,
-      "elevM": 11.3,
+      "elevM": 12.100000000000001,
       "color": "#fff8d2",
       "periodS": 1,
       "segments": [
@@ -202,7 +202,7 @@
       "name": null,
       "lat": 41.289255000000026,
       "lon": -70.09204920000002,
-      "elevM": 16.981387922067444,
+      "elevM": 17.781387922067445,
       "color": "#fff8d2",
       "periodS": 4,
       "segments": [
@@ -223,7 +223,7 @@
       "name": "Brant Point Light",
       "lat": 41.28917,
       "lon": -70.09056,
-      "elevM": 11.38784,
+      "elevM": 15.411200000000001,
       "color": "#ff6a52",
       "periodS": 4,
       "segments": [
@@ -243,7 +243,7 @@
       "name": null,
       "lat": 41.291867000000025,
       "lon": -70.09038299999997,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#44cc77",
       "periodS": 2.5,
       "segments": [
@@ -264,7 +264,7 @@
       "name": null,
       "lat": 41.29001699999998,
       "lon": -70.09026699999998,
-      "elevM": 8.5,
+      "elevM": 9.3,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -285,7 +285,7 @@
       "name": null,
       "lat": 41.25693669999998,
       "lon": -70.06352099999998,
-      "elevM": 18.367624487503036,
+      "elevM": 19.167624487503037,
       "color": "#fff8d2",
       "periodS": 4,
       "segments": [
@@ -326,7 +326,7 @@
       "name": null,
       "lat": 41.30541670000002,
       "lon": -70.02911110000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -347,7 +347,7 @@
       "name": null,
       "lat": 41.30500000000001,
       "lon": -70.02694439999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -370,7 +370,7 @@
       "name": "Brant Point Light",
       "lat": 41.28917,
       "lon": -70.09056,
-      "elevM": 11.38784,
+      "elevM": 15.411200000000001,
       "periodS": 4,
       "color": "#ff6a52"
     },
@@ -399,23 +399,25 @@
     },
     "fullVoxelRadiusFt": 7500,
     "outer": "box",
-    "runtimeFullRadius": 1,
+    "runtimeFullRadius": 0,
     "levels": [
       "full",
       "shell"
+    ]
+  },
+  "foliage": {
+    "format": "instances-v1",
+    "species": [
+      "oak",
+      "cedar",
+      "scrub",
+      "lawn",
+      "beach",
+      "marsh"
     ],
-    "cameraLocalFull": true,
-    "maxFullTiles": 2,
-    "maxFullVerts": 700000,
-    "heavyFullVerts": 100000,
-    "heavyShellVerts": 100000
+    "note": "Per-tile fileFoliage JSON \u2192 UE HierarchicalInstancedStaticMesh (not voxel _veg.mesh)"
   },
-  "stream": {
-    "loadRadius": 3,
-    "unloadRadius": 5,
-    "note": "Shell ring always; full budgeted at runtime"
-  },
-  "bakedAt": "2026-07-11T07:05:40.552Z",
+  "bakedAt": "2026-07-20T04:04:45.693Z",
   "tiles": [
     {
       "id": "4_0",
@@ -429,20 +431,23 @@
         "south": 41.235,
         "north": 41.255
       },
-      "vertices": 9588,
-      "verticesLod1": 6096,
-      "indices": 12888,
-      "bytes": 195388,
-      "bytesLod1": 123736,
+      "vertices": 3026,
+      "verticesLod1": 3026,
+      "verticesBuildings": 3026,
+      "verticesVeg": 0,
+      "foliageInstances": 1503,
+      "indices": 3738,
+      "bytes": 60360,
+      "bytesLod1": 60360,
+      "bytesFoliage": 210256,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 91,
-        "trees": 39,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 26
-      }
+        "trees": 303,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_0_foliage.json"
     },
     {
       "id": "5_0",
@@ -456,20 +461,23 @@
         "south": 41.235,
         "north": 41.255
       },
-      "vertices": 70050,
-      "verticesLod1": 26625,
-      "indices": 96360,
-      "bytes": 1436208,
-      "bytesLod1": 542972,
+      "vertices": 9520,
+      "verticesLod1": 9520,
+      "verticesBuildings": 9520,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 11760,
+      "bytes": 189856,
+      "bytesLod1": 189856,
+      "bytesFoliage": 531134,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 338,
-        "grass": 137,
-        "seagrass": 70,
-        "treesShell": 145
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_0_foliage.json"
     },
     {
       "id": "6_0",
@@ -483,20 +491,23 @@
         "south": 41.235,
         "north": 41.255
       },
-      "vertices": 48382,
-      "verticesLod1": 22660,
-      "indices": 66384,
-      "bytes": 991284,
-      "bytesLod1": 461092,
+      "vertices": 9520,
+      "verticesLod1": 9520,
+      "verticesBuildings": 9520,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 11760,
+      "bytes": 189856,
+      "bytesLod1": 189856,
+      "bytesFoliage": 529972,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 226,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 112
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_0_foliage.json"
     },
     {
       "id": "7_0",
@@ -510,20 +521,23 @@
         "south": 41.235,
         "north": 41.255
       },
-      "vertices": 8660,
-      "verticesLod1": 3433,
-      "indices": 12042,
-      "bytes": 178084,
-      "bytesLod1": 69884,
+      "vertices": 1428,
+      "verticesLod1": 1428,
+      "verticesBuildings": 1428,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 1764,
+      "bytes": 28492,
+      "bytesLod1": 28492,
+      "bytesFoliage": 240484,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 45,
-        "trees": 38,
-        "grass": 198,
-        "seagrass": 0,
-        "treesShell": 17
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_0_foliage.json"
     },
     {
       "id": "2_1",
@@ -537,20 +551,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 2810,
-      "verticesLod1": 1418,
-      "indices": 3792,
-      "bytes": 57336,
-      "bytesLod1": 28752,
+      "vertices": 748,
+      "verticesLod1": 748,
+      "verticesBuildings": 748,
+      "verticesVeg": 0,
+      "foliageInstances": 188,
+      "indices": 924,
+      "bytes": 14932,
+      "bytesLod1": 14932,
+      "bytesFoliage": 26495,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 22,
-        "trees": 12,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 6
-      }
+        "trees": 18,
+        "grass": 170
+      },
+      "fileFoliage": "tiles/2_1_foliage.json"
     },
     {
       "id": "3_1",
@@ -564,20 +581,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 34681,
-      "verticesLod1": 18340,
-      "indices": 47235,
-      "bytes": 709172,
-      "bytesLod1": 373060,
+      "vertices": 10320,
+      "verticesLod1": 10320,
+      "verticesBuildings": 10320,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 16440,
+      "bytes": 220576,
+      "bytesLod1": 220576,
+      "bytesFoliage": 240498,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 280,
-        "trees": 139,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 48
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/3_1_foliage.json"
     },
     {
       "id": "4_1",
@@ -591,20 +611,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 25211,
-      "verticesLod1": 16021,
-      "indices": 34173,
-      "bytes": 514876,
-      "bytesLod1": 326072,
+      "vertices": 6596,
+      "verticesLod1": 6596,
+      "verticesBuildings": 6596,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 8148,
+      "bytes": 131548,
+      "bytesLod1": 131548,
+      "bytesFoliage": 240582,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 206,
-        "trees": 115,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 81
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_1_foliage.json"
     },
     {
       "id": "5_1",
@@ -618,20 +641,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 390555,
-      "verticesLod1": 52351,
-      "indices": 573213,
-      "bytes": 8151196,
-      "bytesLod1": 1080280,
+      "vertices": 331664,
+      "verticesLod1": 35231,
+      "verticesBuildings": 331664,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 490662,
+      "bytes": 6937624,
+      "bytesLod1": 726808,
+      "bytesFoliage": 529973,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 330,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 144
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_1_foliage.json"
     },
     {
       "id": "6_1",
@@ -645,20 +671,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 467360,
-      "verticesLod1": 63159,
-      "indices": 683058,
-      "bytes": 9742648,
-      "bytesLod1": 1302784,
+      "vertices": 359842,
+      "verticesLod1": 37845,
+      "verticesBuildings": 359842,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 532626,
+      "bytes": 7528152,
+      "bytesLod1": 780056,
+      "bytesFoliage": 531610,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 280,
-        "trees": 588,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 216
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_1_foliage.json"
     },
     {
       "id": "7_1",
@@ -672,20 +701,23 @@
         "south": 41.255,
         "north": 41.275
       },
-      "vertices": 9012,
-      "verticesLod1": 5744,
-      "indices": 12150,
-      "bytes": 183796,
-      "bytesLod1": 116536,
+      "vertices": 2924,
+      "verticesLod1": 2924,
+      "verticesBuildings": 2924,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 3612,
+      "bytes": 58324,
+      "bytesLod1": 58324,
+      "bytesFoliage": 532380,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 87,
-        "trees": 40,
-        "grass": 10,
-        "seagrass": 0,
-        "treesShell": 24
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_1_foliage.json"
     },
     {
       "id": "1_2",
@@ -701,18 +733,21 @@
       },
       "vertices": 34,
       "verticesLod1": 34,
+      "verticesBuildings": 34,
+      "verticesVeg": 0,
+      "foliageInstances": 1085,
       "indices": 42,
       "bytes": 696,
       "bytesLod1": 696,
+      "bytesFoliage": 152100,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 1,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "trees": 78,
+        "grass": 1007
+      },
+      "fileFoliage": "tiles/1_2_foliage.json"
     },
     {
       "id": "2_2",
@@ -726,20 +761,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 1874,
-      "verticesLod1": 545,
-      "indices": 2700,
-      "bytes": 38928,
-      "bytesLod1": 11156,
+      "vertices": 170,
+      "verticesLod1": 170,
+      "verticesBuildings": 170,
+      "verticesVeg": 0,
+      "foliageInstances": 1178,
+      "indices": 210,
+      "bytes": 3408,
+      "bytesLod1": 3408,
+      "bytesFoliage": 165466,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 5,
-        "trees": 5,
-        "grass": 128,
-        "seagrass": 0,
-        "treesShell": 3
-      }
+        "trees": 38,
+        "grass": 1140
+      },
+      "fileFoliage": "tiles/2_2_foliage.json"
     },
     {
       "id": "3_2",
@@ -753,20 +791,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 31679,
-      "verticesLod1": 15220,
-      "indices": 42663,
-      "bytes": 645856,
-      "bytesLod1": 307540,
+      "vertices": 9670,
+      "verticesLod1": 9670,
+      "verticesBuildings": 9670,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 11952,
+      "bytes": 192876,
+      "bytesLod1": 192876,
+      "bytesFoliage": 241294,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 282,
-        "trees": 135,
-        "grass": 6,
-        "seagrass": 0,
-        "treesShell": 48
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/3_2_foliage.json"
     },
     {
       "id": "4_2",
@@ -780,20 +821,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 32553,
-      "verticesLod1": 20100,
-      "indices": 43875,
-      "bytes": 663812,
-      "bytesLod1": 408340,
+      "vertices": 9630,
+      "verticesLod1": 9630,
+      "verticesBuildings": 9630,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 11892,
+      "bytes": 192036,
+      "bytesLod1": 192036,
+      "bytesFoliage": 240922,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 280,
-        "trees": 141,
-        "grass": 3,
-        "seagrass": 0,
-        "treesShell": 88
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_2_foliage.json"
     },
     {
       "id": "5_2",
@@ -807,20 +851,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 543249,
-      "verticesLod1": 134881,
-      "indices": 798819,
-      "bytes": 11344028,
-      "bytesLod1": 2788388,
+      "vertices": 520350,
+      "verticesLod1": 129789,
+      "verticesBuildings": 520350,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 766374,
+      "bytes": 10870764,
+      "bytesLod1": 2682464,
+      "bytesFoliage": 531895,
       "sources": {
         "heroes": 4,
         "enc": 30,
         "osm": 287,
-        "trees": 120,
-        "grass": 326,
-        "seagrass": 182,
-        "treesShell": 81
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_2_foliage.json"
     },
     {
       "id": "6_2",
@@ -834,20 +881,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 522350,
-      "verticesLod1": 165172,
-      "indices": 762048,
-      "bytes": 10883460,
-      "bytesLod1": 3415180,
+      "vertices": 490508,
+      "verticesLod1": 165338,
+      "verticesBuildings": 490508,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 717498,
+      "bytes": 10227628,
+      "bytesLod1": 3414000,
+      "bytesFoliage": 532597,
       "sources": {
         "heroes": 6,
         "enc": 112,
         "osm": 304,
-        "trees": 172,
-        "grass": 68,
-        "seagrass": 183,
-        "treesShell": 88
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_2_foliage.json"
     },
     {
       "id": "7_2",
@@ -861,20 +911,23 @@
         "south": 41.275,
         "north": 41.295
       },
-      "vertices": 28999,
-      "verticesLod1": 15448,
-      "indices": 39861,
-      "bytes": 594448,
-      "bytesLod1": 314224,
+      "vertices": 6698,
+      "verticesLod1": 6698,
+      "verticesBuildings": 6698,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
+      "indices": 8274,
+      "bytes": 133584,
+      "bytesLod1": 133584,
+      "bytesFoliage": 532177,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 206,
-        "trees": 111,
-        "grass": 18,
-        "seagrass": 500,
-        "treesShell": 74
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_2_foliage.json"
     },
     {
       "id": "1_3",
@@ -888,20 +941,52 @@
         "south": 41.295,
         "north": 41.315
       },
-      "vertices": 6949,
-      "verticesLod1": 4874,
-      "indices": 9309,
-      "bytes": 141488,
-      "bytesLod1": 98976,
+      "vertices": 2414,
+      "verticesLod1": 2414,
+      "verticesBuildings": 2414,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
+      "indices": 2982,
+      "bytes": 48156,
+      "bytesLod1": 48156,
+      "bytesFoliage": 240636,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 75,
-        "trees": 28,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 20
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/1_3_foliage.json"
+    },
+    {
+      "id": "2_3",
+      "tx": 2,
+      "ty": 3,
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.24499999999999,
+        "east": -70.2075,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "vertices": 0,
+      "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 437,
+      "indices": 0,
+      "bytes": 0,
+      "bytesLod1": 0,
+      "bytesFoliage": 61407,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 15,
+        "grass": 422
+      },
+      "fileFoliage": "tiles/2_3_foliage.json"
     },
     {
       "id": "3_3",
@@ -915,20 +1000,23 @@
         "south": 41.295,
         "north": 41.315
       },
-      "vertices": 275992,
-      "verticesLod1": 274864,
+      "vertices": 69848,
+      "verticesLod1": 69848,
+      "verticesBuildings": 69848,
+      "verticesVeg": 0,
+      "foliageInstances": 102,
       "indices": 413760,
-      "bytes": 5794936,
-      "bytesLod1": 5772160,
+      "bytes": 2702776,
+      "bytesLod1": 2702776,
+      "bytesFoliage": 14498,
       "sources": {
         "heroes": 0,
         "enc": 13,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "trees": 4,
+        "grass": 98
+      },
+      "fileFoliage": "tiles/3_3_foliage.json"
     },
     {
       "id": "5_3",
@@ -942,20 +1030,23 @@
         "south": 41.295,
         "north": 41.315
       },
-      "vertices": 83007,
-      "verticesLod1": 65121,
-      "indices": 119445,
-      "bytes": 1722904,
-      "bytesLod1": 1348796,
+      "vertices": 81569,
+      "verticesLod1": 66181,
+      "verticesBuildings": 81569,
+      "verticesVeg": 0,
+      "foliageInstances": 138,
+      "indices": 117309,
+      "bytes": 1692788,
+      "bytesLod1": 1370144,
+      "bytesFoliage": 19463,
       "sources": {
         "heroes": 0,
         "enc": 12,
         "osm": 15,
         "trees": 2,
-        "grass": 44,
-        "seagrass": 107,
-        "treesShell": 1
-      }
+        "grass": 136
+      },
+      "fileFoliage": "tiles/5_3_foliage.json"
     },
     {
       "id": "6_3",
@@ -969,20 +1060,23 @@
         "south": 41.295,
         "north": 41.315
       },
-      "vertices": 71340,
-      "verticesLod1": 69968,
-      "indices": 101940,
-      "bytes": 1477876,
-      "bytesLod1": 1449424,
+      "vertices": 69732,
+      "verticesLod1": 69388,
+      "verticesBuildings": 69732,
+      "verticesVeg": 0,
+      "foliageInstances": 2630,
+      "indices": 101016,
+      "bytes": 1450060,
+      "bytesLod1": 1442836,
+      "bytesFoliage": 370209,
       "sources": {
         "heroes": 0,
         "enc": 6,
         "osm": 10,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 77,
-        "treesShell": 0
-      }
+        "trees": 30,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_3_foliage.json"
     },
     {
       "id": "7_3",
@@ -996,26 +1090,28 @@
         "south": 41.295,
         "north": 41.315
       },
-      "vertices": 8756,
-      "verticesLod1": 4840,
-      "indices": 11628,
-      "bytes": 177868,
-      "bytesLod1": 97552,
+      "vertices": 4334,
+      "verticesLod1": 4334,
+      "verticesBuildings": 4334,
+      "verticesVeg": 0,
+      "foliageInstances": 2990,
+      "indices": 5412,
+      "bytes": 86676,
+      "bytesLod1": 86676,
+      "bytesFoliage": 418696,
       "sources": {
         "heroes": 0,
         "enc": 9,
         "osm": 104,
-        "trees": 26,
-        "grass": 4,
-        "seagrass": 22,
-        "treesShell": 12
-      }
+        "trees": 390,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_3_foliage.json"
     },
     {
       "id": "0_4",
       "tx": 0,
       "ty": 4,
-      "file": "tiles/0_4.mesh",
       "fileLod1": null,
       "bbox": {
         "west": -70.32,
@@ -1023,20 +1119,52 @@
         "south": 41.315,
         "north": 41.335
       },
-      "vertices": 1912,
+      "vertices": 0,
       "verticesLod1": 0,
-      "indices": 2868,
-      "bytes": 40168,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 255,
+      "indices": 0,
+      "bytes": 0,
       "bytesLod1": 0,
+      "bytesFoliage": 36119,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
         "trees": 0,
-        "grass": 2,
-        "seagrass": 237,
-        "treesShell": 0
-      }
+        "grass": 255
+      },
+      "fileFoliage": "tiles/0_4_foliage.json"
+    },
+    {
+      "id": "1_4",
+      "tx": 1,
+      "ty": 4,
+      "fileLod1": null,
+      "bbox": {
+        "west": -70.2825,
+        "east": -70.24499999999999,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "vertices": 0,
+      "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 30,
+      "indices": 0,
+      "bytes": 0,
+      "bytesLod1": 0,
+      "bytesFoliage": 4397,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 30
+      },
+      "fileFoliage": "tiles/1_4_foliage.json"
     },
     {
       "id": "3_4",
@@ -1050,19 +1178,21 @@
         "south": 41.315,
         "north": 41.335
       },
-      "vertices": 268464,
-      "verticesLod1": 268464,
+      "vertices": 67118,
+      "verticesLod1": 67118,
+      "verticesBuildings": 67118,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "indices": 402696,
-      "bytes": 5637760,
-      "bytesLod1": 5637760,
+      "bytes": 2617572,
+      "bytesLod1": 2617572,
+      "bytesFoliage": 0,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
+        "grass": 0
       }
     },
     {
@@ -1070,7 +1200,7 @@
       "tx": 5,
       "ty": 4,
       "file": "tiles/5_4.mesh",
-      "fileLod1": null,
+      "fileLod1": "tiles/5_4_l1.mesh",
       "bbox": {
         "west": -70.1325,
         "east": -70.095,
@@ -1078,18 +1208,20 @@
         "north": 41.335
       },
       "vertices": 328,
-      "verticesLod1": 0,
+      "verticesLod1": 328,
+      "verticesBuildings": 328,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "indices": 426,
       "bytes": 6640,
-      "bytesLod1": 0,
+      "bytesLod1": 6640,
+      "bytesFoliage": 0,
       "sources": {
         "heroes": 0,
         "enc": 3,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
+        "grass": 0
       }
     },
     {
@@ -1104,26 +1236,28 @@
         "south": 41.315,
         "north": 41.335
       },
-      "vertices": 4158,
-      "verticesLod1": 1844,
-      "indices": 5652,
-      "bytes": 84996,
-      "bytesLod1": 37468,
+      "vertices": 1288,
+      "verticesLod1": 1288,
+      "verticesBuildings": 1288,
+      "verticesVeg": 0,
+      "foliageInstances": 1456,
+      "indices": 1608,
+      "bytes": 25768,
+      "bytesLod1": 25768,
+      "bytesFoliage": 204115,
       "sources": {
         "heroes": 0,
         "enc": 5,
         "osm": 28,
-        "trees": 14,
-        "grass": 0,
-        "seagrass": 54,
-        "treesShell": 8
-      }
+        "trees": 256,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_4_foliage.json"
     },
     {
       "id": "0_5",
       "tx": 0,
       "ty": 5,
-      "file": "tiles/0_5.mesh",
       "fileLod1": null,
       "bbox": {
         "west": -70.32,
@@ -1131,27 +1265,30 @@
         "south": 41.335,
         "north": 41.355000000000004
       },
-      "vertices": 2248,
+      "vertices": 0,
       "verticesLod1": 0,
-      "indices": 3372,
-      "bytes": 47224,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 1222,
+      "indices": 0,
+      "bytes": 0,
       "bytesLod1": 0,
+      "bytesFoliage": 172372,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 1,
-        "seagrass": 280,
-        "treesShell": 0
-      }
+        "trees": 22,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/0_5_foliage.json"
     },
     {
       "id": "6_5",
       "tx": 6,
       "ty": 5,
       "file": "tiles/6_5.mesh",
-      "fileLod1": null,
+      "fileLod1": "tiles/6_5_l1.mesh",
       "bbox": {
         "west": -70.095,
         "east": -70.05749999999999,
@@ -1159,25 +1296,26 @@
         "north": 41.355000000000004
       },
       "vertices": 102,
-      "verticesLod1": 0,
+      "verticesLod1": 102,
+      "verticesBuildings": 102,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "indices": 126,
       "bytes": 2052,
-      "bytesLod1": 0,
+      "bytesLod1": 2052,
+      "bytesFoliage": 0,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
+        "grass": 0
       }
     },
     {
       "id": "7_5",
       "tx": 7,
       "ty": 5,
-      "file": "tiles/7_5.mesh",
       "fileLod1": null,
       "bbox": {
         "west": -70.05749999999999,
@@ -1185,20 +1323,23 @@
         "south": 41.335,
         "north": 41.355000000000004
       },
-      "vertices": 232,
+      "vertices": 0,
       "verticesLod1": 0,
-      "indices": 348,
-      "bytes": 4888,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 1202,
+      "indices": 0,
+      "bytes": 0,
       "bytesLod1": 0,
+      "bytesFoliage": 169435,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 29,
-        "treesShell": 0
-      }
+        "trees": 2,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_5_foliage.json"
     },
     {
       "id": "7_6",
@@ -1212,20 +1353,23 @@
         "south": 41.355000000000004,
         "north": 41.375
       },
-      "vertices": 226,
+      "vertices": 34,
       "verticesLod1": 34,
-      "indices": 330,
-      "bytes": 4728,
+      "verticesBuildings": 34,
+      "verticesVeg": 0,
+      "foliageInstances": 1223,
+      "indices": 42,
+      "bytes": 696,
       "bytesLod1": 696,
+      "bytesFoliage": 172478,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 1,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 24,
-        "treesShell": 0
-      }
+        "trees": 23,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_6_foliage.json"
     },
     {
       "id": "7_7",
@@ -1239,20 +1383,23 @@
         "south": 41.375,
         "north": 41.395
       },
-      "vertices": 1452,
-      "verticesLod1": 700,
-      "indices": 2118,
-      "bytes": 30268,
-      "bytesLod1": 14476,
+      "vertices": 900,
+      "verticesLod1": 900,
+      "verticesBuildings": 900,
+      "verticesVeg": 0,
+      "foliageInstances": 1232,
+      "indices": 1290,
+      "bytes": 18676,
+      "bytesLod1": 18676,
+      "bytesFoliage": 173263,
       "sources": {
         "heroes": 1,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 69,
-        "treesShell": 0
-      }
+        "trees": 32,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_7_foliage.json"
     }
   ]
 }

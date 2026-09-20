@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Create / rebuild M_NavtTerrain under /Game/Materials/Navt.
+Create / rebuild M_NavtTerrain + MI_NavtTerrain (AAA-style land material).
 
-Dedicated land material (NOT the town/structure vertex-color mat):
-  - Remaps baked vertex colours toward lush grass vs warm beach sand
-  - Wet-sand band near waterline (low world Z)
-  - Procedural grit / patch noise so the island doesn't look like flat paint
-  - Slope softens vegetation toward soil on steeper faces
+Pattern used by Epic samples for vertex-colored ground meshes:
+  Base Color = VertexColor.rgb * ColorBoost * Tint
+  Optional mild season multiply on green-dominant pixels only
+  Roughness high (soil/grass)
+  No WorldPosition hacks (those flash with camera/Lumen)
 
-Run in-editor:
-  Tools → Execute Python Script → Scripts/create_navt_terrain_material.py
-or:
+Assign MI_NavtTerrain (material instance) at runtime; override Season01 on MIDs.
+
+Run:
   UnrealEditor SailSimUE.uproject -ExecutePythonScript=Scripts/create_navt_terrain_material.py
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ import unreal
 
 FOLDER = "/Game/Materials/Navt"
 MASTER = "M_NavtTerrain"
+INSTANCE = "MI_NavtTerrain"
 MEL = unreal.MaterialEditingLibrary
 
 
@@ -45,124 +46,115 @@ def vector(mat, name, default, x, y, group="Surface"):
     return n
 
 
-# Custom HLSL: VCol, Params (x=GrassBoost y=SandBoost z=Detail z.w unused), WPos
-CUSTOM_CODE = r"""
-// Params.x = GrassBoost, Params.y = SandBoost, Params.z = DetailAmt
-float GrassBoost = Params.x;
-float SandBoost  = Params.y;
-float DetailAmt  = Params.z;
-
-float3 c = saturate(VCol);
+# Shore + season: push sand warmer, wet band darker, foliage season multiply only.
+SEASON_CODE = r"""
+float3 c = saturate(Base);
 float R = c.r, G = c.g, B = c.b;
-float Z = WPos.z; // UE cm, elev above sea ≈ Z
+// Sand: warm high R+G, not green-dominant
+float warm = saturate(((R + G) * 0.5 - B) * 10.0) * saturate((R - 0.35) * 3.0);
+float notGreen = saturate(1.0 - (G - max(R, B)) * 12.0);
+float sand = saturate(warm * notGreen);
+// Wet sand: darker / cooler when overall dark warm
+float wet = sand * saturate((0.55 - (R + G + B) / 3.0) * 4.0);
+float3 drySand = float3(0.92, 0.82, 0.58);
+float3 wetSand = float3(0.55, 0.48, 0.36);
+c = lerp(c, drySand, sand * 0.55);
+c = lerp(c, wetSand, wet * 0.7);
 
-// --- Classify from baked palette (aerial blended with TERRAIN_RGB) ---
-// Grass / lawn / forest: green-dominant
-float grass = saturate((G - R) * 10.0) * saturate((G - B) * 8.0) * saturate((G - 0.22) * 4.0);
-// Sand / dune: warm tan (R+G high vs B), not strongly green
-float warm = saturate(((R + G) * 0.5 - B - 0.02) * 12.0) * saturate((R - 0.28) * 3.0);
-float notGreen = saturate(1.0 - (G - max(R, B)) * 14.0);
-float sandCol = warm * notGreen;
-// Elevation beach: low ground that isn't grassy → force sand (coast apron)
-float elevBeach = saturate((220.0 - Z) / 200.0) * saturate(1.0 - grass * 1.8);
-float sand = saturate(max(sandCol, elevBeach * 0.85));
-// Roads / developed: neutral mid-gray, low saturation
-float sat = max(max(R, G), B) - min(min(R, G), B);
-float road = saturate(1.0 - sat * 8.0) * saturate((0.65 - abs(R - 0.48)) * 4.0)
-           * (1.0 - sand) * (1.0 - grass);
-
-// Target albedos (linear-ish storybook Nantucket)
-float3 lushGrass = float3(0.18, 0.42, 0.12);
-float3 deepGrass = float3(0.10, 0.28, 0.08);
-float3 drySand   = float3(0.92, 0.84, 0.58);
-float3 wetSand   = float3(0.48, 0.42, 0.32);
-float wet = saturate((140.0 - Z) / 120.0);
-float3 sandTarget = lerp(drySand, wetSand, wet * 0.92);
-
-// Blend strength — push harder than the washed aerial mix
-float gAmt = grass * GrassBoost;
-float sAmt = sand * SandBoost * (1.0 - grass * 0.85);
-c = lerp(c, lerp(lushGrass, deepGrass, saturate((Z - 400.0) / 800.0)), gAmt);
-c = lerp(c, sandTarget, sAmt);
-// Slight desat on roads so they stay readable
-c = lerp(c, float3(0.42, 0.40, 0.36), road * 0.55);
-
-// --- Detail: patch / tussock / grit (world cm → ~m scales) ---
-float2 uv = WPos.xy * 0.01; // metres
-// cheap value noise
-float n1 = frac(sin(dot(floor(uv * 0.08), float2(12.9898, 78.233))) * 43758.5453);
-float n2 = frac(sin(dot(floor(uv * 0.55), float2(39.346, 11.135))) * 24634.6345);
-float n3 = frac(sin(dot(floor(uv * 4.2),  float2(73.156, 52.742))) * 19327.3915);
-float grain = 1.0 + (n1 - 0.5) * 0.16 * DetailAmt
-                 + (n2 - 0.5) * 0.11 * DetailAmt
-                 + (n3 - 0.5) * 0.07 * DetailAmt;
-// sand: finer grit; grass: broader patchiness
-grain = lerp(grain, 1.0 + (n3 - 0.5) * 0.14 * DetailAmt, sand);
-c *= grain;
-
-// Slope: steeper = less green, more soil (use derivative of world pos via normal proxy:
-// without normal input, approximate with elev noise only — mild soil lean on mixed)
-float3 soil = float3(0.42, 0.34, 0.22);
-c = lerp(c, soil, (1.0 - grass) * sand * wet * 0.15);
-
+// Green foliage season only
+float foliage = saturate((G - R) * 8.0) * saturate((G - B) * 6.0) * saturate((G - 0.15) * 4.0);
+foliage *= saturate(1.0 - sand);
+float s = saturate(Season);
+float3 springM = float3(0.95, 1.12, 0.92);
+float3 summerM = float3(1.0, 1.0, 1.0);
+float3 autumnM = float3(1.25, 0.85, 0.55);
+float3 winterM = float3(0.85, 0.88, 0.90);
+float3 m = summerM;
+if (s < 0.25) { float t = s / 0.25; m = lerp(winterM, springM, t); }
+else if (s < 0.5) { float t = (s - 0.25) / 0.25; m = lerp(springM, summerM, t); }
+else if (s < 0.75) { float t = (s - 0.5) / 0.25; m = lerp(summerM, autumnM, t); }
+else { float t = (s - 0.75) / 0.25; m = lerp(autumnM, winterM, t); }
+c = lerp(c, saturate(c * m), foliage * 0.65);
 return saturate(c);
 """
 
 
-def build(mat: unreal.Material) -> None:
+def build_master(mat: unreal.Material) -> None:
     mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_OPAQUE)
     mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
     mat.set_editor_property("two_sided", False)
+    # Epic outdoor ground: no specular hotspots
+    try:
+        mat.set_editor_property("b_tangent_space_normal", True)
+    except Exception:
+        pass
 
-    vcol = MEL.create_material_expression(mat, unreal.MaterialExpressionVertexColor, -900, 0)
-    wpos = MEL.create_material_expression(mat, unreal.MaterialExpressionWorldPosition, -900, 200)
+    vcol = MEL.create_material_expression(mat, unreal.MaterialExpressionVertexColor, -1000, 0)
+    tint = vector(mat, "Tint", unreal.LinearColor(1, 1, 1, 1), -1000, 140)
+    boost = scalar(mat, "ColorBoost", 1.35, -1000, 240, lo=0.5, hi=2.5)
+    season = scalar(mat, "Season01", 0.5, -1000, 340, group="Season", lo=0.0, hi=1.0)
+    rough = scalar(mat, "Roughness", 0.92, -1000, 440, lo=0.2, hi=1.0)
+    metal = scalar(mat, "Metallic", 0.0, -1000, 520, lo=0.0, hi=1.0)
+    spec = scalar(mat, "Specular", 0.2, -1000, 600, lo=0.0, hi=1.0)
 
-    grass_b = scalar(mat, "GrassBoost", 0.72, -900, 360, group="Cover", lo=0.0, hi=1.2)
-    sand_b = scalar(mat, "SandBoost", 0.78, -900, 440, group="Cover", lo=0.0, hi=1.2)
-    detail = scalar(mat, "DetailAmt", 1.0, -900, 520, group="Cover", lo=0.0, hi=2.0)
-    boost = scalar(mat, "ColorBoost", 1.12, -900, 600, group="Surface", lo=0.5, hi=2.0)
-    rough = scalar(mat, "Roughness", 0.88, -900, 680, group="Surface", lo=0.2, hi=1.0)
-    metal = scalar(mat, "Metallic", 0.0, -900, 760, group="Surface", lo=0.0, hi=1.0)
-    tint = vector(mat, "Tint", unreal.LinearColor(1, 1, 1, 1), -900, 840, group="Surface")
+    # Base = VertexColor * Tint * ColorBoost  (standard UE vertex-color mesh path)
+    mul1 = MEL.create_material_expression(mat, unreal.MaterialExpressionMultiply, -700, 40)
+    MEL.connect_material_expressions(vcol, "", mul1, "A")
+    MEL.connect_material_expressions(tint, "", mul1, "B")
+    mul2 = MEL.create_material_expression(mat, unreal.MaterialExpressionMultiply, -500, 40)
+    MEL.connect_material_expressions(mul1, "", mul2, "A")
+    MEL.connect_material_expressions(boost, "", mul2, "B")
 
-    # Pack boosts: Append Grass+Sand → float2, Append + Detail → float3
-    app0 = MEL.create_material_expression(mat, unreal.MaterialExpressionAppendVector, -600, 400)
-    app1 = MEL.create_material_expression(mat, unreal.MaterialExpressionAppendVector, -420, 420)
-    MEL.connect_material_expressions(grass_b, "", app0, "A")
-    MEL.connect_material_expressions(sand_b, "", app0, "B")
-    MEL.connect_material_expressions(app0, "", app1, "A")
-    MEL.connect_material_expressions(detail, "", app1, "B")
+    def make_custom_input(name: str):
+        ci = unreal.CustomInput()
+        ci.set_editor_property("input_name", name)
+        return ci
 
-    custom = MEL.create_material_expression(mat, unreal.MaterialExpressionCustom, -200, 80)
-    custom.set_editor_property("description", "Beach + lush grass remap")
-    custom.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT3)
-    # Clear then set inputs (UE set_properties needs empty→full for array grow)
-    custom.set_editor_property("inputs", [])
-    custom.set_editor_property(
+    season_fx = MEL.create_material_expression(mat, unreal.MaterialExpressionCustom, -280, 40)
+    season_fx.set_editor_property("description", "Mild seasonal foliage multiply")
+    season_fx.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    season_fx.set_editor_property("inputs", [])
+    season_fx.set_editor_property(
         "inputs",
-        [
-            unreal.CustomInput(input_name="VCol"),
-            unreal.CustomInput(input_name="Params"),
-            unreal.CustomInput(input_name="WPos"),
-        ],
+        [make_custom_input("Base"), make_custom_input("Season")],
     )
-    custom.set_editor_property("code", CUSTOM_CODE)
+    season_fx.set_editor_property("code", SEASON_CODE)
+    MEL.connect_material_expressions(mul2, "", season_fx, "Base")
+    MEL.connect_material_expressions(season, "", season_fx, "Season")
 
-    MEL.connect_material_expressions(vcol, "", custom, "VCol")
-    MEL.connect_material_expressions(app1, "", custom, "Params")
-    MEL.connect_material_expressions(wpos, "", custom, "WPos")
-
-    mul_tint = MEL.create_material_expression(mat, unreal.MaterialExpressionMultiply, 80, 80)
-    MEL.connect_material_expressions(custom, "", mul_tint, "A")
-    MEL.connect_material_expressions(tint, "", mul_tint, "B")
-    mul_boost = MEL.create_material_expression(mat, unreal.MaterialExpressionMultiply, 260, 80)
-    MEL.connect_material_expressions(mul_tint, "", mul_boost, "A")
-    MEL.connect_material_expressions(boost, "", mul_boost, "B")
-
-    # Wet sand slightly glossier (lower roughness near Z=0) — simple constant is fine
-    MEL.connect_material_property(mul_boost, "", unreal.MaterialProperty.MP_BASE_COLOR)
-    MEL.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    MEL.connect_material_property(season_fx, "", unreal.MaterialProperty.MP_BASE_COLOR)
     MEL.connect_material_property(metal, "", unreal.MaterialProperty.MP_METALLIC)
+    MEL.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    MEL.connect_material_property(spec, "", unreal.MaterialProperty.MP_SPECULAR)
+
+
+def ensure_instance(master_path: str) -> None:
+    inst_path = f"{FOLDER}/{INSTANCE}"
+    parent = unreal.EditorAssetLibrary.load_asset(master_path)
+    if not parent:
+        unreal.log_error(f"Missing parent {master_path}")
+        return
+    if unreal.EditorAssetLibrary.does_asset_exist(inst_path):
+        mic = unreal.EditorAssetLibrary.load_asset(inst_path)
+        if mic:
+            MEL.set_material_instance_parent(mic, parent)
+            unreal.EditorAssetLibrary.save_asset(inst_path)
+            unreal.log(f"Updated parent on {inst_path}")
+        return
+    tools = unreal.AssetToolsHelpers.get_asset_tools()
+    factory = unreal.MaterialInstanceConstantFactoryNew()
+    # UE 5.8: set parent on the factory via InitialParent if present, else after create
+    for prop in ("InitialParent", "initial_parent", "Parent"):
+        try:
+            factory.set_editor_property(prop, parent)
+            break
+        except Exception:
+            pass
+    mic = tools.create_asset(INSTANCE, FOLDER, unreal.MaterialInstanceConstant, factory)
+    if mic:
+        MEL.set_material_instance_parent(mic, parent)
+        unreal.EditorAssetLibrary.save_asset(inst_path)
+        unreal.log(f"Created {inst_path}")
 
 
 def main() -> None:
@@ -177,11 +169,12 @@ def main() -> None:
         mat = tools.create_asset(MASTER, FOLDER, unreal.Material, unreal.MaterialFactoryNew())
         unreal.log(f"Created {asset_path}")
 
-    build(mat)
+    build_master(mat)
     MEL.layout_material_expressions(mat)
     MEL.recompile_material(mat)
     unreal.EditorAssetLibrary.save_asset(asset_path)
-    unreal.log(f"Saved {asset_path} — beach sand + lush grass remap")
+    ensure_instance(asset_path)
+    unreal.log(f"Saved {asset_path} — AAA vertex-color land (assign MI_NavtTerrain)")
 
 
 if __name__ == "__main__":

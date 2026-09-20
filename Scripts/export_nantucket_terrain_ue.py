@@ -123,12 +123,12 @@ def main() -> int:
         "streamTileCols": man["streamTileCols"],
         "streamTileRows": man["streamTileRows"],
         "stream": {
-            "loadRadius": man.get("stream", {}).get("loadRadius", 3),
-            "unloadRadius": man.get("stream", {}).get("unloadRadius", 5),
-            # Prefer full LOD0 across the load ring — mixed LOD0/LOD1 edges cause water gaps.
+            # Budget: loadR=2, lod0=1 (shell LOD1). Old 3/3 forced ~1M full-res verts.
+            "loadRadius": man.get("stream", {}).get("loadRadius", 2),
+            "unloadRadius": man.get("stream", {}).get("unloadRadius", 4),
             "lod0Radius": man.get("stream", {}).get(
                 "lod0Radius",
-                man.get("lod", {}).get("runtimeFullRadius", 3),
+                man.get("lod", {}).get("runtimeFullRadius", 1),
             ),
         },
         "elev": {"minM": man["minElev"], "maxM": man["maxElev"]},
