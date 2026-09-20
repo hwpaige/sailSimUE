@@ -602,7 +602,7 @@ protected:
 	 * ~2 km default; physics height queries stay independent.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Spawn")
-	float LocalWaterTessellationDiameterCm = 200000.f;
+	float LocalWaterTessellationDiameterCm = 60000.f; // 600 m hero tess (perf hard-cap band)
 
 	/** Mouse X/Y orbit sensitivity (degrees per input unit). */
 	UPROPERTY(EditAnywhere, Category = "Sailing|Camera")

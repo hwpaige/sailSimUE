@@ -220,7 +220,7 @@ void USailOceanSubsystem::PrepareOpenOcean(
 	if (bWaterZonesConfigured && bOpenOceanPrepared)
 	{
 		const float NeedFull = FMath::Clamp(ZoneExtentCm, 200000.f, 400000.f);
-		const float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 80000.f, 280000.f);
+		const float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 40000.f, 70000.f); // 400–700 m sailing budget
 		const bool bExtentChanged =
 			FMath::Abs(NeedFull - LastAppliedZoneExtentCm) > 1000.f
 			|| FMath::Abs(LocalDiam - LastAppliedLocalTessCm) > 1000.f;
@@ -595,25 +595,19 @@ void USailOceanSubsystem::ConfigureWaterZones(
 	// Harbor spawn is ~24 km from map origin — zone MUST be moved under the boat.
 	// Extent alone (2–3 km) cannot cover a boat at NAV harbor coordinates.
 	const float NeedFull = FMath::Clamp(ZoneExtentCm, 200000.f, 400000.f);
-	// Local tess = high-detail water draw window (not physics). Must cover the
-	// streamed Nantucket land disc; otherwise far water LOD tiles (14 km-ish)
-	// sit over near land and look like water is “displacing” the LOD edge.
-	// Cap at 2800 m for Mac GPU budget.
-	float LocalDiam = FMath::Clamp(LocalTessDiameterCm, 80000.f, 280000.f);
-	if (UNantucketTerrainSubsystem* Terrain = World->GetSubsystem<UNantucketTerrainSubsystem>())
+	// Local tess = high-detail water draw window (not physics).
+	// Sailing-game GPU budget: 400–700 m diameter. Hard-cap 700 m — NEVER expand
+	// to cover the Nantucket land load disc (that path blew tess to 2.8 km).
+	// Farther water stays on cheap far LOD; land streaming is independent.
+	constexpr float kLocalTessMinCm = 40000.f;  // 400 m
+	constexpr float kLocalTessMaxCm = 70000.f;  // 700 m hard cap
+	float LocalDiam = FMath::Clamp(LocalTessDiameterCm, kLocalTessMinCm, kLocalTessMaxCm);
+	if (LocalTessDiameterCm > kLocalTessMaxCm + 1.f)
 	{
-		// Tile XY span ≈ 1.12 km; disc diameter ≈ (2*LoadR+1) * tileSize.
-		// Cover at least the full load disc so water LOD matches land LOD.
-		const float TileSpanCm = 112000.f;
-		const float LandDiscCm = (2.f * float(Terrain->LoadRadius) + 1.f) * TileSpanCm;
-		const float Want = FMath::Min(LandDiscCm, 280000.f);
-		if (Want > LocalDiam)
-		{
-			UE_LOG(LogSailSim, Log,
-				TEXT("Flat ocean: expanding localTess %.0f→%.0f cm to cover land load disc (loadR=%d)"),
-				LocalDiam, Want, Terrain->LoadRadius);
-			LocalDiam = Want;
-		}
+		UE_LOG(LogSailSim, Log,
+			TEXT("Flat ocean: clamping localTess %.0f→%.0f cm (sailing budget; no land-disc expand)"),
+			LocalTessDiameterCm, LocalDiam);
+	}
 	}
 	const FVector ZoneLoc(BoatWorldPos.X, BoatWorldPos.Y, 0.f);
 
