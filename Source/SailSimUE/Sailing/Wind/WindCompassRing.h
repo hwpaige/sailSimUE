@@ -11,11 +11,11 @@ class UMaterialInstanceDynamic;
 class UFont;
 
 /**
- * On-water true / apparent wind rose (port of web hBuildWindCompass).
+ * On-water true / apparent wind rose.
  *
- * Flat horizontal ring, yaw with heading only. Cyan = true (P), amber = apparent (A),
- * red = north (N). Soft-fill materials so dusk doesn't crush them to black and bloom
- * doesn't wash them out. Letter marks are mesh glyphs on the triangle faces.
+ * Flat horizontal instrument: white ring, gold lubber, cyan true (P), amber
+ * apparent (A), red north (N). Unlit self-colored material (M_WindCompass_Unlit)
+ * so it never depends on scene lighting / yacht PBR.
  */
 struct FWindCompassRing
 {
@@ -23,13 +23,13 @@ struct FWindCompassRing
 
 	/** Ring radius (cm). Web R = 30 ft. */
 	float RadiusCm = 30.f * 30.48f;
-	/** Height above actor Z (cm). Web lift = 2.2 ft. */
+	/** Height above actor Z (cm). */
 	float LiftCm = 2.2f * 30.48f;
 	/** Hide when true wind is below this (kn). */
 	float MinTwsKn = 0.1f;
 	/**
-	 * Peak night EmissiveBoost for arrows (Emissive = BaseColor × boost). Day = 0.
-	 * Ring uses a slightly higher peak so it reads as a soft instrument at night.
+	 * Peak night EmissiveBoost. Graph: Emissive = BaseColor * (1 + boost * 12).
+	 * Day uses boost 0 (still fully visible via BaseColor * 1).
 	 */
 	float SoftFill = 0.06f;
 
@@ -39,8 +39,8 @@ struct FWindCompassRing
 
 private:
 	bool bBuilt = false;
-	/** Bump when material recipe changes so hot-reload rebuilds (avoids sticky bright MIDs). */
-	static constexpr int32 MatRecipeVersion = 12;
+	/** Bump when geometry/mat recipe changes so PIE rebuilds. */
+	static constexpr int32 MatRecipeVersion = 21; // true wind world-stable
 	int32 BuiltMatRecipe = 0;
 
 	TWeakObjectPtr<USceneComponent> RootW;
@@ -48,7 +48,6 @@ private:
 	TWeakObjectPtr<UProceduralMeshComponent> TrueArrowW;  // section0 tri, section1 "P"
 	TWeakObjectPtr<UProceduralMeshComponent> AppArrowW;   // section0 tri, section1 "A"
 	TWeakObjectPtr<UProceduralMeshComponent> NorthArrowW; // section0 tri, section1 "N"
-	/** Outer degree readouts (TWD / AWA). */
 	TWeakObjectPtr<UTextRenderComponent> TrueLabelW;
 	TWeakObjectPtr<UTextRenderComponent> AppLabelW;
 
@@ -57,9 +56,8 @@ private:
 	TWeakObjectPtr<UMaterialInstanceDynamic> AppMatW;
 	TWeakObjectPtr<UMaterialInstanceDynamic> NorthMatW;
 	TWeakObjectPtr<UMaterialInstanceDynamic> LubberMatW;
-	TWeakObjectPtr<UMaterialInstanceDynamic> MarkMatW; // black letter strokes
+	TWeakObjectPtr<UMaterialInstanceDynamic> MarkMatW;
 
-	/** Per-mat peak night boost (multiplied by night factor each frame). Mark stays 0. */
 	float RingNightBoost = 0.f;
 	float TrueNightBoost = 0.f;
 	float AppNightBoost = 0.f;
@@ -70,28 +68,32 @@ private:
 	FString LastTrueTxt;
 	FString LastAppTxt;
 
+	float DispHdgDeg = 0.f;
+	/** World true-wind FROM (deg). Never store true as boat-relative — that couples to yaw. */
+	float DispTrueWindFromDeg = 0.f;
+	/** Apparent is boat-relative (AWA); smooth in local frame. */
+	float DispAppToRad = 0.f;
+	float DispTrueLenCm = 0.f;
+	float DispAppLenCm = 0.f;
+	bool bDispInit = false;
+	float BuiltTrueToRad = 1.e9f;
+	float BuiltAppToRad = 1.e9f;
+	float BuiltNorthRad = 1.e9f;
+	float BuiltTrueLenCm = -1.f;
+	float BuiltAppLenCm = -1.f;
+
 	UProceduralMeshComponent* MakeMesh(ASailBoatPawn* Boat, USceneComponent* Parent, const FName& Name);
 	UTextRenderComponent* MakeLabel(ASailBoatPawn* Boat, USceneComponent* Parent, const FName& Name, const FColor& Color);
-	/**
-	 * Overlay MID (unlit translucent preferred): BaseColor + EmissiveBoost + Opacity.
-	 * Translucent so water SSR (SceneColor) does not mirror the rose; Lumen/RT flags
-	 * are also cleared on the primitives. Night fill via ApplyNightEmissive.
-	 */
-	UMaterialInstanceDynamic* MakeIndicatorMat(const FLinearColor& Color, float /*unusedFill*/ = -1.f);
+	/** Unlit instrument MID: BaseColor + EmissiveBoost only. */
+	UMaterialInstanceDynamic* MakeIndicatorMat(const FLinearColor& Color);
 
-	/** 0 = bright day (no glow), 1 = full night. Matches env preset / sun like boat lights. */
 	static float SampleNightGlow01(const UWorld* World);
-	/**
-	 * Day: brighter BaseColor, EmissiveBoost=0.
-	 * Night: darker BaseColor + soft EmissiveBoost (avoids exposure-wash white).
-	 */
 	void ApplyNightEmissive(float NightGlow01);
 
 	void BuildStaticGeometry(UProceduralMeshComponent* Mesh);
 
 	enum class EFaceLetter : uint8 { P, A, N };
 
-	/** Wind-style: tip on rim, base outboard. Also rebuilds face letter (section 1). */
 	void PlaceWindArrow(
 		UProceduralMeshComponent* Mesh,
 		float FlowToRad,
@@ -101,7 +103,6 @@ private:
 		float& OutSeatRad,
 		float& OutAltCm) const;
 
-	/** North-style: tip outboard. Also rebuilds face letter (section 1). */
 	void PlaceNorthArrow(
 		UProceduralMeshComponent* Mesh,
 		float NorthRad,
@@ -109,7 +110,6 @@ private:
 		float& OutSeatRad,
 		float& OutAltCm) const;
 
-	/** Build white stroke letter at triangle centroid into mesh section 1. */
 	void BuildFaceLetter(
 		UProceduralMeshComponent* Mesh,
 		EFaceLetter Letter,

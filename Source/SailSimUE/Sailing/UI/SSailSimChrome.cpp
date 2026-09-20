@@ -168,10 +168,10 @@ void SSailSimChrome::Construct(const FArguments& InArgs)
 				return bSettingsOpen ? EVisibility::Visible : EVisibility::Collapsed;
 			})
 			.BorderImage(FSailSimStyle::DrawerBrush())
-			.Padding(FMargin(18.f, 16.f))
+			.Padding(FMargin(20.f, 18.f))
 			[
 				SNew(SBox)
-				.WidthOverride(340.f)
+				.WidthOverride(360.f)
 				[
 					BuildSettingsDrawer()
 				]
@@ -187,6 +187,59 @@ TSharedRef<SWidget> SSailSimChrome::MakeGlassCard(const TSharedRef<SWidget>& Con
 		.Padding(Pad)
 		[
 			Content
+		];
+}
+
+TSharedRef<SWidget> SSailSimChrome::MakeSectionCard(const FString& Title, const TSharedRef<SWidget>& Content)
+{
+	return SNew(SBorder)
+		.BorderImage(FSailSimStyle::SectionCardBrush())
+		.Padding(FMargin(12.f, 11.f, 12.f, 12.f))
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+				[
+					SNew(SBorder)
+					.BorderImage(FSailSimStyle::SectionHeaderChip())
+					.Padding(FMargin(8.f, 3.f))
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(Title))
+						.Font(FSailSimStyle::FontLabel())
+						.ColorAndOpacity(FSailSimStyle::Accent)
+					]
+				]
+				+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
+				[
+					SNew(SBox).HeightOverride(1.f)
+					[
+						SNew(SBorder).BorderImage(FSailSimStyle::PillBrush())
+					]
+				]
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				Content
+			]
+		];
+}
+
+TSharedRef<SWidget> SSailSimChrome::MakeStyledSlider(
+	TFunction<float()> GetNorm01,
+	TFunction<void(float)> OnNorm01,
+	float Height)
+{
+	const float H = (Height > 1.f) ? Height : FSailSimStyle::SliderRowH;
+	return SNew(SBox)
+		.HeightOverride(H)
+		[
+			SNew(SSlider)
+			.Style(&FSailSimStyle::SliderStyle())
+			.Value_Lambda([GetNorm01]() { return GetNorm01 ? GetNorm01() : 0.f; })
+			.OnValueChanged_Lambda([OnNorm01](float V) { if (OnNorm01) OnNorm01(V); })
 		];
 }
 
@@ -211,7 +264,63 @@ TSharedRef<SWidget> SSailSimChrome::MakePillButton(const FText& Label, FOnClicke
 
 TSharedRef<SWidget> SSailSimChrome::BuildTopBar()
 {
-	// Time-of-day slider (main view) + Settings. Noon = captured Fair Day baseline.
+	// Environment instrument (time + season) + Settings. Noon = Fair Day baseline.
+	auto MakeEnvRow = [](
+		const FString& Tag,
+		TSharedPtr<STextBlock>& OutVal,
+		TSharedPtr<SSlider>& OutSlider,
+		TFunction<float()> Get01,
+		TFunction<void(float)> On01,
+		const FString& Initial) -> TSharedRef<SWidget>
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0.f, 0.f, 8.f, 0.f)
+			[
+				SNew(SBorder)
+				.BorderImage(FSailSimStyle::SectionHeaderChip())
+				.Padding(FMargin(7.f, 3.f))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(Tag))
+					.Font(FSailSimStyle::FontSection())
+					.ColorAndOpacity(FSailSimStyle::Accent)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0.f, 0.f, 10.f, 0.f)
+			[
+				SNew(SBorder)
+				.BorderImage(FSailSimStyle::ValueChipBrush())
+				.Padding(FMargin(8.f, 4.f))
+				[
+					SAssignNew(OutVal, STextBlock)
+					.Font(FSailSimStyle::FontMonoSm())
+					.ColorAndOpacity(FSailSimStyle::Text)
+					.MinDesiredWidth(112.f)
+					.Text(FText::FromString(Initial))
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(SBox)
+				.WidthOverride(200.f)
+				.HeightOverride(FSailSimStyle::SliderRowH)
+				[
+					SAssignNew(OutSlider, SSlider)
+					.Style(&FSailSimStyle::SliderStyle())
+					.Value_Lambda([Get01]() { return Get01 ? Get01() : 0.f; })
+					.OnValueChanged_Lambda([On01](float V) { if (On01) On01(V); })
+				]
+			];
+	};
+
 	return SNew(SHorizontalBox)
 
 		+ SHorizontalBox::Slot()
@@ -223,36 +332,32 @@ TSharedRef<SWidget> SSailSimChrome::BuildTopBar()
 		+ SHorizontalBox::Slot()
 		.AutoWidth()
 		.VAlign(VAlign_Center)
-		.Padding(0.f, 0.f, 10.f, 0.f)
+		.Padding(0.f, 0.f, 12.f, 0.f)
 		[
 			SNew(SBorder)
-			.BorderImage(FSailSimStyle::CardBrush())
-			.Padding(FMargin(12.f, 6.f, 14.f, 6.f))
+			.BorderImage(FSailSimStyle::EnvPanelBrush())
+			.Padding(FMargin(14.f, 10.f, 16.f, 12.f))
 			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
-				.Padding(0.f, 0.f, 10.f, 0.f)
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SAssignNew(TimeOfDayLabel, STextBlock)
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-					.MinDesiredWidth(108.f)
-					.Text(FText::FromString(TEXT("12:00  Fair Day")))
+					MakeEnvRow(
+						TEXT("TIME"),
+						TimeOfDayLabel,
+						TimeOfDaySlider,
+						[this]() { return CachedTimeOfDay01; },
+						[this](float V) { OnTimeOfDaySlider(V); },
+						TEXT("12:00  Fair Day"))
 				]
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
 				[
-					SNew(SBox)
-					.WidthOverride(168.f)
-					[
-						SAssignNew(TimeOfDaySlider, SSlider)
-						.Value_Lambda([this]() { return CachedTimeOfDay01; })
-						.OnValueChanged_Lambda([this](float V) { OnTimeOfDaySlider(V); })
-						.Style(&FCoreStyle::Get().GetWidgetStyle<FSliderStyle>("Slider"))
-					]
+					MakeEnvRow(
+						TEXT("SEASON"),
+						SeasonLabel,
+						SeasonSlider,
+						[this]() { return CachedSeason01; },
+						[this](float V) { OnSeasonSlider(V); },
+						TEXT("Summer"))
 				]
 			]
 		]
@@ -275,13 +380,13 @@ TSharedRef<SWidget> SSailSimChrome::BuildTopBar()
 				{
 					return bSettingsOpen ? FSailSimStyle::ButtonBrushActive() : FSailSimStyle::ButtonBrush();
 				})
-				.Padding(FMargin(14.f, 8.f))
+				.Padding(FMargin(16.f, 12.f))
 				[
 					SNew(STextBlock)
 					.Text_Lambda([this]()
 					{
 						return bSettingsOpen
-							? FText::FromString(TEXT("Hide settings"))
+							? FText::FromString(TEXT("Close"))
 							: FText::FromString(TEXT("☰  Settings"));
 					})
 					.Font(FSailSimStyle::FontBody())
@@ -335,45 +440,49 @@ TSharedRef<SWidget> SSailSimChrome::BuildStatusCard()
 TSharedRef<SWidget> SSailSimChrome::BuildGaugeColumn()
 {
 	const float G = FSailSimStyle::GaugeSize;
-	// web: circular gauges with dark glass face, no extra card chrome around them
-	return SNew(SVerticalBox)
-
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, FSailSimStyle::GaugeGap)
+	// Gauges paint their own layered glass bezel; light outer stack for alignment.
+	return SNew(SBorder)
+		.BorderImage(FSailSimStyle::Transparent())
+		.Padding(FMargin(4.f, 2.f))
 		[
-			SNew(SBox).WidthOverride(G).HeightOverride(G)
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, FSailSimStyle::GaugeGap)
 			[
-				SNew(SSailGauge)
-				.Kind(ESailGaugeKind::Compass)
-				.Size(G)
-				.Primary_Lambda([this]() { return CachedHeading; })
-				.Secondary_Lambda([this]() { return CachedTwd; })
+				SNew(SBox).WidthOverride(G).HeightOverride(G)
+				[
+					SNew(SSailGauge)
+					.Kind(ESailGaugeKind::Compass)
+					.Size(G)
+					.Primary_Lambda([this]() { return CachedHeading; })
+					.Secondary_Lambda([this]() { return CachedTwd; })
+				]
 			]
-		]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, FSailSimStyle::GaugeGap)
-		[
-			SNew(SBox).WidthOverride(G).HeightOverride(G)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, FSailSimStyle::GaugeGap)
 			[
-				SNew(SSailGauge)
-				.Kind(ESailGaugeKind::Heel)
-				.Size(G)
-				.Primary_Lambda([this]() { return CachedHeel; })
+				SNew(SBox).WidthOverride(G).HeightOverride(G)
+				[
+					SNew(SSailGauge)
+					.Kind(ESailGaugeKind::Heel)
+					.Size(G)
+					.Primary_Lambda([this]() { return CachedHeel; })
+				]
 			]
-		]
-		+ SVerticalBox::Slot().AutoHeight()
-		[
-			SNew(SBox).WidthOverride(G).HeightOverride(G)
+			+ SVerticalBox::Slot().AutoHeight()
 			[
-				SNew(SSailGauge)
-				.Kind(ESailGaugeKind::Pitch)
-				.Size(G)
-				.Primary_Lambda([this]() { return CachedPitch; })
+				SNew(SBox).WidthOverride(G).HeightOverride(G)
+				[
+					SNew(SSailGauge)
+					.Kind(ESailGaugeKind::Pitch)
+					.Size(G)
+					.Primary_Lambda([this]() { return CachedPitch; })
+				]
 			]
 		];
 }
 
 TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 {
-	// Compact instrument row: muted label | slider | mono readout chip
+	// Compact instrument row: muted label | big-thumb slider | mono readout chip
 	auto MakeSailRow = [this](
 		const FString& Label,
 		TSharedPtr<STextBlock>& OutVal,
@@ -382,9 +491,9 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 		const FString& InitialVal) -> TSharedRef<SWidget>
 	{
 		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 10.f, 0.f)
 			[
-				SNew(SBox).WidthOverride(56.f)
+				SNew(SBox).WidthOverride(58.f)
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Label))
@@ -394,21 +503,15 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			]
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
 			[
-				SNew(SBox).HeightOverride(14.f)
-				[
-					SNew(SSlider)
-					.Style(&FCoreStyle::Get().GetWidgetStyle<FSliderStyle>("Slider"))
-					.Value_Lambda([GetNorm]() { return GetNorm ? GetNorm() : 0.f; })
-					.OnValueChanged_Lambda([OnNorm](float V) { if (OnNorm) OnNorm(V); })
-				]
+				MakeStyledSlider(GetNorm, OnNorm)
 			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
 			[
 				SNew(SBorder)
-				.BorderImage(FSailSimStyle::PillBrush())
-				.Padding(FMargin(6.f, 2.f))
+				.BorderImage(FSailSimStyle::ValueChipBrush())
+				.Padding(FMargin(8.f, 4.f))
 				[
-					SNew(SBox).WidthOverride(40.f)
+					SNew(SBox).WidthOverride(44.f)
 					[
 						SAssignNew(OutVal, STextBlock)
 						.Font(FSailSimStyle::FontMonoSm())
@@ -444,8 +547,8 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10.f, 0.f, 0.f, 0.f)
 			[
 				SNew(SBorder)
-				.BorderImage(FSailSimStyle::PillBrush())
-				.Padding(FMargin(8.f, 3.f))
+				.BorderImage(FSailSimStyle::ValueChipBrush())
+				.Padding(FMargin(10.f, 4.f))
 				[
 					SAssignNew(HelmReadout, STextBlock)
 					.Font(FSailSimStyle::FontMonoSm())
@@ -469,26 +572,30 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(10.f, 0.f).VAlign(VAlign_Center)
 			[
 				SNew(SBox)
-				.HeightOverride(22.f)
+				.HeightOverride(FSailSimStyle::SliderRowH)
 				[
 					SNew(SOverlay)
 					+ SOverlay::Slot()
+					.VAlign(VAlign_Center)
 					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().FillWidth(1.f)
+						SNew(SBox).HeightOverride(FSailSimStyle::SliderBarPx + 4.f)
 						[
-							SNew(SBorder).BorderImage(FSailSimStyle::HelmTrackPort())
-						]
-						+ SHorizontalBox::Slot().FillWidth(1.f)
-						[
-							SNew(SBorder).BorderImage(FSailSimStyle::HelmTrackStbd())
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot().FillWidth(1.f)
+							[
+								SNew(SBorder).BorderImage(FSailSimStyle::HelmTrackPort())
+							]
+							+ SHorizontalBox::Slot().FillWidth(1.f)
+							[
+								SNew(SBorder).BorderImage(FSailSimStyle::HelmTrackStbd())
+							]
 						]
 					]
 					+ SOverlay::Slot()
 					.VAlign(VAlign_Center)
 					[
 						SNew(SSlider)
-						.Style(&FCoreStyle::Get().GetWidgetStyle<FSliderStyle>("Slider"))
+						.Style(&FSailSimStyle::SliderStyle())
 						.Value_Lambda([this]()
 						{
 							return (FMath::Clamp(CachedRudder, -35.f, 35.f) + 35.f) / 70.f;
@@ -506,34 +613,13 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			]
 		]
 
-		// SAILS inset — all sail trim in one glass well
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+		// SAILS — same section-card language as Settings / env panel
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
 		[
-			SNew(SBorder)
-			.BorderImage(FSailSimStyle::CardBrushDeep())
-			.Padding(FMargin(10.f, 9.f, 10.f, 10.f))
-			[
+			MakeSectionCard(TEXT("SAIL TRIM"),
 				SNew(SVerticalBox)
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-					[
-						SNew(STextBlock)
-						.Text(FText::FromString(TEXT("SAILS")))
-						.Font(FSailSimStyle::FontLabel())
-						.ColorAndOpacity(FSailSimStyle::Accent)
-					]
-					+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(8.f, 0.f, 0.f, 0.f)
-					[
-						SNew(SBox).HeightOverride(1.f)
-						[
-							SNew(SBorder).BorderImage(FSailSimStyle::PillBrush())
-						]
-					]
-				]
 				// Wind + main sheet first (most used underway)
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 				[
 					MakeSailRow(TEXT("TWS"), CompactTwsLabel,
 						[this]()
@@ -543,35 +629,35 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 						[this](float V) { OnTwsSlider(V); },
 						TEXT("6kn"))
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 				[
 					MakeSailRow(TEXT("SHEET"), CompactSheetLabel,
 						[this]() { return FMath::Clamp(CachedSheetEase, 0.f, 1.f); },
 						[this](float V) { OnSheetSlider(V); },
 						TEXT("25%"))
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 				[
 					MakeSailRow(TEXT("OUTHAUL"), CompactOuthaulLabel,
 						[this]() { return FMath::Clamp(CachedOuthaul, 0.f, 1.f); },
 						[this](float V) { OnOuthaulSlider(V); },
 						TEXT("94%"))
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 				[
 					MakeSailRow(TEXT("VANG"), CompactVangLabel,
 						[this]() { return FMath::Clamp(CachedVang, 0.f, 1.f); },
 						[this](float V) { OnVangSlider(V); },
 						TEXT("40%"))
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 5.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 				[
 					MakeSailRow(TEXT("JIB CAR"), CompactJibCarLabel,
 						[this]() { return FMath::Clamp(CachedJibCar, 0.f, 1.f); },
 						[this](float V) { OnJibCarSlider(V); },
 						TEXT("45%"))
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
 				[
 					MakeSailRow(TEXT("SPIN"), CompactSpinSheetLabel,
 						[this]() { return FMath::Clamp(CachedSpinSheet, 0.f, 1.f); },
@@ -582,7 +668,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 				+ SVerticalBox::Slot().AutoHeight()
 				[
 					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 4.f, 0.f)
+					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 5.f, 0.f)
 					[
 						SNew(SButton)
 						.ButtonStyle(FCoreStyle::Get(), "NoBorder")
@@ -600,7 +686,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 									? FSailSimStyle::PillBrushAccent()
 									: FSailSimStyle::PillBrush();
 							})
-							.Padding(FMargin(8.f, 7.f))
+							.Padding(FMargin(10.f, 8.f))
 							.HAlign(HAlign_Center)
 							[
 								SAssignNew(CompactJibSetLabel, STextBlock)
@@ -619,7 +705,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 							]
 						]
 					]
-					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(4.f, 0.f, 0.f, 0.f)
+					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(5.f, 0.f, 0.f, 0.f)
 					[
 						SNew(SButton)
 						.ButtonStyle(FCoreStyle::Get(), "NoBorder")
@@ -637,7 +723,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 									? FSailSimStyle::PillBrushAccent()
 									: FSailSimStyle::PillBrush();
 							})
-							.Padding(FMargin(8.f, 7.f))
+							.Padding(FMargin(10.f, 8.f))
 							.HAlign(HAlign_Center)
 							[
 								SAssignNew(CompactKiteSetLabel, STextBlock)
@@ -657,9 +743,9 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 						]
 					]
 				]
-			]
+			)
 		]
-		, FMargin(14.f, 12.f, 14.f, 12.f));
+		, FMargin(16.f, 14.f, 16.f, 14.f));
 }
 
 TSharedRef<SWidget> SSailSimChrome::BuildNavLowerCluster()
@@ -856,12 +942,12 @@ TSharedRef<SWidget> SSailSimChrome::BuildAutopilotPanel()
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
 				[
-					SNew(SBox).HeightOverride(14.f)
+					SNew(SBox).HeightOverride(FSailSimStyle::SliderRowH)
 					[
 						SNew(SOverlay)
 						+ SOverlay::Slot().VAlign(VAlign_Center)
 						[
-							SNew(SBox).HeightOverride(6.f)
+							SNew(SBox).HeightOverride(FSailSimStyle::SliderBarPx + 2.f)
 							[
 								SNew(SBorder)
 								.BorderImage_Lambda([this]() -> const FSlateBrush*
@@ -875,7 +961,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildAutopilotPanel()
 						+ SOverlay::Slot().VAlign(VAlign_Center)
 						[
 							SNew(SSlider)
-							.Style(&FCoreStyle::Get().GetWidgetStyle<FSliderStyle>("Slider"))
+							.Style(&FSailSimStyle::SliderStyle())
 							.IsEnabled_Lambda([this]()
 							{
 								return CachedAutoMode != FBoatDynamics::EAutoMode::Nav;
@@ -1463,24 +1549,20 @@ TSharedRef<SWidget> SSailSimChrome::MakeLabeledSlider(
 			]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
 			[
-				SAssignNew(OutLabel, STextBlock)
-				.Font(FSailSimStyle::FontMonoSm())
-				.ColorAndOpacity(FSailSimStyle::Accent)
-				.Text(FText::FromString(TEXT("—")))
+				SNew(SBorder)
+				.BorderImage(FSailSimStyle::ValueChipBrush())
+				.Padding(FMargin(8.f, 3.f))
+				[
+					SAssignNew(OutLabel, STextBlock)
+					.Font(FSailSimStyle::FontMonoSm())
+					.ColorAndOpacity(FSailSimStyle::Accent)
+					.Text(FText::FromString(TEXT("—")))
+				]
 			]
 		]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
 		[
-			SNew(SBox).HeightOverride(18.f)
-			[
-				SNew(SSlider)
-				.Style(&FCoreStyle::Get().GetWidgetStyle<FSliderStyle>("Slider"))
-				.Value_Lambda([GetNorm01]() { return GetNorm01 ? GetNorm01() : 0.f; })
-				.OnValueChanged_Lambda([OnNorm01](float V)
-				{
-					if (OnNorm01) OnNorm01(V);
-				})
-			]
+			MakeStyledSlider(GetNorm01, OnNorm01)
 		];
 }
 
@@ -1685,12 +1767,23 @@ TSharedRef<SWidget> SSailSimChrome::BuildSettingsDrawer()
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
 			[
-				SNew(STextBlock)
-				.Text(FText::FromString(TEXT("SETTINGS")))
-				.Font(FSailSimStyle::FontTitle())
-				.ColorAndOpacity(FSailSimStyle::Accent)
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("SETTINGS")))
+					.Font(FSailSimStyle::FontBrand())
+					.ColorAndOpacity(FSailSimStyle::Text)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("Environment · wind · performance")))
+					.Font(FSailSimStyle::FontMonoSm())
+					.ColorAndOpacity(FSailSimStyle::TextDim)
+				]
 			]
-			+ SHorizontalBox::Slot().AutoWidth()
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
 			[
 				SNew(SButton)
 				.ButtonStyle(FCoreStyle::Get(), "NoBorder")
@@ -1699,10 +1792,10 @@ TSharedRef<SWidget> SSailSimChrome::BuildSettingsDrawer()
 				[
 					SNew(SBorder)
 					.BorderImage(FSailSimStyle::ButtonBrush())
-					.Padding(FMargin(12.f, 6.f))
+					.Padding(FMargin(14.f, 8.f))
 					[
 						SNew(STextBlock)
-						.Text(FText::FromString(TEXT("Close")))
+						.Text(FText::FromString(TEXT("✕")))
 						.Font(FSailSimStyle::FontBody())
 						.ColorAndOpacity(FSailSimStyle::Text)
 					]
@@ -1710,225 +1803,200 @@ TSharedRef<SWidget> SSailSimChrome::BuildSettingsDrawer()
 			]
 		]
 
-		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 12.f, 0.f, 0.f)
+		+ SVerticalBox::Slot().FillHeight(1.f).Padding(0.f, 14.f, 0.f, 0.f)
 		[
 			SNew(SScrollBox)
 			+ SScrollBox::Slot()
 			[
 				SNew(SVerticalBox)
 
-				// ---- Environment presets (Fair Day = captured polished look) ----
+				// ---- Environment presets ----
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 12.f)
 				[
-					SNew(SVerticalBox)
-					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
-					[
-						SNew(STextBlock)
-						.Text(FText::FromString(TEXT("ENVIRONMENT")))
-						.Font(FSailSimStyle::FontSection())
-						.ColorAndOpacity(FSailSimStyle::TextDim)
-					]
-					+ SVerticalBox::Slot().AutoHeight()
-					[
-						BuildEnvPresetRow()
-					]
+					MakeSectionCard(TEXT("ENVIRONMENT"),
+						BuildEnvPresetRow())
 				]
 
-				// ---- Sky first (fog/clouds always visible at top of drawer) ----
-				+ SVerticalBox::Slot().AutoHeight()
+				// ---- Sky / fog ----
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 12.f)
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("SKY / FOG")))
-					.Font(FSailSimStyle::FontTitle())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
-				[
-					MakeLabeledSlider(
-						TEXT("Height fog"),
-						FogSliderLabel,
-						[this]() { return FMath::Clamp(CachedFogIntensity, 0.f, 1.f); },
-						[this](float N) { OnFogSlider(N); })
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("0 = off entirely · 100% = map default")))
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 0.f)
-				[
-					MakeLabeledSlider(
-						TEXT("Volumetric clouds"),
-						CloudSliderLabel,
-						[this]() { return FMath::Clamp(CachedCloudIntensity, 0.f, 1.f); },
-						[this](float N) { OnCloudSlider(N); })
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("0 = off entirely · seam test: try both at 0")))
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
+					MakeSectionCard(TEXT("SKY / FOG"),
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							MakeLabeledSlider(
+								TEXT("Height fog"),
+								FogSliderLabel,
+								[this]() { return FMath::Clamp(CachedFogIntensity, 0.f, 1.f); },
+								[this](float N) { OnFogSlider(N); })
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("0 = off · 100% = map default")))
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextMute)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 0.f)
+						[
+							MakeLabeledSlider(
+								TEXT("Volumetric clouds"),
+								CloudSliderLabel,
+								[this]() { return FMath::Clamp(CachedCloudIntensity, 0.f, 1.f); },
+								[this](float N) { OnCloudSlider(N); })
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("0 = off · seam test: try both at 0")))
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextMute)
+						])
 				]
 
 				// ---- Wind ----
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 20.f, 0.f, 0.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 12.f)
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("WIND")))
-					.Font(FSailSimStyle::FontTitle())
-					.ColorAndOpacity(FSailSimStyle::Accent)
+					MakeSectionCard(TEXT("WIND"),
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							MakeLabeledSlider(
+								TEXT("True wind speed"),
+								TwsSliderLabel,
+								[this]()
+								{
+									return FMath::Clamp(CachedTws / FBoatDynamics::WindDisplayMaxKn, 0.f, 1.f);
+								},
+								[this](float N) { OnTwsSlider(N); })
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 0.f)
+						[
+							MakeLabeledSlider(
+								TEXT("True wind direction"),
+								TwdSliderLabel,
+								[this]() { return FMath::Clamp(FMath::Fmod(CachedTwd + 360.f, 360.f) / 360.f, 0.f, 1.f); },
+								[this](float N) { OnTwdSlider(N); })
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("Keys:  [ ] TWS   ·   ; ' TWD")))
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextMute)
+						])
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
-				[
-					MakeLabeledSlider(
-						TEXT("True wind speed"),
-						TwsSliderLabel,
-						[this]()
-						{
-							return FMath::Clamp(CachedTws / FBoatDynamics::WindDisplayMaxKn, 0.f, 1.f);
-						},
-						[this](float N) { OnTwsSlider(N); })
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 0.f)
-				[
-					MakeLabeledSlider(
-						TEXT("True wind direction"),
-						TwdSliderLabel,
-						[this]() { return FMath::Clamp(FMath::Fmod(CachedTwd + 360.f, 360.f) / 360.f, 0.f, 1.f); },
-						[this](float N) { OnTwdSlider(N); })
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("Also: [ ] TWS  ·  ; ' TWD")))
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-				]
-
-				// Main trim lives on the helm bar (outhaul + vang) — not here.
 
 				// ---- Performance ----
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 20.f, 0.f, 0.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 12.f)
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("PERFORMANCE")))
-					.Font(FSailSimStyle::FontTitle())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(
-						TEXT("Engine unit + GPU times + SailSim GT scopes. Wall ≠ our code sum. ")
-						TEXT("Also try console: stat unit · stat gpu")))
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-					.AutoWrapText(true)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-				[
-					BuildPerfRow(TEXT("Wall"), PerfFrameLabel)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					SAssignNew(PerfBottleneckLabel, STextBlock)
-					.Font(FSailSimStyle::FontLabel())
-					.ColorAndOpacity(FSailSimStyle::Warn)
-					.AutoWrapText(true)
-					.Text(FText::FromString(TEXT("Bottleneck: —")))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("ENGINE (thread busy / wait)")))
-					.Font(FSailSimStyle::FontSection())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					BuildPerfEngineList()
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("SAILSIM GAME THREAD (of GT busy)")))
-					.Font(FSailSimStyle::FontSection())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					BuildPerfBucketList()
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					BuildPerfRow(TEXT("OtherGT"), PerfOtherGtLabel)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
-				[
-					SAssignNew(PerfResidentLabel, STextBlock)
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-					.AutoWrapText(true)
-					.Text(FText::FromString(TEXT("Resident: —")))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
-				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("RENDER DRIVERS (ranked suspects)")))
-					.Font(FSailSimStyle::FontSection())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					SAssignNew(PerfRenderDriversLabel, STextBlock)
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-					.AutoWrapText(true)
-					.Text(FText::FromString(TEXT("…")))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					SAssignNew(PerfHintLabel, STextBlock)
-					.Font(FSailSimStyle::FontMonoSm())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-					.AutoWrapText(true)
-					.Text(FText::FromString(
-						TEXT("GTwait high → GPU/render bound. GT high → see SailSim rows. ")
-						TEXT("Peaks reset when Settings re-opens.")))
+					MakeSectionCard(TEXT("PERFORMANCE"),
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(
+								TEXT("Engine unit + GPU times + SailSim GT scopes. Wall ≠ our code sum. ")
+								TEXT("Also: stat unit · stat gpu")))
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextMute)
+							.AutoWrapText(true)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+						[
+							BuildPerfRow(TEXT("Wall"), PerfFrameLabel)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							SAssignNew(PerfBottleneckLabel, STextBlock)
+							.Font(FSailSimStyle::FontLabel())
+							.ColorAndOpacity(FSailSimStyle::Warn)
+							.AutoWrapText(true)
+							.Text(FText::FromString(TEXT("Bottleneck: —")))
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("ENGINE")))
+							.Font(FSailSimStyle::FontSection())
+							.ColorAndOpacity(FSailSimStyle::Accent)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							BuildPerfEngineList()
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("SAILSIM GT")))
+							.Font(FSailSimStyle::FontSection())
+							.ColorAndOpacity(FSailSimStyle::Accent)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							BuildPerfBucketList()
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							BuildPerfRow(TEXT("OtherGT"), PerfOtherGtLabel)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+						[
+							SAssignNew(PerfResidentLabel, STextBlock)
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextDim)
+							.AutoWrapText(true)
+							.Text(FText::FromString(TEXT("Resident: —")))
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 0.f)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(TEXT("RENDER DRIVERS")))
+							.Font(FSailSimStyle::FontSection())
+							.ColorAndOpacity(FSailSimStyle::Accent)
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+						[
+							SAssignNew(PerfRenderDriversLabel, STextBlock)
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextDim)
+							.AutoWrapText(true)
+							.Text(FText::FromString(TEXT("…")))
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+						[
+							SAssignNew(PerfHintLabel, STextBlock)
+							.Font(FSailSimStyle::FontMonoSm())
+							.ColorAndOpacity(FSailSimStyle::TextMute)
+							.AutoWrapText(true)
+							.Text(FText::FromString(
+								TEXT("GTwait high → GPU/render bound. GT high → SailSim rows. ")
+								TEXT("Peaks reset when Settings re-opens.")))
+						])
 				]
 
 				// ---- Keys ----
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 20.f, 0.f, 0.f)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("CONTROLS")))
-					.Font(FSailSimStyle::FontTitle())
-					.ColorAndOpacity(FSailSimStyle::Accent)
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-				[
-					SAssignNew(SettingsBody, STextBlock)
-					.Font(FSailSimStyle::FontBody())
-					.ColorAndOpacity(FSailSimStyle::TextDim)
-					.AutoWrapText(true)
-					.Text(FText::FromString(
-						TEXT("MAIN TRIM (helm bar)\n")
-						TEXT("  Outhaul · Vang  ·  O/P  V/B keys\n\n")
-						TEXT("TRIM (hold)\n")
-						TEXT("  W/S  sheet in/out\n")
-						TEXT("  U/I  jib car fwd/aft\n")
-						TEXT("  N/M  jib leech ease/tight\n\n")
-						TEXT("BOAT\n")
-						TEXT("  A/D helm  ·  T sailing  ·  1–4 preset\n")
-						TEXT("  −/= LOA  ·  R re-loft  ·  RMB orbit\n\n")
-						TEXT("AUTOPILOT (bottom-right, by DC)\n")
-						TEXT("  HDG / AWA / Nav modes\n")
-						TEXT("  AUTO on/off  ·  ±1 ±10 target\n")
-						TEXT("  Tack  ·  Trim (sheet auto, independent)\n\n")
-						TEXT("Prefs auto-save to Saved/Config/")))
+					MakeSectionCard(TEXT("CONTROLS"),
+						SAssignNew(SettingsBody, STextBlock)
+						.Font(FSailSimStyle::FontBody())
+						.ColorAndOpacity(FSailSimStyle::TextDim)
+						.AutoWrapText(true)
+						.Text(FText::FromString(
+							TEXT("MAIN TRIM (helm bar)\n")
+							TEXT("  Outhaul · Vang  ·  O/P  V/B keys\n\n")
+							TEXT("TRIM (hold)\n")
+							TEXT("  W/S  sheet in/out\n")
+							TEXT("  U/I  jib car fwd/aft\n")
+							TEXT("  N/M  jib leech ease/tight\n\n")
+							TEXT("BOAT\n")
+							TEXT("  A/D helm  ·  T sailing  ·  1–4 preset\n")
+							TEXT("  −/= LOA  ·  R re-loft  ·  RMB orbit\n\n")
+							TEXT("AUTOPILOT (bottom-right)\n")
+							TEXT("  HDG / AWA / Nav  ·  AUTO  ·  ±1 ±10\n")
+							TEXT("  Tack  ·  Trim (sheet auto)\n\n")
+							TEXT("Prefs auto-save to Saved/Config/"))))
 				]
 			]
 		];
@@ -2147,10 +2215,10 @@ void SSailSimChrome::RefreshPerfPanel(float DeltaSeconds)
 	{
 		const float Known = P.TotalKnownEmaMs();
 		PerfResidentLabel->SetText(FText::FromString(FString::Printf(
-			TEXT("Resident  terrain %d / %dkv   houses %d / %dkv   moored %d   aids %d   puffs %d\n")
+			TEXT("Resident  terrain %d / %dkv   houses %d (sm=%d pmc=%d) / %dkv   moored %d   aids %d   puffs %d\n")
 			TEXT("SailSim scopes %.2f ms of GT busy %.1f ms (%.0f%%) · GTwait %.1f ms is NOT CPU work"),
 			P.TerrainTiles, P.TerrainVerts / 1000,
-			P.StructureTiles, P.StructureVerts / 1000,
+			P.StructureTiles, P.StructureSmTiles, P.StructurePmcTiles, P.StructureVerts / 1000,
 			P.MooredCount, P.AidCount, P.WindPuffs,
 			Known, P.GameThreadEmaMs,
 			100.f * Known / Gt,
@@ -2191,17 +2259,18 @@ void SSailSimChrome::RefreshPerfPanel(float DeltaSeconds)
 		const float SailsGt = P.EmaMs[static_cast<int32>(FSailSimPerf::EBucket::Sails)];
 		const float OceanGt = P.EmaMs[static_cast<int32>(FSailSimPerf::EBucket::Ocean)];
 
-		const int32 LumenSPG = CVarInt(TEXT("r.Lumen.ScreenProbeGather.DownsampleFactor"), 32);
+		const int32 LumenSPG = CVarInt(TEXT("r.Lumen.ScreenProbeGather.DownsampleFactor"), 16);
 		PerfRenderDriversLabel->SetText(FText::FromString(FString::Printf(
 			TEXT("Live cvars  LumenGI=%d  ReflDS=%d  SPGds=%d  VSM=%d  RT=%d  Clouds=%d(i=%.2f)  Substrate=%d\n")
-			TEXT("Applied: cloudTrace 120km · waterTess 1.2km · sail no-shadow/no-dirty · Lumen SPG High\n")
-			TEXT("1 Lumen GI+refl   SPG ds=%d  refl ds=%d\n")
-			TEXT("2 Vol clouds      TraceMax 120km  (slider i=%.2f)\n")
-			TEXT("3 Water localTess ~1.2km + tile 14km · far mesh 50km\n")
-			TEXT("4 Sails           UpdateMesh only (no MarkRenderStateDirty) · no cast shadow\n")
-			TEXT("GT sails %.2fms ocean %.2fms · moored %d"),
+			TEXT("Applied: SPG=16 (Epic quality) · RT off · waterTess 600m · moored cap 16 · struct Lod0=center\n")
+			TEXT("1 Lumen GI+refl   SPG ds=%d  refl ds=%d  RT=%d\n")
+			TEXT("2 Vol clouds      TraceMax 50km  (slider i=%.2f)\n")
+			TEXT("3 Content arch    houses PMC→cook Nanite · aids cull · no moored point lights\n")
+			TEXT("4 Sails           UpdateMesh only · no cast shadow\n")
+			TEXT("GT sails %.2fms ocean %.2fms · moored %d  houses sm=%d pmc=%d"),
 			LumenGI, LumenReflDS, LumenSPG, Vsm, RT, Clouds, Cloud01, Substrate,
-			LumenSPG, LumenReflDS, Cloud01, SailsGt, OceanGt, P.MooredCount)));
+			LumenSPG, LumenReflDS, RT, Cloud01, SailsGt, OceanGt, P.MooredCount,
+			P.StructureSmTiles, P.StructurePmcTiles)));
 	}
 
 	if (PerfHintLabel.IsValid() && !P.AdviceLabel.IsEmpty())
@@ -2251,9 +2320,11 @@ void SSailSimChrome::TryApplyUserPrefs()
 	CachedCloudIntensity = Prefs.Cloud01;
 	CachedFogIntensity = Prefs.Fog01;
 	CachedTimeOfDay01 = FMath::Clamp(Prefs.TimeOfDayHours / 24.f, 0.f, 1.f);
+	CachedSeason01 = FMath::Clamp(Prefs.Season01, 0.f, 1.f);
 	bLightsPanelOpen = Prefs.bLightsPanelOpen;
 	ApplyMapSize(Prefs.MapPanelW, Prefs.MapPanelH);
 	RefreshTimeOfDayLabel();
+	RefreshSeasonLabel();
 	bPrefsApplied = true;
 	// Persist once after restore so a missing file gets created with current values.
 	bPrefsDirty = true;
@@ -2281,7 +2352,9 @@ void SSailSimChrome::CapturePrefsFromLive()
 			Prefs.Fog01 = Ocean->GetFogIntensity();
 			Prefs.EnvPreset = Ocean->GetActiveEnvPreset();
 			Prefs.TimeOfDayHours = Ocean->GetTimeOfDayHours();
+			Prefs.Season01 = Ocean->GetSeason01();
 			CachedTimeOfDay01 = Ocean->GetTimeOfDay01();
+			CachedSeason01 = Ocean->GetSeason01();
 		}
 	}
 	Prefs.SheetEase01 = B->GetSheetEase();
@@ -2342,6 +2415,7 @@ void SSailSimChrome::FlushPrefsSave()
 	Prefs.Cloud01 = CachedCloudIntensity;
 	Prefs.Fog01 = CachedFogIntensity;
 	Prefs.TimeOfDayHours = CachedTimeOfDay01 * 24.f;
+	Prefs.Season01 = CachedSeason01;
 	if (B)
 	{
 		Prefs.SheetEase01 = B->GetSheetEase();
@@ -2367,6 +2441,7 @@ void SSailSimChrome::FlushPrefsSave()
 				Prefs.Fog01 = Ocean->GetFogIntensity();
 				Prefs.EnvPreset = Ocean->GetActiveEnvPreset();
 				Prefs.TimeOfDayHours = Ocean->GetTimeOfDayHours();
+				Prefs.Season01 = Ocean->GetSeason01();
 			}
 		}
 	}
@@ -2922,6 +2997,48 @@ void SSailSimChrome::RefreshTimeOfDayLabel()
 		}
 	}
 	TimeOfDayLabel->SetText(FText::FromString(Label));
+}
+
+void SSailSimChrome::OnSeasonSlider(float Norm01)
+{
+	CachedSeason01 = FMath::Clamp(Norm01, 0.f, 1.f);
+	if (UWorld* World = SailSimResolveGameWorld(Boat.Get()))
+	{
+		if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
+		{
+			Ocean->SetSeason01(CachedSeason01);
+		}
+	}
+	RefreshSeasonLabel();
+	SchedulePrefsSave();
+}
+
+void SSailSimChrome::RefreshSeasonLabel()
+{
+	if (!SeasonLabel.IsValid()) return;
+	FString Label = TEXT("Summer");
+	if (UWorld* World = SailSimResolveGameWorld(Boat.Get()))
+	{
+		if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
+		{
+			Label = Ocean->GetSeasonLabel();
+			CachedSeason01 = Ocean->GetSeason01();
+		}
+	}
+	else
+	{
+		// Offline label from cache only
+		const float S = CachedSeason01;
+		if (S < 0.0625f || S >= 0.9375f) Label = TEXT("Winter");
+		else if (S < 0.1875f) Label = TEXT("Late Winter");
+		else if (S < 0.3125f) Label = TEXT("Spring");
+		else if (S < 0.4375f) Label = TEXT("Late Spring");
+		else if (S < 0.5625f) Label = TEXT("Summer");
+		else if (S < 0.6875f) Label = TEXT("Late Summer");
+		else if (S < 0.8125f) Label = TEXT("Autumn");
+		else Label = TEXT("Late Autumn");
+	}
+	SeasonLabel->SetText(FText::FromString(Label));
 }
 
 void SSailSimChrome::OnSheetSlider(float Norm01)
@@ -3501,12 +3618,20 @@ void SSailSimChrome::OnApSlider(float Norm01)
 	const float N = FMath::Clamp(Norm01, 0.f, 1.f);
 	if (B->GetAutoMode() == FBoatDynamics::EAutoMode::Awa)
 	{
-		// −170..+170
-		B->SetAutoAwaTarget(N * 340.f - 170.f);
+		// −170..+170 — only if meaningfully different (avoid I-reset spam)
+		const float Want = N * 340.f - 170.f;
+		if (FMath::Abs(Want - B->GetAutoAwaTarget()) > 0.5f)
+		{
+			B->SetAutoAwaTarget(Want);
+		}
 	}
 	else if (B->GetAutoMode() != FBoatDynamics::EAutoMode::Nav)
 	{
-		B->SetAutoTargetHeading(N * 359.f);
+		const float Want = N * 359.f;
+		if (FMath::Abs(FBoatDynamics::Wrap180(Want - B->GetAutoTargetHeading())) > 0.5f)
+		{
+			B->SetAutoTargetHeading(Want);
+		}
 	}
 }
 
@@ -3548,9 +3673,11 @@ void SSailSimChrome::CenterHelm()
 
 void SSailSimChrome::OnHelmValue(float Norm01)
 {
-	// Slider sets sticky tiller; stays until moved again or Center pressed
+	// Slider sets sticky tiller. Ignore while AUTO owns the helm so accidental
+	// clicks / slider commits cannot disengage the pilot mid-hold.
 	if (ASailBoatPawn* B = Boat.Get())
 	{
+		if (B->IsAutoHeading()) return;
 		B->SetHelmInput(FMath::Clamp(Norm01, 0.f, 1.f) * 70.f - 35.f);
 	}
 }

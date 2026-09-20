@@ -92,16 +92,28 @@ int32 SSailGauge::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeome
 	const FVector2D C = Sz * 0.5f;
 	const float FaceR = Side * 0.5f;
 
-	// Same glass plate as metrics card / chart panel (Panel + Border), circular
+	// Layered modern instrument body
+	// 1) Soft drop shadow
 	DrawFilledDisc(OutDrawElements, LayerId, AllottedGeometry,
-		C + FVector2D(0.f, 2.f), FaceR * 0.98f, FSailSimStyle::GaugeShadowBrush());
-
+		C + FVector2D(0.f, 3.f), FaceR * 0.98f, FSailSimStyle::GaugeShadowBrush());
+	// 2) Outer bezel
 	DrawFilledDisc(OutDrawElements, LayerId + 1, AllottedGeometry,
-		C, FaceR * 0.98f, FSailSimStyle::GaugeFaceBrush());
+		C, FaceR * 0.99f, FSailSimStyle::GaugeBezelBrush());
+	// 3) Glass face with cyan rim
+	DrawFilledDisc(OutDrawElements, LayerId + 2, AllottedGeometry,
+		C, FaceR * 0.92f, FSailSimStyle::GaugeFaceBrush());
+	// 4) Dark inset well for ticks / needles
+	DrawFilledDisc(OutDrawElements, LayerId + 3, AllottedGeometry,
+		C, FaceR * 0.82f, FSailSimStyle::GaugeWellBrush());
+
+	// Subtle accent ring between face and well
+	DrawCircle(OutDrawElements, LayerId + 4, AllottedGeometry, C, FaceR * 0.825f,
+		FLinearColor(FSailSimStyle::Accent.R, FSailSimStyle::Accent.G, FSailSimStyle::Accent.B, 0.22f),
+		1.2f, 48);
 
 	const float P = Primary.Get(0.f);
 	const float S = Secondary.Get(0.f);
-	const int32 L = LayerId + 3;
+	const int32 L = LayerId + 5;
 
 	switch (Kind)
 	{
@@ -118,17 +130,18 @@ int32 SSailGauge::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeome
 	const FString Label = (Kind == ESailGaugeKind::Compass) ? TEXT("HDG")
 		: (Kind == ESailGaugeKind::Heel) ? TEXT("HEEL") : TEXT("PITCH");
 
-	// Soft text shadow for readability over chart-like faces
+	// Soft text shadow for readability over dark well
 	DrawCenteredLabel(OutDrawElements, LayerId + 12, AllottedGeometry,
-		C + FVector2D(0.6f, Side * 0.10f + 0.6f), Value, FSailSimStyle::FontMonoLg(),
-		FLinearColor(0.f, 0.f, 0.f, 0.55f));
+		C + FVector2D(0.8f, Side * 0.10f + 0.8f), Value, FSailSimStyle::FontMonoLg(),
+		FLinearColor(0.f, 0.f, 0.f, 0.70f));
 	DrawCenteredLabel(OutDrawElements, LayerId + 13, AllottedGeometry,
 		C + FVector2D(0.f, Side * 0.10f), Value, FSailSimStyle::FontMonoLg(),
-		FLinearColor(0.89f, 0.92f, 0.95f, 1.f));
+		FLinearColor(0.93f, 0.96f, 0.98f, 1.f));
 
+	// Label chip below value
 	DrawCenteredLabel(OutDrawElements, LayerId + 14, AllottedGeometry,
 		C + FVector2D(0.f, Side * 0.28f), Label, FSailSimStyle::FontLabel(),
-		FLinearColor(0.604f, 0.604f, 0.624f, 0.95f));
+		FLinearColor(FSailSimStyle::Accent.R, FSailSimStyle::Accent.G, FSailSimStyle::Accent.B, 0.85f));
 
 	return LayerId + 15;
 }
@@ -139,7 +152,7 @@ void SSailGauge::PaintCompass(const FGeometry& Geo, FSlateWindowElementList& Out
 	const FVector2D Sz = Geo.GetLocalSize();
 	const float Side = FMath::Min(Sz.X, Sz.Y);
 	const FVector2D C = Sz * 0.5f;
-	const float R = Side * 0.42f;
+	const float R = Side * 0.38f;
 	const float H = FMath::Fmod(Heading + 360.f, 360.f);
 
 	for (int32 I = 0; I < 72; ++I)
@@ -150,16 +163,16 @@ void SSailGauge::PaintCompass(const FGeometry& Geo, FSlateWindowElementList& Out
 		const bool bMid = (I % 2 == 0);
 		if (!bMid) continue;
 		DrawRadialTick(Out, Layer, Geo, C, Screen,
-			R * (bMajor ? 0.80f : 0.90f), R * 0.97f,
-			bMajor ? FLinearColor(0.81f, 0.91f, 0.93f, 0.9f) : FLinearColor(0.55f, 0.6f, 0.64f, 0.55f),
-			bMajor ? 1.5f : 1.f);
+			R * (bMajor ? 0.78f : 0.88f), R * 0.98f,
+			bMajor ? FLinearColor(0.85f, 0.93f, 0.95f, 0.92f) : FLinearColor(0.50f, 0.55f, 0.60f, 0.50f),
+			bMajor ? 1.6f : 1.f);
 	}
 
 	auto Cardinal = [&](float Deg, const TCHAR* Lbl, const FLinearColor& Col)
 	{
 		const float Screen = Deg - H;
 		const float Rad = FMath::DegreesToRadians(Screen);
-		const FVector2D P = C + FVector2D(FMath::Sin(Rad), -FMath::Cos(Rad)) * (R * 0.60f);
+		const FVector2D P = C + FVector2D(FMath::Sin(Rad), -FMath::Cos(Rad)) * (R * 0.58f);
 		DrawCenteredLabel(Out, Layer + 1, Geo, P, Lbl, FSailSimStyle::FontLabel(), Col);
 	};
 	Cardinal(0.f, TEXT("N"), FLinearColor::FromSRGBColor(FColor(0xff, 0x6e, 0x6e)));
@@ -168,12 +181,13 @@ void SSailGauge::PaintCompass(const FGeometry& Geo, FSlateWindowElementList& Out
 	Cardinal(270.f, TEXT("W"), FSailSimStyle::TextDim);
 
 	// Lubber
-	DrawRadialTick(Out, Layer + 2, Geo, C, 0.f, R * 0.48f, R * 0.98f, FSailSimStyle::Accent, 2.0f);
+	DrawRadialTick(Out, Layer + 2, Geo, C, 0.f, R * 0.46f, R * 0.99f, FSailSimStyle::Accent, 2.2f);
 	// Wind FROM
-	DrawNeedle(Out, Layer + 2, Geo, C, Twd - H, R * 0.50f,
-		FLinearColor::FromSRGBColor(FColor(0xff, 0xd2, 0x4d)), 1.7f);
+	DrawNeedle(Out, Layer + 2, Geo, C, Twd - H, R * 0.48f,
+		FLinearColor::FromSRGBColor(FColor(0xff, 0xd2, 0x4d)), 1.8f);
 
-	DrawFilledDisc(Out, Layer + 3, Geo, C, 3.0f, FSailSimStyle::GaugeHubBrush());
+	DrawFilledDisc(Out, Layer + 3, Geo, C, 5.0f, FSailSimStyle::GaugeHubOuterBrush());
+	DrawFilledDisc(Out, Layer + 4, Geo, C, 2.8f, FSailSimStyle::GaugeHubBrush());
 }
 
 void SSailGauge::PaintHeel(const FGeometry& Geo, FSlateWindowElementList& Out, int32 Layer, float Heel) const
@@ -181,7 +195,7 @@ void SSailGauge::PaintHeel(const FGeometry& Geo, FSlateWindowElementList& Out, i
 	const FVector2D Sz = Geo.GetLocalSize();
 	const float Side = FMath::Min(Sz.X, Sz.Y);
 	const FVector2D C = Sz * 0.5f;
-	const float R = Side * 0.42f;
+	const float R = Side * 0.38f;
 	const float ClampH = FMath::Clamp(Heel, -40.f, 40.f);
 	const float Rad = FMath::DegreesToRadians(ClampH);
 
@@ -191,18 +205,18 @@ void SSailGauge::PaintHeel(const FGeometry& Geo, FSlateWindowElementList& Out, i
 	{
 		const float A = FMath::Lerp(-55.f, -5.f, float(I) / 18.f);
 		const float Ar = FMath::DegreesToRadians(A);
-		PortArc.Add(C + FVector2D(FMath::Sin(Ar), -FMath::Cos(Ar)) * (R * 0.93f));
+		PortArc.Add(C + FVector2D(FMath::Sin(Ar), -FMath::Cos(Ar)) * (R * 0.94f));
 	}
 	for (int32 I = 0; I <= 18; ++I)
 	{
 		const float A = FMath::Lerp(5.f, 55.f, float(I) / 18.f);
 		const float Ar = FMath::DegreesToRadians(A);
-		StbdArc.Add(C + FVector2D(FMath::Sin(Ar), -FMath::Cos(Ar)) * (R * 0.93f));
+		StbdArc.Add(C + FVector2D(FMath::Sin(Ar), -FMath::Cos(Ar)) * (R * 0.94f));
 	}
 	FSlateDrawElement::MakeLines(Out, Layer, Geo.ToPaintGeometry(), PortArc,
-		ESlateDrawEffect::None, FLinearColor(FSailSimStyle::Port.R, FSailSimStyle::Port.G, FSailSimStyle::Port.B, 0.5f), true, 2.5f);
+		ESlateDrawEffect::None, FLinearColor(FSailSimStyle::Port.R, FSailSimStyle::Port.G, FSailSimStyle::Port.B, 0.65f), true, 2.8f);
 	FSlateDrawElement::MakeLines(Out, Layer, Geo.ToPaintGeometry(), StbdArc,
-		ESlateDrawEffect::None, FLinearColor(FSailSimStyle::Stbd.R, FSailSimStyle::Stbd.G, FSailSimStyle::Stbd.B, 0.5f), true, 2.5f);
+		ESlateDrawEffect::None, FLinearColor(FSailSimStyle::Stbd.R, FSailSimStyle::Stbd.G, FSailSimStyle::Stbd.B, 0.65f), true, 2.8f);
 
 	// Horizon
 	const FVector2D Dir(FMath::Cos(Rad), FMath::Sin(Rad));
@@ -210,16 +224,17 @@ void SSailGauge::PaintHeel(const FGeometry& Geo, FSlateWindowElementList& Out, i
 	Horizon.Add(C - Dir * (R * 0.82f));
 	Horizon.Add(C + Dir * (R * 0.82f));
 	FSlateDrawElement::MakeLines(Out, Layer + 1, Geo.ToPaintGeometry(), Horizon,
-		ESlateDrawEffect::None, FLinearColor(0.81f, 0.91f, 0.93f, 0.9f), true, 2.0f);
+		ESlateDrawEffect::None, FLinearColor(0.85f, 0.93f, 0.95f, 0.95f), true, 2.2f);
 
 	// Fixed wings
 	TArray<FVector2D> LWing = { C + FVector2D(-R * 0.40f, 0.f), C + FVector2D(-R * 0.12f, 0.f) };
 	TArray<FVector2D> RWing = { C + FVector2D(R * 0.12f, 0.f), C + FVector2D(R * 0.40f, 0.f) };
 	FSlateDrawElement::MakeLines(Out, Layer + 2, Geo.ToPaintGeometry(), LWing,
-		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.f);
+		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.2f);
 	FSlateDrawElement::MakeLines(Out, Layer + 2, Geo.ToPaintGeometry(), RWing,
-		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.f);
-	DrawFilledDisc(Out, Layer + 2, Geo, C, 2.4f, FSailSimStyle::GaugeHubBrush());
+		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.2f);
+	DrawFilledDisc(Out, Layer + 2, Geo, C, 4.5f, FSailSimStyle::GaugeHubOuterBrush());
+	DrawFilledDisc(Out, Layer + 3, Geo, C, 2.4f, FSailSimStyle::GaugeHubBrush());
 }
 
 void SSailGauge::PaintPitch(const FGeometry& Geo, FSlateWindowElementList& Out, int32 Layer, float Pitch) const
@@ -227,7 +242,7 @@ void SSailGauge::PaintPitch(const FGeometry& Geo, FSlateWindowElementList& Out, 
 	const FVector2D Sz = Geo.GetLocalSize();
 	const float Side = FMath::Min(Sz.X, Sz.Y);
 	const FVector2D C = Sz * 0.5f;
-	const float R = Side * 0.42f;
+	const float R = Side * 0.38f;
 	const float ClampP = FMath::Clamp(Pitch, -18.f, 18.f);
 	const float Rad = FMath::DegreesToRadians(-ClampP);
 	const FVector2D Dir(FMath::Cos(Rad), FMath::Sin(Rad));
@@ -241,19 +256,19 @@ void SSailGauge::PaintPitch(const FGeometry& Geo, FSlateWindowElementList& Out, 
 		const float Half = (FMath::Abs(Deg) >= 10) ? R * 0.26f : R * 0.16f;
 		TArray<FVector2D> Mark = { Mid - Dir * Half, Mid + Dir * Half };
 		FSlateDrawElement::MakeLines(Out, Layer, Geo.ToPaintGeometry(), Mark,
-			ESlateDrawEffect::None, FLinearColor(0.7f, 0.78f, 0.82f, 0.4f), true, 1.1f);
+			ESlateDrawEffect::None, FLinearColor(0.7f, 0.78f, 0.82f, 0.45f), true, 1.2f);
 	}
 
 	TArray<FVector2D> Horizon = { C - Dir * (R * 0.82f), C + Dir * (R * 0.82f) };
 	FSlateDrawElement::MakeLines(Out, Layer + 1, Geo.ToPaintGeometry(), Horizon,
-		ESlateDrawEffect::None, FLinearColor(0.81f, 0.91f, 0.93f, 0.9f), true, 2.0f);
+		ESlateDrawEffect::None, FLinearColor(0.85f, 0.93f, 0.95f, 0.95f), true, 2.2f);
 
 	TArray<FVector2D> LWing = { C + FVector2D(-R * 0.38f, 0.f), C + FVector2D(-R * 0.10f, 0.f) };
 	TArray<FVector2D> RWing = { C + FVector2D(R * 0.10f, 0.f), C + FVector2D(R * 0.38f, 0.f) };
 	FSlateDrawElement::MakeLines(Out, Layer + 2, Geo.ToPaintGeometry(), LWing,
-		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.f);
+		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.2f);
 	FSlateDrawElement::MakeLines(Out, Layer + 2, Geo.ToPaintGeometry(), RWing,
-		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.f);
+		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 2.2f);
 
 	TArray<FVector2D> Nose = {
 		C + FVector2D(R * 0.46f, -3.5f),
@@ -261,5 +276,8 @@ void SSailGauge::PaintPitch(const FGeometry& Geo, FSlateWindowElementList& Out, 
 		C + FVector2D(R * 0.46f, 3.5f)
 	};
 	FSlateDrawElement::MakeLines(Out, Layer + 2, Geo.ToPaintGeometry(), Nose,
-		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 1.5f);
+		ESlateDrawEffect::None, FSailSimStyle::Accent, true, 1.6f);
+
+	DrawFilledDisc(Out, Layer + 3, Geo, C, 4.5f, FSailSimStyle::GaugeHubOuterBrush());
+	DrawFilledDisc(Out, Layer + 4, Geo, C, 2.4f, FSailSimStyle::GaugeHubBrush());
 }
