@@ -239,6 +239,8 @@ private:
 	bool bGerstnerWavesEnsured = false;
 	/** False until RefreshWaterWaveRenderData runs this session (WaterInfo after Gerstner). */
 	bool bWaveRenderDataRefreshed = false;
+	/** Re-polish MIDs for N ticks after WaterInfo rebuild (rebuild recreates MIDs). */
+	int32 PolishFramesRemaining = 0;
 	bool bMaterialsPolished = false;
 	bool bSkySeamsFixed = false;
 	bool bLegacySkyDomeHidden = false;

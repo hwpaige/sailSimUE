@@ -74,6 +74,7 @@ void USailOceanSubsystem::Deinitialize()
 	bIslandHoleCollapsed = false;
 	bGerstnerWavesEnsured = false;
 	bWaveRenderDataRefreshed = false;
+	PolishFramesRemaining = 0;
 	bMaterialsPolished = false;
 	bSkySeamsFixed = false;
 	bLegacySkyDomeHidden = false;
@@ -101,6 +102,14 @@ void USailOceanSubsystem::Tick(float DeltaTime)
 	UWorld* World = GetWorld();
 	if (!World || !bOpenOceanPrepared) return;
 	if (World->IsPreviewWorld()) return;
+
+	// WaterInfo rebuild recreates MIDs a few frames later — re-apply Enable Waves=0 so SLW stays colored.
+	if (PolishFramesRemaining > 0)
+	{
+		--PolishFramesRemaining;
+		bMaterialsPolished = false;
+		PolishWaterMaterials();
+	}
 
 	SAIL_PERF_SCOPE(Ocean);
 	FollowAccum += DeltaTime;
@@ -1382,6 +1391,9 @@ void USailOceanSubsystem::RefreshWaterWaveRenderData()
 		TEXT("Continuous ocean: refreshed wave render data (bodies=%d zones=%d WaterInfo+mesh)"),
 		Bodies, Zones);
 	bWaveRenderDataRefreshed = true;
+	// MarkForRebuild recreates water MIDs asynchronously — re-polish next few ticks.
+	bMaterialsPolished = false;
+	PolishFramesRemaining = 3;
 }
 
 void USailOceanSubsystem::PolishWaterMaterials()
@@ -1395,21 +1407,23 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		UWaterBodyComponent* Comp = It->GetWaterBodyComponent();
 		if (!Comp) continue;
 
-		auto ApplyToMid = [](UMaterialInstanceDynamic* MID)
+		auto ApplyToMid = [&](UMaterialInstanceDynamic* MID) -> bool
 		{
 			if (!MID) return false;
-			// Continuous ocean: material waves on; soft near→far normal falloff (no hard crush).
-			MID->SetScalarParameterValue(TEXT("Enable Waves"), 1.f);
-			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.15f);
-			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.15f);
-			// Near readable; far still carries the same field so tess edge does not read as a wall.
+			// Body Gerstner displaces mesh/WaterInfo. Material "Enable Waves" sampling
+			// WaterInfo shaded black (Design FAIL). Flat-era (worked): Enable Waves=0.
+			MID->SetScalarParameterValue(TEXT("Enable Waves"), 0.f);
+			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.f);
+			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.f);
+			// Soft continuous near→far (no 0.10/0.06 crush = tile wall).
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.85f);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.50f);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.35f);
-			// Milder extinction so Gerstner + SLW does not read as a black void.
-			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.22f, 0.05f, 0.03f, 1.f));
-			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.03f, 0.14f, 0.16f, 1.f));
-			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.14f, 0.30f, 0.34f, 1.f));
+			// Flat-era open-sea extinction (rendered correctly without material waves).
+			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.45f, 0.08f, 0.04f, 1.f));
+			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.02f, 0.12f, 0.14f, 1.f));
+			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.12f, 0.28f, 0.32f, 1.f));
+			Comp->SetDynamicParametersOnMID(MID);
 			return true;
 		};
 
@@ -1430,7 +1444,7 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		SurfaceChopIntensity = -1.f;
 		SetSurfaceChopIntensity(Keep);
 	}
-	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (waves on, soft far normals)"), Polished);
+	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (Enable Waves=0, body Gerstner, soft far normals)"), Polished);
 }
 
 void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
@@ -1460,7 +1474,7 @@ void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
 		auto Apply = [&](UMaterialInstanceDynamic* MID)
 		{
 			if (!MID) return;
-			MID->SetScalarParameterValue(TEXT("Enable Waves"), 1.f);
+			MID->SetScalarParameterValue(TEXT("Enable Waves"), 0.f);
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), NearN);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), DistN);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), DistNB);
