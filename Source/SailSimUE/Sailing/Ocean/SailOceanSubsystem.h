@@ -28,7 +28,7 @@ struct FOceanSampleBP
 
 /**
  * World subsystem for ocean height + open-ocean visual setup.
- * One flat UE Water plane (no Gerstner, no second fill-plane layer).
+ * Continuous UE Water ocean: Gerstner WaterWaves to the horizon + soft material falloff.
  * The Open World template carves a central island hole via the Water Body Ocean
  * spline — we collapse that spline so stock water fills the full zone.
  *
@@ -84,7 +84,7 @@ public:
 
 	/**
 	 * Short high-frequency surface chop via water material normal strength (0..1).
-	 * Used by wind puffs — not full Gerstner displacement (water stays a flat body).
+	 * Used by wind puffs on top of Gerstner displacement (continuous ocean).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
 	void SetSurfaceChopIntensity(float Intensity01);
@@ -236,7 +236,7 @@ private:
 	bool bWaterZonesConfigured = false;
 	bool bTerrainHidden = false;
 	bool bIslandHoleCollapsed = false;
-	bool bFlatWavesCleared = false;
+	bool bGerstnerWavesEnsured = false;
 	bool bMaterialsPolished = false;
 	bool bSkySeamsFixed = false;
 	bool bLegacySkyDomeHidden = false;
@@ -294,8 +294,8 @@ private:
 	void FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos);
 	void ApplyVolumetricCloudIntensity();
 	void ApplyFogIntensity();
-	/** Strip Gerstner / any WaterWaves asset so the body is a flat plane. */
-	void ClearWaterWaves();
+	/** Keep or assign Gerstner WaterWaves (stock ocean asset or runtime fallback). */
+	void EnsureGerstnerWaterWaves();
 	void PolishWaterMaterials();
 	void SoftenHorizonFog();
 };

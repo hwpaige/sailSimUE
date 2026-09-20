@@ -17,6 +17,8 @@
 #include "Components/BrushComponent.h"
 #include "Engine/Brush.h"
 #include "WaterBodyTypes.h"
+#include "WaterWaves.h"
+#include "GerstnerWaterWaves.h"
 #include "WaterSplineComponent.h"
 #include "Landscape.h"
 #include "LandscapeProxy.h"
@@ -70,7 +72,7 @@ void USailOceanSubsystem::Deinitialize()
 	bWaterZonesConfigured = false;
 	bTerrainHidden = false;
 	bIslandHoleCollapsed = false;
-	bFlatWavesCleared = false;
+	bGerstnerWavesEnsured = false;
 	bMaterialsPolished = false;
 	bSkySeamsFixed = false;
 	bLegacySkyDomeHidden = false;
@@ -251,10 +253,10 @@ void USailOceanSubsystem::PrepareOpenOcean(
 	ApplyFogIntensity();
 	LastZoneBoatXY = BoatWorldPos;
 
-	// One flat plane: strip any Gerstner / WaterWaves asset once.
-	if (!bFlatWavesCleared)
+	// Continuous ocean: keep / assign Gerstner WaterWaves (never strip to nullptr).
+	if (!bGerstnerWavesEnsured)
 	{
-		ClearWaterWaves();
+		EnsureGerstnerWaterWaves();
 	}
 	if (!bMaterialsPolished)
 	{
@@ -605,7 +607,7 @@ void USailOceanSubsystem::ConfigureWaterZones(
 	if (LocalTessDiameterCm > kLocalTessMaxCm + 1.f)
 	{
 		UE_LOG(LogSailSim, Log,
-			TEXT("Flat ocean: clamping localTess %.0f→%.0f cm (sailing budget; no land-disc expand)"),
+			TEXT("Continuous ocean: clamping localTess %.0f→%.0f cm (sailing budget; no land-disc expand)"),
 			LocalTessDiameterCm, LocalDiam);
 	}
 	const FVector ZoneLoc(BoatWorldPos.X, BoatWorldPos.Y, 0.f);
@@ -747,6 +749,7 @@ void USailOceanSubsystem::ConfigureWaterZones(
 				WaterMesh->SetTileSize(10000.f); // 100 m
 			}
 			// Far-distance patch must reach true horizon (50 km).
+			// Soft LOD handoff: same Gerstner field + continuous material normals (no hard crush at localTess edge).
 			if (FFloatProperty* FarExt = FindFProperty<FFloatProperty>(
 					UWaterMeshComponent::StaticClass(), TEXT("FarDistanceMeshExtent")))
 			{
@@ -759,7 +762,7 @@ void USailOceanSubsystem::ConfigureWaterZones(
 
 		++ZonesConfigured;
 		UE_LOG(LogSailSim, Log,
-			TEXT("Flat ocean: zone=%s at boat=(%.0f,%.0f) loc=(%.0f,%.0f) localTess=%.0f extent=%.0f rebuild=%s backend=%s"),
+			TEXT("Continuous ocean: zone=%s at boat=(%.0f,%.0f) loc=(%.0f,%.0f) localTess=%.0f extent=%.0f rebuild=%s backend=%s"),
 			*Zone->GetName(), BoatWorldPos.X, BoatWorldPos.Y,
 			Zone->GetActorLocation().X, Zone->GetActorLocation().Y,
 			LocalDiam, NeedFull,
@@ -1271,31 +1274,64 @@ void USailOceanSubsystem::FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos)
 		SkyMoved, CloudFixed, FogFixed, SkyLightFixed, FocusXY.X, FocusXY.Y);
 }
 
-void USailOceanSubsystem::ClearWaterWaves()
+void USailOceanSubsystem::EnsureGerstnerWaterWaves()
 {
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	int32 Cleared = 0;
+	// Stock Water plugin ocean Gerstner (Engine/Plugins/.../Content/Waves).
+	UWaterWavesAsset* OceanAsset = LoadObject<UWaterWavesAsset>(
+		nullptr, TEXT("/Water/Waves/GerstnerWaves_Ocean.GerstnerWaves_Ocean"));
+
+	int32 Ensured = 0;
+	int32 Assigned = 0;
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
 	{
 		AWaterBody* Body = *It;
 		if (!IsValid(Body)) continue;
-		// nullptr = flat surface (no Gerstner / no second spectrum).
-		if (Body->GetWaterWaves())
+
+		UWaterWavesBase* Existing = Body->GetWaterWaves();
+		const bool bHasWaves = Existing && Existing->GetWaterWaves() != nullptr;
+		if (bHasWaves)
 		{
-			Body->SetWaterWaves(nullptr);
-			++Cleared;
+			++Ensured;
+			continue;
+		}
+
+		if (OceanAsset)
+		{
+			UWaterWavesAssetReference* Ref = NewObject<UWaterWavesAssetReference>(
+				Body, NAME_None, RF_Transactional);
+			Ref->SetWaterWavesAsset(OceanAsset);
+			Body->SetWaterWaves(Ref);
 		}
 		else
 		{
-			// Already null; still count as configured.
-			++Cleared;
+			// Fallback: runtime Gerstner in NATIVE_OCEAN_UE58 calm→open cruise band (cm).
+			UGerstnerWaterWaves* Waves = NewObject<UGerstnerWaterWaves>(
+				Body, NAME_None, RF_Transactional);
+			UGerstnerWaterWaveGeneratorSimple* Gen = NewObject<UGerstnerWaterWaveGeneratorSimple>(Waves);
+			Gen->NumWaves = 24;
+			Gen->MinWavelength = 500.f;
+			Gen->MaxWavelength = 4000.f;
+			Gen->MinAmplitude = 8.f;
+			Gen->MaxAmplitude = 45.f;
+			Gen->WindAngleDeg = 225.f;
+			Gen->DirectionAngularSpreadDeg = 40.f;
+			Gen->SmallWaveSteepness = 0.35f;
+			Gen->LargeWaveSteepness = 0.2f;
+			Waves->GerstnerWaveGenerator = Gen;
+			Waves->RecomputeWaves(true);
+			Body->SetWaterWaves(Waves);
 		}
+		++Assigned;
+		++Ensured;
 	}
 
-	bFlatWavesCleared = true;
-	UE_LOG(LogSailSim, Log, TEXT("Flat ocean: cleared WaterWaves on %d body(s) — single plane only"), Cleared);
+	bGerstnerWavesEnsured = true;
+	UE_LOG(LogSailSim, Log,
+		TEXT("Continuous ocean: Gerstner WaterWaves on %d body(s) (assigned=%d, asset=%s) — localTess budget unchanged"),
+		Ensured, Assigned, OceanAsset ? TEXT("GerstnerWaves_Ocean") : TEXT("runtime-fallback"));
 }
 
 void USailOceanSubsystem::PolishWaterMaterials()
@@ -1312,14 +1348,14 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		auto ApplyToMid = [](UMaterialInstanceDynamic* MID)
 		{
 			if (!MID) return false;
-			// Flat calm look: no foam crests / no wave-driven material features.
-			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.f);
-			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.f);
-			MID->SetScalarParameterValue(TEXT("Enable Waves"), 0.f);
-			// Soft open-sea color; keep near normals readable, flatten far (W3 hero budget).
-			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.35f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.10f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.06f);
+			// Continuous ocean: material waves on; soft near→far normal falloff (no hard crush).
+			MID->SetScalarParameterValue(TEXT("Enable Waves"), 1.f);
+			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.15f);
+			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.15f);
+			// Near readable; far still carries the same field so tess edge does not read as a wall.
+			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.85f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.50f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.35f);
 			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.45f, 0.08f, 0.04f, 1.f));
 			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.02f, 0.12f, 0.14f, 1.f));
 			MID->SetVectorParameterValue(TEXT("ColorScaleBehindWater"), FLinearColor(0.12f, 0.28f, 0.32f, 1.f));
@@ -1343,7 +1379,7 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		SurfaceChopIntensity = -1.f;
 		SetSurfaceChopIntensity(Keep);
 	}
-	UE_LOG(LogSailSim, Log, TEXT("Flat ocean materials: polished %d water body MID(s)"), Polished);
+	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (waves on, soft far normals)"), Polished);
 }
 
 void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
@@ -1358,13 +1394,12 @@ void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// Near: high-frequency chop stays readable. Distant: much flatter so far water
-	// doesn't fight the small local-tess draw window (W3). Prefer near >> distant always.
-	const float NearN = FMath::Lerp(0.35f, 1.35f, I);
-	const float DistN = FMath::Lerp(0.10f, 0.40f, I);
-	const float DistNB = FMath::Lerp(0.06f, 0.28f, I);
-	// Slight foam only in strong chop (reads as cat's-paw texture, not whitecaps).
-	const float Foam = FMath::Lerp(0.f, 0.22f, I * I);
+	// Continuous near→far normals (same wave field). Distant floor stays meaningful so
+	// the localTess edge does not read as a flat tile wall. localTess budget unchanged.
+	const float NearN = FMath::Lerp(0.75f, 1.35f, I);
+	const float DistN = FMath::Lerp(0.45f, 0.70f, I);
+	const float DistNB = FMath::Lerp(0.32f, 0.55f, I);
+	const float Foam = FMath::Lerp(0.12f, 0.28f, I * I);
 
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
 	{
@@ -1374,6 +1409,7 @@ void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
 		auto Apply = [&](UMaterialInstanceDynamic* MID)
 		{
 			if (!MID) return;
+			MID->SetScalarParameterValue(TEXT("Enable Waves"), 1.f);
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), NearN);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), DistN);
 			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), DistNB);

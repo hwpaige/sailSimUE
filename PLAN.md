@@ -41,6 +41,7 @@ Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verif
 | 8 | Lighting / sea moods (P5.3) | map + data | low | Lit capture |
 | 8b | AAA lighting/water/island perf stack (A–C in progress) | `docs/perf/AAA_STACK_IMPLEMENTATION_PLAN.md` | med | `docs/perf/GPU_ABL_LOG.md` |
 | 9 | ✅ P5.2 open ocean (Gerstner + no island + single boat) | ocean subsystem | done | PIE capture |
+| 9b | **In progress:** continuous ocean — Gerstner to horizon, soft near→far normals, localTess 400–700 m hard cap (no water-pro) | `SailOceanSubsystem` | med | SailSim_Ocean PIE + CaptureViewport past tess edge |
 | 10 | ✅ P4 trim: Vang01/Outhaul01 → ComputeSailForceStub Cl/Cd (sheet IdealEase unchanged; cloth still gets sheet/vang/outhaul each tick) | `BoatDynamics.cpp` | low | PIE sheet/vang/outhaul vs speed/heel |
 
 ### C++ recompile loop — SOLVED ✅
