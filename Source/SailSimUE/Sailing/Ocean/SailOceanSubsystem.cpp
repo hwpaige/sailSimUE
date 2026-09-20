@@ -1330,7 +1330,10 @@ void USailOceanSubsystem::EnsureGerstnerWaterWaves()
 		// but WaterInfo was built while flattened / before Live Coding.
 		if (UWaterBodyComponent* Comp = Body->GetWaterBodyComponent())
 		{
-			Comp->RequestGPUWaveDataUpdate();
+			// Public path only (RequestGPUWaveDataUpdate is protected).
+			FOnWaterBodyChangedParams BodyParams;
+			BodyParams.bShapeOrPositionChanged = true;
+			Comp->UpdateAll(BodyParams);
 		}
 	}
 
@@ -1352,7 +1355,10 @@ void USailOceanSubsystem::RefreshWaterWaveRenderData()
 		if (!IsValid(Body)) continue;
 		if (UWaterBodyComponent* Comp = Body->GetWaterBodyComponent())
 		{
-			Comp->RequestGPUWaveDataUpdate();
+			// Public path only (RequestGPUWaveDataUpdate is protected).
+			FOnWaterBodyChangedParams BodyParams;
+			BodyParams.bShapeOrPositionChanged = true;
+			Comp->UpdateAll(BodyParams);
 			// Ensure MIDs exist so PolishWaterMaterials can stick Enable Waves / absorption.
 			Comp->GetWaterMaterialInstance();
 			Comp->GetWaterStaticMeshMaterialInstance();
@@ -1365,8 +1371,8 @@ void USailOceanSubsystem::RefreshWaterWaveRenderData()
 	{
 		AWaterZone* Zone = *It;
 		if (!IsValid(Zone)) continue;
-		// WaterInfo must resample Gerstner after waves are assigned (fixes black void).
-		Zone->ForceUpdateWaterInfoTexture();
+		// Public MarkForRebuild only (ForceUpdateWaterInfoTexture is private).
+		// WaterInfo+mesh flags resample Gerstner after waves are assigned (fixes black void).
 		Zone->MarkForRebuild(
 			EWaterZoneRebuildFlags::UpdateWaterInfoTexture | EWaterZoneRebuildFlags::UpdateWaterMesh);
 		++Zones;
