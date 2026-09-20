@@ -608,7 +608,6 @@ void USailOceanSubsystem::ConfigureWaterZones(
 			TEXT("Flat ocean: clamping localTess %.0f→%.0f cm (sailing budget; no land-disc expand)"),
 			LocalTessDiameterCm, LocalDiam);
 	}
-	}
 	const FVector ZoneLoc(BoatWorldPos.X, BoatWorldPos.Y, 0.f);
 
 	// SetZoneExtent → OnExtentChanged → MarkForRebuild(All). Only call when values change.
