@@ -117,7 +117,7 @@ public:
 	 * Full multi-component actors only within NearFullRadiusCm; rest are HISM hulls.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "4", ClampMax = "120"))
-	int32 MaxBoats = 40;
+	int32 MaxBoats = 16; // perf A/B: was 40 — content delete toward 60 FPS
 
 	/** Fraction of floating moorings that get a boat (before MaxBoats). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "0.8"))
