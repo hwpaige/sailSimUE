@@ -50,7 +50,7 @@ public:
 
 	/** Chebyshev tile radius to load (web loadRadius). */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "1", ClampMax = "8"))
-	int32 LoadRadius = 3;
+	int32 LoadRadius = 1;
 
 	/** Unload outside this radius (web unloadRadius ≥ load). */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "2", ClampMax = "10"))
@@ -61,7 +61,7 @@ public:
 	 * LOD0/LOD1 edges don't leave water gaps between mismatched mesh densities.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "0", ClampMax = "8"))
-	int32 Lod0Radius = 3;
+	int32 Lod0Radius = 0;
 
 	/** Seconds between stream updates. */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream")
