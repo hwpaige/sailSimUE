@@ -145,8 +145,12 @@ bool UNantucketTerrainSubsystem::LoadManifestFromRoot(const FString& Root)
 		UnloadRadius = FMath::Max(LoadRadius + 1, (int32)(*StreamObj)->GetNumberField(TEXT("unloadRadius")));
 		if ((*StreamObj)->HasField(TEXT("lod0Radius")))
 		{
+			// Honor lod0 < load (harbor A/B: Lod0Radius=0 with LoadRadius=1).
+			// Do not raise to LoadRadius — that would force the whole load ring
+			// to LOD0 and make GetStatusLine report lod0=load.
 			Lod0Radius = FMath::Clamp((int32)(*StreamObj)->GetNumberField(TEXT("lod0Radius")), 0, 4);
 		}
+		// Disabled: Lod0Radius = FMath::Max(Lod0Radius, LoadRadius);
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* TilesArr = nullptr;
