@@ -21,9 +21,9 @@
   "streamTileCols": 16,
   "streamTileRows": 16,
   "stream": {
-    "loadRadius": 1,
+    "loadRadius": 3,
     "unloadRadius": 5,
-    "lod0Radius": 0
+    "lod0Radius": 1
   },
   "elev": {
     "minM": -2.1096537113189697,
