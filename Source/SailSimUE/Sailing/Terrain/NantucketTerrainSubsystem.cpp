@@ -167,17 +167,9 @@ bool UNantucketTerrainSubsystem::LoadManifestFromRoot(const FString& Root)
 		{
 			Lod0Radius = LoadRadius;
 		}
-		// Current terrain bake: most tiles/*_l1.mesh have nI=0 (no triangles).
-		// Forcing shell LOD on Cheb>lod0 left a hollow ring at the load edge.
-		// Prefer full LOD0 for the entire load disc until shell is re-baked.
-		// EnsureTile still falls back LOD1→LOD0 if shell is requested later.
-		if (Lod0Radius < LoadRadius)
-		{
-			UE_LOG(LogSailSim, Log,
-				TEXT("NantucketTerrain: raising lod0Radius %d→%d (shell *_l1 often nI=0)"),
-				Lod0Radius, LoadRadius);
-			Lod0Radius = LoadRadius;
-		}
+		// Harbor perf A/B: honor authored lod0Radius (incl. 0). Do NOT raise to
+		// LoadRadius — that made LoadRadius=1 / Lod0Radius=0 a no-op. EnsureTile
+		// still falls back LOD1→LOD0 if a shell *_l1 mesh is empty.
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* TilesArr = nullptr;

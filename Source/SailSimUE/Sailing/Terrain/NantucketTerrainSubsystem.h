@@ -51,7 +51,7 @@ public:
 
 	/** Chebyshev tile radius to load. 2 ≈ ~5×5 disc; 3 was ~1M verts all-LOD0. */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "1", ClampMax = "8"))
-	int32 LoadRadius = 2;
+	int32 LoadRadius = 1;
 
 	/** Unload outside this radius (web unloadRadius ≥ load). */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "2", ClampMax = "10"))
@@ -64,7 +64,7 @@ public:
 	 * until shell meshes are re-baked.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "0", ClampMax = "8"))
-	int32 Lod0Radius = 2;
+	int32 Lod0Radius = 0;
 
 	/** Seconds between stream updates. */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream")
