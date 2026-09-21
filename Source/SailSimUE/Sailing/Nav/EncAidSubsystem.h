@@ -53,11 +53,11 @@ public:
 
 	/** Show aids within this radius of focus (cm). ~900 m — not half the Sound. */
 	UPROPERTY(EditAnywhere, Category = "ENC|Aids", meta = (ClampMin = "50000", ClampMax = "500000"))
-	float LoadRadiusCm = 90000.f;
+	float LoadRadiusCm = 60000.f; // perf A/B: was 90000
 
 	/** Unload hysteresis (cm). */
 	UPROPERTY(EditAnywhere, Category = "ENC|Aids", meta = (ClampMin = "60000", ClampMax = "600000"))
-	float UnloadRadiusCm = 120000.f;
+	float UnloadRadiusCm = 90000.f; // perf A/B: was 120000
 
 	/**
 	 * Base scale for channel navaids (lateral/special/beacon/daymark).
