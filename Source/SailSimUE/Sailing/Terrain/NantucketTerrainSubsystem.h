@@ -57,8 +57,8 @@ public:
 	int32 UnloadRadius = 5;
 
 	/**
-	 * Chebyshev radius using full-res LOD0. Keep ≥ LoadRadius when possible so
-	 * LOD0/LOD1 edges don't leave water gaps between mismatched mesh densities.
+	 * Chebyshev radius using full-res LOD0. May be < LoadRadius (LOD1 shell).
+	 * Harbor A/B: 0 = only the focus cell is LOD0. Do not raise to LoadRadius.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Terrain|Stream", meta = (ClampMin = "0", ClampMax = "8"))
 	int32 Lod0Radius = 0;
