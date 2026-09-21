@@ -1363,10 +1363,10 @@ void USailOceanSubsystem::PolishWaterMaterials()
 			MID->SetScalarParameterValue(TEXT("Enable Waves"), 0.f);
 			MID->SetScalarParameterValue(TEXT("Enable Ocean Foam"), 0.f);
 			MID->SetScalarParameterValue(TEXT("Enable Foam"), 0.f);
-			// Soft continuous near→far (no 0.10/0.06 crush = tile wall).
+			// Measured SLW dial (Render Perf): Distant 0.28/0.20 — not a hard crush to 0.10/0.06.
 			MID->SetScalarParameterValue(TEXT("Default Near Normal Strength"), 0.85f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.50f);
-			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.35f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal Strength"), 0.28f);
+			MID->SetScalarParameterValue(TEXT("Default Distant Normal StrengthB"), 0.20f);
 			// Light extinction so localTess SLW reads as water, not a black square.
 			MID->SetVectorParameterValue(TEXT("Absorption"), FLinearColor(0.12f, 0.04f, 0.03f, 1.f));
 			MID->SetVectorParameterValue(TEXT("Scattering"), FLinearColor(0.04f, 0.16f, 0.18f, 1.f));
@@ -1394,7 +1394,7 @@ void USailOceanSubsystem::PolishWaterMaterials()
 		SurfaceChopIntensity = -1.f;
 		SetSurfaceChopIntensity(Keep);
 	}
-	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (Enable Waves=0, NO body Gerstner, soft far normals)"), Polished);
+	UE_LOG(LogSailSim, Log, TEXT("Continuous ocean materials: polished %d water body MID(s) (Enable Waves=0, Distant Normal 0.28/0.20)"), Polished);
 }
 
 void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
@@ -1412,8 +1412,8 @@ void USailOceanSubsystem::SetSurfaceChopIntensity(float Intensity01)
 	// Continuous near→far normals (same wave field). Distant floor stays meaningful so
 	// the localTess edge does not read as a flat tile wall. localTess budget unchanged.
 	const float NearN = FMath::Lerp(0.75f, 1.35f, I);
-	const float DistN = FMath::Lerp(0.45f, 0.70f, I);
-	const float DistNB = FMath::Lerp(0.32f, 0.55f, I);
+	const float DistN = FMath::Lerp(0.28f, 0.40f, I);   // SLW dial floor 0.28
+	const float DistNB = FMath::Lerp(0.20f, 0.30f, I);  // SLW dial floor 0.20
 	const float Foam = FMath::Lerp(0.12f, 0.28f, I * I);
 
 	for (TActorIterator<AWaterBody> It(World); It; ++It)
