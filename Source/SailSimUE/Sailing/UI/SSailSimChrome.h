@@ -14,6 +14,7 @@ class SBox;
 class SCheckBox;
 class SSlider;
 class SVerticalBox;
+class SSailSimHoverCatch;
 
 /**
  * Modern sail-sim instrument chrome (Slate).
@@ -61,6 +62,11 @@ private:
 	TSharedPtr<STextBlock> StatusLine5;
 
 	TSharedPtr<STextBlock> HelmReadout;
+	TSharedPtr<STextBlock> HelmPeekReadout;
+	TSharedPtr<SSailSimHoverCatch> HelmHoverCatch;
+	/** Helm/trim card: collapsed by default, expands on mouseover. */
+	bool bHelmExpanded = false;
+	double HelmHoverGraceUntil = 0.0;
 
 	// Autopilot panel
 	TSharedPtr<SBorder> ApPanelBorder;

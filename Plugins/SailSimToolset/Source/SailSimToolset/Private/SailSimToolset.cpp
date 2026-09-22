@@ -522,7 +522,7 @@ namespace SailSimToolsetPrivate
 			return Name.Contains(Needle, ESearchCase::IgnoreCase);
 		};
 
-		if (Has(TEXT("SingleLayerWater")) || Has(TEXT("Water")))
+		if (Has(TEXT("SingleLayerWater")) || Has(TEXT("SLW")) || Has(TEXT("Water")))
 		{
 			return TEXT("SingleLayerWater");
 		}
@@ -551,6 +551,7 @@ namespace SailSimToolsetPrivate
 		OutTotalMs = -1.f;
 		TArray<FString> Lines;
 		Text.ParseIntoArrayLines(Lines, false);
+
 		for (const FString& Raw : Lines)
 		{
 			const FString Line = Raw.TrimEnd();
@@ -559,30 +560,103 @@ namespace SailSimToolsetPrivate
 				continue;
 			}
 
+			// UE 5.8 table row: "... │ 12.345 ms ┃ EventName"
+			// Prefer the inclusive Time column (last "N.NNN ms" before the event name).
+			int32 BoxIdx = Line.Find(TEXT("┃"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+			if (BoxIdx != INDEX_NONE)
+			{
+				FString EventName = Line.Mid(BoxIdx + 1).TrimStartAndEnd();
+				// Strip trailing box / whitespace
+				while (EventName.EndsWith(TEXT("┃")) || EventName.EndsWith(TEXT(" ")))
+				{
+					EventName = EventName.LeftChop(1).TrimStartAndEnd();
+				}
+				if (EventName.IsEmpty() || EventName.StartsWith(TEXT("Events")) || EventName.StartsWith(TEXT("Exclusive")))
+				{
+					continue;
+				}
+
+				const FString Before = Line.Left(BoxIdx);
+				int32 MsIdx = Before.Find(TEXT("ms"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+				if (MsIdx == INDEX_NONE)
+				{
+					continue;
+				}
+				int32 NumEnd = MsIdx;
+				while (NumEnd > 0 && FChar::IsWhitespace(Before[NumEnd - 1]))
+				{
+					--NumEnd;
+				}
+				int32 NumStart = NumEnd;
+				while (NumStart > 0)
+				{
+					const TCHAR Ch = Before[NumStart - 1];
+					if (!(FChar::IsDigit(Ch) || Ch == TEXT('.')))
+					{
+						break;
+					}
+					--NumStart;
+				}
+				if (NumStart >= NumEnd)
+				{
+					continue;
+				}
+				const float Ms = FCString::Atof(*Before.Mid(NumStart, NumEnd - NumStart));
+
+				int32 Depth = 0;
+				while (Depth < EventName.Len() && EventName[Depth] == TEXT(' '))
+				{
+					++Depth;
+				}
+				// SpringArm / table indent is 3 spaces per level typically
+				Depth = Depth / 3;
+
+				FString Name = EventName.TrimStartAndEnd();
+				Name.ReplaceInline(TEXT("\""), TEXT(""));
+
+				if (Line.Contains(TEXT("Frame Time"), ESearchCase::IgnoreCase) || Name.Equals(TEXT("<root>"), ESearchCase::IgnoreCase))
+				{
+					if (OutTotalMs < 0.f)
+					{
+						OutTotalMs = Ms;
+					}
+				}
+				if (Name.StartsWith(TEXT("Frame "), ESearchCase::IgnoreCase) && OutTotalMs < 0.f)
+				{
+					OutTotalMs = Ms;
+				}
+
+				FProfileEvent Event;
+				Event.Depth = Depth;
+				Event.Ms = Ms;
+				Event.Name = Name;
+				Event.Bucket = ClassifyGpuBucket(Name);
+				OutEvents.Add(Event);
+				continue;
+			}
+
+			// Legacy free-text lines: "12.3ms Name" / "total GPU time"
 			int32 Depth = 0;
 			while (Depth < Line.Len() && (Line[Depth] == TEXT(' ') || Line[Depth] == TEXT('\t')))
 			{
 				++Depth;
 			}
-
 			float Ms = 0.f;
 			int32 TokenEnd = 0;
 			if (!ExtractMilliseconds(Line, Depth, Ms, TokenEnd))
 			{
 				continue;
 			}
-
-			if (Line.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase))
+			if (Line.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase)
+				|| Line.Contains(TEXT("Frame Time"), ESearchCase::IgnoreCase))
 			{
 				OutTotalMs = Ms;
 			}
-
 			FString Name = Line.Mid(TokenEnd).TrimStartAndEnd();
 			if (Name.IsEmpty())
 			{
 				continue;
 			}
-
 			FProfileEvent Event;
 			Event.Depth = Depth;
 			Event.Ms = Ms;
@@ -595,7 +669,7 @@ namespace SailSimToolsetPrivate
 		{
 			for (const FProfileEvent& Event : OutEvents)
 			{
-				if (Event.Name.StartsWith(TEXT("Frame"), ESearchCase::IgnoreCase))
+				if (Event.Name.StartsWith(TEXT("Frame"), ESearchCase::IgnoreCase) || Event.Name.Equals(TEXT("<root>")))
 				{
 					OutTotalMs = Event.Ms;
 					break;
@@ -604,10 +678,6 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
-	/**
-	 * Count a pass once. A parent is used when its bucketed descendants share that bucket.
-	 * A parent with mixed child buckets is skipped so each child bucket is counted on its own.
-	 */
 	static void SumBuckets(const TArray<FProfileEvent>& Events, TMap<FString, float>& OutSums)
 	{
 		TArray<bool> Counted;
@@ -661,16 +731,20 @@ namespace SailSimToolsetPrivate
 			{
 				return;
 			}
+			// UE 5.8 ProfileGPU dumps under LogRHI (Display). Keep Metal/D3D/Vulkan too.
 			const bool bGpuCategory =
 				Category == FName(TEXT("LogRHI")) ||
 				Category == FName(TEXT("LogMetal")) ||
 				Category == FName(TEXT("LogD3D12RHI")) ||
 				Category == FName(TEXT("LogVulkanRHI")) ||
-				Category == FName(TEXT("LogRenderer"));
+				Category == FName(TEXT("LogRenderer")) ||
+				Category == FName(TEXT("LogTemp"));
 			const bool bMarker =
+				FCString::Stristr(Message, TEXT("GPU Profile")) != nullptr ||
 				FCString::Stristr(Message, TEXT("GPU time")) != nullptr ||
-				FCString::Stristr(Message, TEXT("Perf marker")) != nullptr ||
-				FCString::Stristr(Message, TEXT("Profiling the next")) != nullptr;
+				FCString::Stristr(Message, TEXT("ProfileGPU")) != nullptr ||
+				FCString::Stristr(Message, TEXT("SingleLayerWater")) != nullptr ||
+				FCString::Stristr(Message, TEXT("Lumen")) != nullptr;
 			if (bGpuCategory || bMarker)
 			{
 				Text.Append(Message);
@@ -883,7 +957,7 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds)
 		return Out;
 	}
 
-	UE_LOG(LogTemp, Log,
+	UE_LOG(LogTemp, Display,
 		TEXT("CapturePlayerView OK world=%s package=%s cam=%s boat=%s loc=(%.0f,%.0f,%.0f) boatLoc=(%.0f,%.0f,%.0f) editorCamDist=%.0f fov=%.1f %dx%d"),
 		SailSimToolsetPrivate::WorldKind(PlayWorld),
 		*PlayWorld->GetOutermost()->GetName(),
@@ -1261,8 +1335,34 @@ FString USailSimToolset::ProfileGPUDump()
 	}
 	Capture.bCapture = true;
 	const bool bTriggered = GEngine->Exec(World, TEXT("ProfileGPU"));
-	Viewport->Draw();
-	FlushRenderingCommands();
+	// ProfileGPU dumps ~3–6 frames later under LogRHI. Keep the capture device
+	// attached and present until the table appears (or we hit a frame budget).
+	const double Deadline = FPlatformTime::Seconds() + 2.5;
+	int32 FramesPumped = 0;
+	while (FPlatformTime::Seconds() < Deadline && FramesPumped < 12)
+	{
+		Viewport->Draw();
+		FlushRenderingCommands();
+		if (GLog)
+		{
+			GLog->Flush();
+		}
+		++FramesPumped;
+		if (Capture.Text.Contains(TEXT("GPU Profile"))
+			&& Capture.Text.Contains(TEXT("ms"))
+			&& Capture.Text.Len() > 500)
+		{
+			// Give one extra frame so leaf rows finish streaming into the log.
+			Viewport->Draw();
+			FlushRenderingCommands();
+			if (GLog)
+			{
+				GLog->Flush();
+			}
+			++FramesPumped;
+			break;
+		}
+	}
 	if (GLog)
 	{
 		GLog->Flush();
@@ -1330,6 +1430,8 @@ FString USailSimToolset::ProfileGPUDump()
 
 	Root->SetBoolField(TEXT("ok"), bParsed);
 	Root->SetBoolField(TEXT("triggered"), bTriggered);
+	Root->SetNumberField(TEXT("framesPumped"), FramesPumped);
+	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len());
 	Root->SetBoolField(TEXT("parsed"), bParsed);
 	Root->SetStringField(TEXT("code"), bParsed ? TEXT("ok") : TEXT("profile_not_emitted"));
 	Root->SetStringField(TEXT("error"), bParsed

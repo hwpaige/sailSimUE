@@ -32,6 +32,42 @@
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 
+
+/** Hit-test host: tracks mouse enter/leave for the helm/trim collapse. */
+class SSailSimHoverCatch : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SSailSimHoverCatch) {}
+		SLATE_DEFAULT_SLOT(FArguments, Content)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs)
+	{
+		bHovered = false;
+		ChildSlot
+		[
+			InArgs._Content.Widget
+		];
+	}
+
+	virtual void OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		bHovered = true;
+		SCompoundWidget::OnMouseEnter(MyGeometry, MouseEvent);
+	}
+
+	virtual void OnMouseLeave(const FPointerEvent& MouseEvent) override
+	{
+		bHovered = false;
+		SCompoundWidget::OnMouseLeave(MouseEvent);
+	}
+
+	bool IsHovering() const { return bHovered; }
+
+private:
+	bool bHovered = false;
+};
+
 void SSailSimChrome::Construct(const FArguments& InArgs)
 {
 	Boat = InArgs._Boat;
@@ -113,15 +149,19 @@ void SSailSimChrome::Construct(const FArguments& InArgs)
 		]
 
 		// ---- Helm / sails (bottom-center) ----
+		// Collapsed by default so the hull stays visible; expands on mouseover.
 		+ SOverlay::Slot()
 		.HAlign(HAlign_Center)
 		.VAlign(VAlign_Bottom)
 		.Padding(FMargin(0.f, 0.f, 0.f, 14.f))
 		[
-			SNew(SBox)
-			.WidthOverride(420.f)
+			SAssignNew(HelmHoverCatch, SSailSimHoverCatch)
 			[
-				BuildHelmBar()
+				SNew(SBox)
+				.WidthOverride_Lambda([this]() { return bHelmExpanded ? 420.f : 210.f; })
+				[
+					BuildHelmBar()
+				]
 			]
 		]
 
@@ -523,7 +563,7 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			];
 	};
 
-	return MakeGlassCard(
+	const TSharedRef<SWidget> HelmFull = MakeGlassCard(
 		SNew(SVerticalBox)
 
 		// ---- HELM header strip ----
@@ -746,6 +786,61 @@ TSharedRef<SWidget> SSailSimChrome::BuildHelmBar()
 			)
 		]
 		, FMargin(16.f, 14.f, 16.f, 14.f));
+
+	const TSharedRef<SWidget> HelmPeek = MakeGlassCard(
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 10.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("HELM")))
+			.Font(FSailSimStyle::FontTitle())
+			.ColorAndOpacity(FSailSimStyle::Text)
+		]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 10.f, 0.f)
+		[
+			SNew(SBorder)
+			.BorderImage(FSailSimStyle::ValueChipBrush())
+			.Padding(FMargin(8.f, 4.f))
+			[
+				SAssignNew(HelmPeekReadout, STextBlock)
+				.Font(FSailSimStyle::FontMonoSm())
+				.ColorAndOpacity(FSailSimStyle::Accent)
+				.Text(FText::FromString(TEXT("0°")))
+			]
+		]
+		+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("trim · hover")))
+			.Font(FSailSimStyle::FontLabel())
+			.ColorAndOpacity(FSailSimStyle::TextDim)
+			.Justification(ETextJustify::Right)
+		]
+		, FMargin(12.f, 8.f, 12.f, 8.f));
+
+	return SNew(SOverlay)
+		+ SOverlay::Slot()
+		[
+			SNew(SBox)
+			.Visibility_Lambda([this]()
+			{
+				return bHelmExpanded ? EVisibility::Collapsed : EVisibility::Visible;
+			})
+			[
+				HelmPeek
+			]
+		]
+		+ SOverlay::Slot()
+		[
+			SNew(SBox)
+			.Visibility_Lambda([this]()
+			{
+				return bHelmExpanded ? EVisibility::Visible : EVisibility::Collapsed;
+			})
+			[
+				HelmFull
+			]
+		];
 }
 
 TSharedRef<SWidget> SSailSimChrome::BuildNavLowerCluster()
@@ -2005,6 +2100,18 @@ TSharedRef<SWidget> SSailSimChrome::BuildSettingsDrawer()
 void SSailSimChrome::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
+
+	// Helm/trim: expand while hovered, collapse shortly after leave (keep hull clear).
+	if (HelmHoverCatch.IsValid() && HelmHoverCatch->IsHovering())
+	{
+		bHelmExpanded = true;
+		HelmHoverGraceUntil = InCurrentTime + 0.35;
+	}
+	else if (bHelmExpanded && InCurrentTime >= HelmHoverGraceUntil)
+	{
+		bHelmExpanded = false;
+	}
+
 	{
 		SAIL_PERF_SCOPE(UI);
 		RefreshFromBoat();
@@ -2638,6 +2745,11 @@ void SSailSimChrome::RefreshFromBoat()
 			CachedRudder < -0.5f ? FSailSimStyle::Port
 			: CachedRudder > 0.5f ? FSailSimStyle::Stbd
 			: FSailSimStyle::Text);
+		if (HelmPeekReadout.IsValid())
+		{
+			HelmPeekReadout->SetText(FText::FromString(T));
+			HelmPeekReadout->SetColorAndOpacity(HelmReadout->GetColorAndOpacity());
+		}
 	}
 	RefreshAutopilotPanel();
 	RefreshWaypointPanel();
