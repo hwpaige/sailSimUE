@@ -7,6 +7,12 @@
 #include "Dom/JsonValue.h"
 #include "Editor.h"
 #include "Engine/Engine.h"
+#include "TextureResource.h"
+#include "RenderingThread.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/SceneCapture2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
@@ -56,79 +62,78 @@ namespace SailSimToolsetPrivate
 			OutSource = FString::Printf(TEXT("PawnFallback:%s"), *Pawn->GetName());
 			return true;
 		}
-		return false;
-	}
-
-	static UWorld* GetSearchWorld()
-	{
-		if (GEditor && GEditor->PlayWorld)
-		{
-			return GEditor->PlayWorld;
-		}
-		return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-	}
-}
-
-FToolsetImage USailSimToolset::CapturePlayerView()
+		return falseFToolsetImage USailSimToolset::CapturePlayerView()
 {
 	FToolsetImage Out;
 
-	if (!GEditor || !GEditor->PlayWorld)
+	UWorld* PlayWorld = (GEditor && GEditor->PlayWorld) ? GEditor->PlayWorld.Get() : nullptr;
+	if (!PlayWorld)
 	{
 		UKismetSystemLibrary::RaiseScriptError(
 			TEXT("CapturePlayerView requires PIE — call EnsurePIE / StartPIE first (or press Play)."));
 		return Out;
 	}
 
-	// Prefer the live PIE / game viewport (PlayWorld), NOT GCurrentLevelEditingViewportClient.
-	// Moving the free editor camera and Draw()ing it captures the editor world → empty grid.
-	FViewport* PieViewport = nullptr;
-	FString ViewportSource;
-
-	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
+	FVector CamLoc;
+	FRotator CamRot;
+	FString CamSource;
+	if (!SailSimToolsetPrivate::ResolvePlayerView(PlayWorld, CamLoc, CamRot, CamSource))
 	{
-		PieViewport = GEngine->GameViewport->Viewport;
-		ViewportSource = TEXT("GameViewport");
+		UKismetSystemLibrary::RaiseScriptError(
+			TEXT("CapturePlayerView: no player controller / possessed pawn camera in PIE."));
+		return Out;
 	}
 
-	if (!PieViewport)
+	float FOV = 90.f;
+	if (APlayerController* PC = PlayWorld->GetFirstPlayerController())
 	{
-		for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
+		if (APlayerCameraManager* PCM = PC->PlayerCameraManager)
 		{
-			if (!LevelVC || !LevelVC->Viewport)
-			{
-				continue;
-			}
-			if (LevelVC->Viewport->IsPlayInEditorViewport() || LevelVC->GetWorld() == GEditor->PlayWorld)
-			{
-				PieViewport = LevelVC->Viewport;
-				ViewportSource = TEXT("LevelPIEViewport");
-				break;
-			}
+			FOV = PCM->GetFOVAngle();
 		}
 	}
 
-	if (!PieViewport)
+	// Scene-capture from the player camera into a RT — independent of editor/PIE viewport wiring
+	// (GameViewport / level-client Draw was still returning the empty editor grid).
+	const int32 Width = 1920;
+	const int32 Height = 1080;
+
+	UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
+	RT->RenderTargetFormat = RTF_RGBA8;
+	RT->ClearColor = FLinearColor::Black;
+	RT->bAutoGenerateMips = false;
+	RT->InitAutoFormat(Width, Height);
+	RT->UpdateResourceImmediate(true);
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.ObjectFlags |= RF_Transient;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ASceneCapture2D* CaptureActor = PlayWorld->SpawnActor<ASceneCapture2D>(CamLoc, CamRot, SpawnParams);
+	if (!CaptureActor)
 	{
-		UKismetSystemLibrary::RaiseScriptError(
-			TEXT("CapturePlayerView: no PIE/game viewport (PlayWorld is up but no PIE viewport)."));
+		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: failed to spawn ASceneCapture2D."));
 		return Out;
 	}
 
-	const FIntPoint Size = PieViewport->GetSizeXY();
-	if (Size.X <= 0 || Size.Y <= 0)
-	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: PIE viewport has zero size."));
-		return Out;
-	}
+	USceneCaptureComponent2D* Cap = CaptureActor->GetCaptureComponent2D();
+	Cap->TextureTarget = RT;
+	Cap->FOVAngle = FOV;
+	Cap->bCaptureEveryFrame = false;
+	Cap->bCaptureOnMovement = false;
+	Cap->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+	Cap->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+	Cap->bAlwaysPersistRenderingState = true;
+	Cap->CaptureScene();
 
-	// Redraw PlayWorld view as the player currently sees it (no editor-camera teleport).
-	PieViewport->Draw();
+	FlushRenderingCommands();
 
+	FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
 	TArray<FColor> Bitmap;
-	if (!GetViewportScreenShot(PieViewport, Bitmap))
+	if (!RTResource || !RTResource->ReadPixels(Bitmap) || Bitmap.Num() != Width * Height)
 	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: GetViewportScreenShot failed."));
+		CaptureActor->Destroy();
+		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: ReadPixels from scene capture failed."));
 		return Out;
 	}
 	for (FColor& Pixel : Bitmap)
@@ -136,20 +141,21 @@ FToolsetImage USailSimToolset::CapturePlayerView()
 		Pixel.A = 255;
 	}
 
-	if (!Out.SetFromBitmap(Bitmap, Size))
+	CaptureActor->Destroy();
+
+	if (!Out.SetFromBitmap(Bitmap, FIntPoint(Width, Height)))
 	{
 		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: failed to encode PNG."));
 		return Out;
 	}
 
-	FVector CamLoc;
-	FRotator CamRot;
-	FString CamSource;
-	if (SailSimToolsetPrivate::ResolvePlayerView(GEditor->PlayWorld, CamLoc, CamRot, CamSource))
-	{
-		UE_LOG(LogTemp, Log,
-			TEXT("CapturePlayerView OK viewport=%s cam=%s loc=(%.0f,%.0f,%.0f) %dx%d"),
-			*ViewportSource, *CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, Size.X, Size.Y);
+	UE_LOG(LogTemp, Log,
+		TEXT("CapturePlayerView OK sceneCapture cam=%s loc=(%.0f,%.0f,%.0f) fov=%.1f %dx%d"),
+		*CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, FOV, Width, Height);
+	return Out;
+}
+
+CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, Size.X, Size.Y);
 	}
 	else
 	{
