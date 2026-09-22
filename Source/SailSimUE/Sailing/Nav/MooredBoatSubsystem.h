@@ -357,6 +357,8 @@ private:
 	/** Per-boat hull/stripe palette + white deck (MID overrides on the mesh). */
 	void ApplyBoatPaintScheme(UMeshComponent* HullMesh, int32 SlotIndex) const;
 	static void DisableAllCastShadows(UPrimitiveComponent* Prim);
+	/** Drop Lumen/reflection contribution (and optionally force a cheap LOD). */
+	static void StripMooredReflectionCost(UPrimitiveComponent* Prim, bool bForceCheapLod = false);
 	void ClearAll();
 	void RebuildAround(const FVector& Focus);
 	void EnsureMidHism();

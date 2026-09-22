@@ -29,6 +29,8 @@
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeLock.h"
+#include "HAL/CriticalSection.h"
 #include "PlayInEditorDataTypes.h"
 #include "RenderingThread.h"
 #include "Sailing/SailSimPerf.h"
@@ -724,6 +726,11 @@ namespace SailSimToolsetPrivate
 	public:
 		FString Text;
 		bool bCapture = false;
+		FCriticalSection Mutex;
+
+		/** ProfileGPU / LogRHI table is emitted from the RHI/render thread. */
+		virtual bool CanBeUsedOnAnyThread() const override { return true; }
+		virtual bool CanBeUsedOnMultipleThreads() const override { return false; } // Mutex protects Text
 
 		virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity, const FName& Category) override
 		{
@@ -731,25 +738,13 @@ namespace SailSimToolsetPrivate
 			{
 				return;
 			}
-			// UE 5.8 ProfileGPU dumps under LogRHI (Display). Keep Metal/D3D/Vulkan too.
-			const bool bGpuCategory =
-				Category == FName(TEXT("LogRHI")) ||
-				Category == FName(TEXT("LogMetal")) ||
-				Category == FName(TEXT("LogD3D12RHI")) ||
-				Category == FName(TEXT("LogVulkanRHI")) ||
-				Category == FName(TEXT("LogRenderer")) ||
-				Category == FName(TEXT("LogTemp"));
-			const bool bMarker =
-				FCString::Stristr(Message, TEXT("GPU Profile")) != nullptr ||
-				FCString::Stristr(Message, TEXT("GPU time")) != nullptr ||
-				FCString::Stristr(Message, TEXT("ProfileGPU")) != nullptr ||
-				FCString::Stristr(Message, TEXT("SingleLayerWater")) != nullptr ||
-				FCString::Stristr(Message, TEXT("Lumen")) != nullptr;
-			if (bGpuCategory || bMarker)
-			{
-				Text.Append(Message);
-				Text.AppendChar(TEXT('\n'));
-			}
+			// While profiling, keep every line — Ops saw the LogRHI table only in the
+			// editor log because category/thread filtering dropped it from our dump.
+			FScopeLock Lock(&Mutex);
+			Text.Append(Category.ToString());
+			Text.Append(TEXT(": "));
+			Text.Append(Message);
+			Text.AppendChar(TEXT('\n'));
 		}
 	};
 
@@ -1348,9 +1343,9 @@ FString USailSimToolset::ProfileGPUDump()
 			GLog->Flush();
 		}
 		++FramesPumped;
-		if (Capture.Text.Contains(TEXT("GPU Profile"))
+		if ((Capture.Text.Contains(TEXT("GPU Profile")) || Capture.Text.Contains(TEXT("LogRHI")))
 			&& Capture.Text.Contains(TEXT("ms"))
-			&& Capture.Text.Len() > 500)
+			&& Capture.Text.Len() > 800)
 		{
 			// Give one extra frame so leaf rows finish streaming into the log.
 			Viewport->Draw();
