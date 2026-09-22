@@ -27,6 +27,7 @@ public class SailSimToolset : ModuleRules
 			"JsonUtilities",
 			"ImageWrapper",
 			"RenderCore",
+			"SailSimUE",
 		});
 	}
 }
