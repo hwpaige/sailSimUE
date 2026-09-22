@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
@@ -79,56 +80,53 @@ FToolsetImage USailSimToolset::CapturePlayerView()
 		return Out;
 	}
 
-	FVector CamLoc;
-	FRotator CamRot;
-	FString Source;
-	if (!SailSimToolsetPrivate::ResolvePlayerView(GEditor->PlayWorld, CamLoc, CamRot, Source))
+	// Prefer the live PIE / game viewport (PlayWorld), NOT GCurrentLevelEditingViewportClient.
+	// Moving the free editor camera and Draw()ing it captures the editor world → empty grid.
+	FViewport* PieViewport = nullptr;
+	FString ViewportSource;
+
+	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
+	{
+		PieViewport = GEngine->GameViewport->Viewport;
+		ViewportSource = TEXT("GameViewport");
+	}
+
+	if (!PieViewport)
+	{
+		for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
+		{
+			if (!LevelVC || !LevelVC->Viewport)
+			{
+				continue;
+			}
+			if (LevelVC->Viewport->IsPlayInEditorViewport() || LevelVC->GetWorld() == GEditor->PlayWorld)
+			{
+				PieViewport = LevelVC->Viewport;
+				ViewportSource = TEXT("LevelPIEViewport");
+				break;
+			}
+		}
+	}
+
+	if (!PieViewport)
 	{
 		UKismetSystemLibrary::RaiseScriptError(
-			TEXT("CapturePlayerView: no player controller / possessed pawn camera in PIE."));
+			TEXT("CapturePlayerView: no PIE/game viewport (PlayWorld is up but no PIE viewport)."));
 		return Out;
 	}
 
-	FEditorViewportClient* ViewportClient = GCurrentLevelEditingViewportClient;
-	if (!ViewportClient || !ViewportClient->Viewport)
-	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: no level viewport client."));
-		return Out;
-	}
-
-	FViewport* Viewport = ViewportClient->Viewport;
-	const FIntPoint Size = Viewport->GetSizeXY();
+	const FIntPoint Size = PieViewport->GetSizeXY();
 	if (Size.X <= 0 || Size.Y <= 0)
 	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: viewport has zero size."));
+		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: PIE viewport has zero size."));
 		return Out;
 	}
 
-	const FVector SavedLoc = ViewportClient->GetViewLocation();
-	const FRotator SavedRot = ViewportClient->GetViewRotation();
-	const bool bSavedModeWidgets = ViewportClient->EngineShowFlags.ModeWidgets != 0;
-	const bool bSavedSelectionOutline = ViewportClient->EngineShowFlags.SelectionOutline != 0;
-	const bool bSavedSelection = ViewportClient->EngineShowFlags.Selection != 0;
-
-	ViewportClient->SetViewLocation(CamLoc);
-	ViewportClient->SetViewRotation(CamRot);
-	ViewportClient->EngineShowFlags.SetModeWidgets(false);
-	ViewportClient->EngineShowFlags.SetSelectionOutline(false);
-	ViewportClient->EngineShowFlags.SetSelection(false);
-
-	ON_SCOPE_EXIT
-	{
-		ViewportClient->SetViewLocation(SavedLoc);
-		ViewportClient->SetViewRotation(SavedRot);
-		ViewportClient->EngineShowFlags.SetModeWidgets(bSavedModeWidgets);
-		ViewportClient->EngineShowFlags.SetSelectionOutline(bSavedSelectionOutline);
-		ViewportClient->EngineShowFlags.SetSelection(bSavedSelection);
-	};
-
-	Viewport->Draw();
+	// Redraw PlayWorld view as the player currently sees it (no editor-camera teleport).
+	PieViewport->Draw();
 
 	TArray<FColor> Bitmap;
-	if (!GetViewportScreenShot(Viewport, Bitmap))
+	if (!GetViewportScreenShot(PieViewport, Bitmap))
 	{
 		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView: GetViewportScreenShot failed."));
 		return Out;
@@ -144,9 +142,19 @@ FToolsetImage USailSimToolset::CapturePlayerView()
 		return Out;
 	}
 
-	UE_LOG(LogTemp, Log,
-		TEXT("CapturePlayerView OK source=%s loc=(%.0f,%.0f,%.0f) rot=(%.1f,%.1f,%.1f) %dx%d"),
-		*Source, CamLoc.X, CamLoc.Y, CamLoc.Z, CamRot.Pitch, CamRot.Yaw, CamRot.Roll, Size.X, Size.Y);
+	FVector CamLoc;
+	FRotator CamRot;
+	FString CamSource;
+	if (SailSimToolsetPrivate::ResolvePlayerView(GEditor->PlayWorld, CamLoc, CamRot, CamSource))
+	{
+		UE_LOG(LogTemp, Log,
+			TEXT("CapturePlayerView OK viewport=%s cam=%s loc=(%.0f,%.0f,%.0f) %dx%d"),
+			*ViewportSource, *CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, Size.X, Size.Y);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("CapturePlayerView OK viewport=%s %dx%d"), *ViewportSource, Size.X, Size.Y);
+	}
 	return Out;
 }
 
