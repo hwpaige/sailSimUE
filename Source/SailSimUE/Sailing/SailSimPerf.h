@@ -370,6 +370,13 @@ struct FSailSimPerf
 	}
 };
 
+/**
+ * The FSailSimPerf singleton that game subsystems and the performance chrome write.
+ * Editor modules must call this. FSailSimPerf::Get() is inline and would be a
+ * different copy inside another DLL.
+ */
+SAILSIMUE_API FSailSimPerf& SailSimGetPerf();
+
 struct FSailSimPerfScope
 {
 	FSailSimPerf::EBucket Bucket;

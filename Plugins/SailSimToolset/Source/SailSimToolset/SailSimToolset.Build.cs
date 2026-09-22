@@ -16,6 +16,9 @@ public class SailSimToolset : ModuleRules
 			"ToolsetRegistry",
 		});
 
+		// Game module public include path is Source/SailSimUE (Sailing/SailSimPerf.h).
+		PrivateIncludePaths.Add(System.IO.Path.GetFullPath(System.IO.Path.Combine(ModuleDirectory, "../../../../Source/SailSimUE")));
+
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"UnrealEd",
@@ -27,6 +30,8 @@ public class SailSimToolset : ModuleRules
 			"JsonUtilities",
 			"ImageWrapper",
 			"RenderCore",
+			"RHI",
+			"SailSimUE",
 		});
 	}
 }
