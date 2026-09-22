@@ -3,16 +3,14 @@
 #include "SailSimToolset.h"
 
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/SceneCaptureComponent2D.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
 #include "Engine/Engine.h"
-#include "TextureResource.h"
-#include "RenderingThread.h"
-#include "Camera/PlayerCameraManager.h"
-#include "Components/SceneCaptureComponent2D.h"
-#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/SceneCapture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
@@ -21,10 +19,11 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "LevelEditor.h"
 #include "LevelEditorViewport.h"
-#include "Misc/ScopeExit.h"
 #include "PlayInEditorDataTypes.h"
+#include "RenderingThread.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "TextureResource.h"
 #include "UnrealClient.h"
 
 namespace SailSimToolsetPrivate
@@ -62,7 +61,20 @@ namespace SailSimToolsetPrivate
 			OutSource = FString::Printf(TEXT("PawnFallback:%s"), *Pawn->GetName());
 			return true;
 		}
-		return falseFToolsetImage USailSimToolset::CapturePlayerView()
+		return false;
+	}
+
+	static UWorld* GetSearchWorld()
+	{
+		if (GEditor && GEditor->PlayWorld)
+		{
+			return GEditor->PlayWorld;
+		}
+		return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	}
+}
+
+FToolsetImage USailSimToolset::CapturePlayerView()
 {
 	FToolsetImage Out;
 
@@ -93,8 +105,8 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
-	// Scene-capture from the player camera into a RT — independent of editor/PIE viewport wiring
-	// (GameViewport / level-client Draw was still returning the empty editor grid).
+	// Scene-capture from the player camera into an RT — independent of editor/PIE viewport wiring
+	// (GameViewport / level-client Draw still returned the empty editor grid).
 	const int32 Width = 1920;
 	const int32 Height = 1080;
 
@@ -152,15 +164,6 @@ namespace SailSimToolsetPrivate
 	UE_LOG(LogTemp, Log,
 		TEXT("CapturePlayerView OK sceneCapture cam=%s loc=(%.0f,%.0f,%.0f) fov=%.1f %dx%d"),
 		*CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, FOV, Width, Height);
-	return Out;
-}
-
-CamSource, CamLoc.X, CamLoc.Y, CamLoc.Z, Size.X, Size.Y);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("CapturePlayerView OK viewport=%s %dx%d"), *ViewportSource, Size.X, Size.Y);
-	}
 	return Out;
 }
 
