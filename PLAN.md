@@ -70,3 +70,5 @@ Unlit view shows the hull is correctly **light cream** (base color fine). It loo
 - **Ask the user only for:** credentials, GUI-only actions MCP can't do, genuine design choices, and final feel/look verification.
 - **Never** copy `threejs-water-pro/src` into this repo.
 - Keep this file current: check tasks off, append findings.
+
+| mcp | **In progress:** SailSimToolset CapturePlayerView (PIE camera Lit) + EnsurePIE / FindActorsByName / GetLevelPath | `Plugins/SailSimToolset` | med | Prefer-ON PIE CapturePlayerView shows hull |

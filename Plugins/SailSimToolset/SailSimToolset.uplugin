@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "SailSim Toolset",
+	"Description": "Sail Buddy MCP helpers: CapturePlayerView (PIE camera), EnsurePIE, FindActorsByName, GetLevelPath.",
+	"Category": "Editor",
+	"CreatedBy": "Sail Feature",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "SailSimToolset",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"TargetAllowList": [ "Editor" ]
+		}
+	],
+	"Plugins": [
+		{ "Name": "ToolsetRegistry", "Enabled": true },
+		{ "Name": "EditorToolset", "Enabled": true }
+	]
+}
