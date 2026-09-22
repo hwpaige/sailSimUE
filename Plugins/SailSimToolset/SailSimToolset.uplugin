@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "SailSim Toolset",
-	"Description": "Sail Buddy MCP helpers: CapturePlayerView (PIE camera), EnsurePIE, FindActorsByName, GetLevelPath.",
+	"Description": "Sail Buddy MCP helpers: PIE camera capture, idempotent StartPIE, perf snapshot, cvar batch, ProfileGPU split.",
 	"Category": "Editor",
 	"CreatedBy": "Sail Feature",
 	"EnabledByDefault": true,
