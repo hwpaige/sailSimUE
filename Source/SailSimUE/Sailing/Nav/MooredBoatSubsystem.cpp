@@ -2399,7 +2399,7 @@ void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedSta
 	const int32 Num = FMath::Max(Mats.Num(), Hism->GetNumMaterials());
 	for (int32 Mi = 0; Mi < Num; ++Mi)
 	{
-		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface : Hism->GetMaterial(Mi);
+		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface.Get() : Hism->GetMaterial(Mi);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mat);
 		if (BucketMid && MooredBoatPrivate::IsYachtTopsidesMaterial(Mat))
 		{
@@ -2490,8 +2490,8 @@ void UMooredBoatSubsystem::EnsureMidHism()
 		ConfigureSceneryHism(Spar, /*bNaniteDisallowed*/ true);
 		if (SparMat)
 		{
-			const int32 Slots = FMath::Max(1, Spar->GetNumMaterials());
-			for (int32 Mi = 0; Mi < Slots; ++Mi)
+			const int32 NumSparMats = FMath::Max(1, Spar->GetNumMaterials());
+			for (int32 Mi = 0; Mi < NumSparMats; ++Mi)
 			{
 				Spar->SetMaterial(Mi, SparMat);
 			}
