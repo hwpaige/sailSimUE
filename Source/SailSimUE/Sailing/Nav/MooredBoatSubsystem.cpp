@@ -895,12 +895,14 @@ void UMooredBoatSubsystem::ApplyHullTo(UProceduralMeshComponent* Hull) const
 	Hull->ClearAllMeshSections();
 	Hull->bUseComplexAsSimpleCollision = false;
 	Hull->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Hull->SetCastShadow(true);
+	// Match HISM: no cast shadow; distance-cull like mid band (not never-cull).
+	Hull->SetCastShadow(false);
 	StripMooredReflectionCost(Hull);
 	Hull->SetReceivesDecals(false);
 	Hull->SetVisibility(true);
 	Hull->SetHiddenInGame(false);
-	Hull->bNeverDistanceCull = true;
+	Hull->bNeverDistanceCull = false;
+	Hull->SetCullDistance(LoadRadiusCm * 1.1f);
 
 	for (int32 Si = 0; Si < HullSections.Num(); ++Si)
 	{
@@ -981,7 +983,8 @@ void UMooredBoatSubsystem::ApplyKeelTo(UProceduralMeshComponent* KeelMesh) const
 	// Still receive scene light so fins aren't black holes under the hull.
 	KeelMesh->SetVisibility(true);
 	KeelMesh->SetHiddenInGame(false);
-	KeelMesh->bNeverDistanceCull = true;
+	KeelMesh->bNeverDistanceCull = false;
+	KeelMesh->SetCullDistance(LoadRadiusCm * 1.1f);
 
 	for (int32 Si = 0; Si < KeelSections.Num(); ++Si)
 	{
@@ -1384,7 +1387,9 @@ void UMooredBoatSubsystem::PlaceCylinder(
 	Comp->SetCastShadow(false);
 	Comp->SetVisibility(true);
 	Comp->SetHiddenInGame(false);
-	Comp->bNeverDistanceCull = true;
+	Comp->bNeverDistanceCull = false;
+	Comp->SetCullDistance(LoadRadiusCm * 1.1f);
+	StripMooredReflectionCost(Comp);
 	Comp->SetRelativeLocation(Mid);
 	Comp->SetRelativeScale3D(FVector(RadiusScale, RadiusScale, Len / 100.f));
 	Comp->SetRelativeRotation(FRotationMatrix::MakeFromZ(Dir.GetSafeNormal()).Rotator());
@@ -1433,7 +1438,8 @@ void UMooredBoatSubsystem::AddStandingRigging(AActor* Boat, USceneComponent* Roo
 		C->SetMobility(EComponentMobility::Movable);
 		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		C->SetCastShadow(false);
-		C->bNeverDistanceCull = true;
+		C->bNeverDistanceCull = false;
+		C->SetCullDistance(LoadRadiusCm * 1.1f);
 		StripMooredReflectionCost(C);
 		C->RegisterComponent();
 		Boat->AddInstanceComponent(C);
@@ -1544,8 +1550,9 @@ void UMooredBoatSubsystem::AddAnchorLight(AActor* Boat, USceneComponent* Root) c
 		C->SetCastShadow(false);
 		C->bCastContactShadow = false;
 		C->bCastDynamicShadow = false;
-		C->bNeverDistanceCull = true;
-		C->SetCullDistance(0.f);
+		C->bNeverDistanceCull = false;
+		C->SetCullDistance(LoadRadiusCm * 1.1f);
+		StripMooredReflectionCost(C);
 		C->SetBoundsScale(8.f); // fat bounds — tiny masthead lamps were TAA/cull flicker
 		C->SetReceivesDecals(false);
 		C->SetVisibility(true);
@@ -1801,11 +1808,13 @@ AActor* UMooredBoatSubsystem::SpawnMooredBoat(const FMooredBoatSlot& Slot, int32
 		HullSmc->SetMobility(EComponentMobility::Movable);
 		HullSmc->SetStaticMesh(HullNaniteMesh.Get());
 		HullSmc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		HullSmc->SetCastShadow(true);
+		// Near hull: CastShadow off (match HISM). Hero-only shadow = flip in editor if needed.
+		HullSmc->SetCastShadow(false);
 		HullSmc->SetReceivesDecals(false);
 		// Never force Nanite path if the mesh has Nanite off / we want crisp LODs.
 		HullSmc->bDisallowNanite = !bHullUseNanite;
-		HullSmc->bNeverDistanceCull = true;
+		HullSmc->bNeverDistanceCull = false;
+		HullSmc->SetCullDistance(LoadRadiusCm * 1.1f);
 		StripMooredReflectionCost(HullSmc);
 		HullSmc->SetVisibility(true);
 		HullSmc->SetHiddenInGame(false);
@@ -1821,9 +1830,10 @@ AActor* UMooredBoatSubsystem::SpawnMooredBoat(const FMooredBoatSlot& Slot, int32
 		HullPmc->SetupAttachment(Root);
 		HullPmc->SetMobility(EComponentMobility::Movable);
 		HullPmc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		HullPmc->SetCastShadow(true);
+		HullPmc->SetCastShadow(false);
 		HullPmc->SetReceivesDecals(false);
-		HullPmc->bNeverDistanceCull = true;
+		HullPmc->bNeverDistanceCull = false;
+		HullPmc->SetCullDistance(LoadRadiusCm * 1.1f);
 		StripMooredReflectionCost(HullPmc);
 		HullPmc->RegisterComponent();
 		Boat->AddInstanceComponent(HullPmc);
@@ -1850,7 +1860,9 @@ AActor* UMooredBoatSubsystem::SpawnMooredBoat(const FMooredBoatSlot& Slot, int32
 		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		// Thin spars/lines stay non-Nanite — do not cast shadows (main VSM pressure was hulls).
 		C->SetCastShadow(false);
-		C->bNeverDistanceCull = true;
+		C->bNeverDistanceCull = false;
+		C->SetCullDistance(LoadRadiusCm * 1.1f);
+		StripMooredReflectionCost(C);
 		C->RegisterComponent();
 		Boat->AddInstanceComponent(C);
 		return C;
@@ -2016,6 +2028,34 @@ void UMooredBoatSubsystem::RebuildAround(const FVector& Focus)
 		{
 			// Mid band: HISM only (also covers Near..Load if Mid < Load).
 			WantMid.Add(I);
+		}
+	}
+
+	// Collapse NearFull → ≤ MaxNearFullBoats heroes (closest to focus); rest → Static HISM.
+	if (MaxNearFullBoats <= 0)
+	{
+		for (int32 I : WantNear) { WantMid.Add(I); }
+		WantNear.Reset();
+	}
+	else if (WantNear.Num() > MaxNearFullBoats)
+	{
+		TArray<TPair<float, int32>> Ranked;
+		Ranked.Reserve(WantNear.Num());
+		for (int32 I : WantNear)
+		{
+			const FVector2D P(Slots[I].MooringWorldCm.X, Slots[I].MooringWorldCm.Y);
+			Ranked.Emplace(FVector2D::DistSquared(F2, P), I);
+		}
+		Ranked.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B)
+		{
+			return A.Key < B.Key;
+		});
+		WantNear.Reset();
+		for (int32 R = 0; R < Ranked.Num(); ++R)
+		{
+			const int32 I = Ranked[R].Value;
+			if (R < MaxNearFullBoats) WantNear.Add(I);
+			else WantMid.Add(I);
 		}
 	}
 

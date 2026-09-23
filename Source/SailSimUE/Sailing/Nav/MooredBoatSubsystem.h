@@ -117,7 +117,7 @@ public:
 	 * Full multi-component actors only within NearFullRadiusCm; rest are HISM hulls.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "4", ClampMax = "120"))
-	int32 MaxBoats = 16; // perf A/B: was 40, then 16 — content delete toward 60 FPS
+	int32 MaxBoats = 16; // keep 16 (Prefer-ON density PASS); deepen via static/HISM, not count cut
 
 	/** Fraction of floating moorings that get a boat (before MaxBoats). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "0.8"))
@@ -138,9 +138,17 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	float UnloadRadiusCm = 120000.f;
 
-	/** Full actor (hull+mast+pennant+sway) within this radius (cm). ~80 m. */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "2000.0"))
-	float NearFullRadiusCm = 8000.f;
+	/**
+	 * Full actor (hull+mast+pennant) within this radius (cm). Field boats are
+	 * Static HISM. Default ~25 m + MaxNearFullBoats → ~0–1 hero (not a ring of
+	 * full actors). ClampMin 0 allows HISM-only.
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0.0"))
+	float NearFullRadiusCm = 2500.f;
+
+	/** Cap on simultaneous NearFull actors (closest to focus). Field = Static HISM. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0", ClampMax = "8"))
+	int32 MaxNearFullBoats = 1;
 
 	/** HISM hull-only band: NearFull .. MidHism (cm). ~250 m. */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "5000.0"))
@@ -169,9 +177,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	float StreamDebounceSec = 1.25f;
 
-	/** Enable wind-driven pendulum sway on residents. */
+	/**
+	 * Wind-driven pendulum sway on NearFull residents. Default OFF — field boats
+	 * are static harbor props. Optional ON for ≤1 hero close-up.
+	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Sway")
-	bool bEnableSway = true;
+	bool bEnableSway = false;
 
 	/** Masthead all-round white anchor light on every resident (COLREGS at anchor). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights")
