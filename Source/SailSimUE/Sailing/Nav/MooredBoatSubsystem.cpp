@@ -46,6 +46,55 @@ namespace MooredBoatPrivate
 		return (HashU32(static_cast<uint32>(Seed * 73856093u + Salt * 19349663u)) & 0xFFFFFFu)
 			/ static_cast<float>(0xFFFFFFu);
 	}
+
+	/** Shared paint buckets for scenery hulls (not one MID per boat). */
+	constexpr int32 SceneryPaintBucketCount = 4;
+
+	/**
+	 * Without InstancedStaticMeshes usage, HISM draws nothing on a cold PIE
+	 * start (EncAid buoys already force this; yacht MIs did not).
+	 */
+	static void ForceYachtIsmUsage(UMaterialInterface* Interface)
+	{
+		if (!Interface) return;
+		UMaterial* Mat = Interface->GetMaterial();
+		if (!Mat) return;
+		// Engine fallbacks (BasicShape / DefaultMaterial) are not yacht slots — leave them alone.
+		if (!Mat->GetPathName().Contains(TEXT("Yacht"))) return;
+		if (Mat->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes))
+		{
+			return;
+		}
+		const bool bOk = Mat->SetMaterialUsage(MATUSAGE_InstancedStaticMeshes);
+		if (!Mat->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes))
+		{
+			Mat->SetUsageByFlag(MATUSAGE_InstancedStaticMeshes, true);
+		}
+		if (!Mat->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes) || !bOk)
+		{
+			Mat->CheckMaterialUsage(MATUSAGE_InstancedStaticMeshes);
+		}
+		Mat->CacheShaders(EMaterialShaderPrecompileMode::Default);
+		if (Mat->GetUsageByFlag(MATUSAGE_InstancedStaticMeshes))
+		{
+			UE_LOG(LogSailSim, Log, TEXT("MooredBoats: InstancedStaticMeshes usage OK on %s"),
+				*Mat->GetPathName());
+		}
+		else
+		{
+			UE_LOG(LogSailSim, Error,
+				TEXT("MooredBoats: FAILED InstancedStaticMeshes on %s — scenery hulls will not draw"),
+				*Mat->GetPathName());
+		}
+	}
+
+	static bool IsYachtTopsidesMaterial(const UMaterialInterface* Mat)
+	{
+		if (!Mat) return false;
+		const FString Path = Mat->GetPathName();
+		// Hull shell only. Boot/stripe/antifoul sections keep their own shared MIs.
+		return Path.Contains(TEXT("HullPaint")) || Path.Contains(TEXT("Gelcoat"));
+	}
 }
 
 void UMooredBoatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -58,15 +107,20 @@ void UMooredBoatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UMooredBoatSubsystem::EnsureYachtMaterials()
 {
-	// Prefer authored DefaultLit yacht instances; fall back to buoy clean / BasicShape.
+	// Authored DefaultLit yacht instances only. Never fall back to buoy textures —
+	// those made scenery read as SM_Buoy / empty water instead of gelcoat hulls.
 	auto LoadMI = [](const TCHAR* Path) -> UMaterialInterface*
 	{
 		return LoadObject<UMaterialInterface>(nullptr, Path);
 	};
 
 	// HullPaint uses local-Z hard thresholds → crisp boot/cove (not vertex-color stairsteps).
+	UMaterialInterface* HullMaster = LoadMI(TEXT("/Game/Materials/Yacht/M_Yacht_HullPaint.M_Yacht_HullPaint"));
 	UMaterialInterface* HullPaint = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_HullPaint.MI_Yacht_HullPaint"));
 	UMaterialInterface* Gelcoat = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
+	UMaterialInterface* BootStripe = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_BootStripe.MI_Yacht_BootStripe"));
+	UMaterialInterface* HullStripe = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_HullStripe.MI_Yacht_HullStripe"));
+	UMaterialInterface* AntifoulMat = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Antifoul.MI_Yacht_Antifoul"));
 	UMaterialInterface* Deck = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Deck.MI_Yacht_Deck"));
 	UMaterialInterface* Cabin = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Cabin.MI_Yacht_Cabin"));
 	UMaterialInterface* Glass = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Glass.MI_Yacht_Glass"));
@@ -74,14 +128,12 @@ void UMooredBoatSubsystem::EnsureYachtMaterials()
 	YachtSparMat = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Spar.MI_Yacht_Spar"));
 	YachtRopeMat = LoadMI(TEXT("/Game/Materials/Yacht/MI_Yacht_Rope.MI_Yacht_Rope"));
 
-	UMaterialInterface* BuoyLit = LoadMI(TEXT("/Game/Buoys/Materials/M_Buoys_1_clean.M_Buoys_1_clean"));
 	UMaterialInterface* Basic = LoadMI(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	if (!Basic)
 	{
 		Basic = LoadMI(TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
 	}
-	// Prefer solid gelcoat over textured buoy (buoy UVs on hull look "low-res/pixelated").
-	UMaterialInterface* Fallback = HullPaint ? HullPaint : (Gelcoat ? Gelcoat : (BuoyLit ? BuoyLit : Basic));
+	UMaterialInterface* Fallback = HullPaint ? HullPaint : (Gelcoat ? Gelcoat : Basic);
 	UMaterialInterface* HullMat = HullPaint ? HullPaint : Fallback;
 
 	const int32 N = static_cast<int32>(EMooredHullPart::Other) + 1;
@@ -90,11 +142,12 @@ void UMooredBoatSubsystem::EnsureYachtMaterials()
 	{
 		YachtMats[static_cast<int32>(P)] = M ? M : Fallback;
 	};
-	// All topsides paint roles share HullPaint (shader does antifoul/boot/stripe/gelcoat).
+	// Topsides shell stays HullPaint (local-Z boot/cove/antifoul bands). Dedicated
+	// stripe MIs are used when a section is classified as that part.
 	Set(EMooredHullPart::HullGloss, HullMat);
-	Set(EMooredHullPart::BootStripe, HullMat);
-	Set(EMooredHullPart::HullStripe, HullMat);
-	Set(EMooredHullPart::Antifoul, HullMat);
+	Set(EMooredHullPart::BootStripe, BootStripe ? BootStripe : HullMat);
+	Set(EMooredHullPart::HullStripe, HullStripe ? HullStripe : HullMat);
+	Set(EMooredHullPart::Antifoul, AntifoulMat ? AntifoulMat : HullMat);
 	Set(EMooredHullPart::Deck, Deck);
 	Set(EMooredHullPart::Cabin, Cabin);
 	Set(EMooredHullPart::Windows, Glass);
@@ -121,10 +174,31 @@ void UMooredBoatSubsystem::EnsureYachtMaterials()
 	TwoSidedBaseMat = Glass ? Glass : Cabin;
 	if (!TwoSidedBaseMat) TwoSidedBaseMat = Fallback;
 
+	// HISM scenery draws with these shaders. Compile ISM usage before first place.
+	MooredBoatPrivate::ForceYachtIsmUsage(HullMaster);
+	MooredBoatPrivate::ForceYachtIsmUsage(HullPaint);
+	MooredBoatPrivate::ForceYachtIsmUsage(Gelcoat);
+	MooredBoatPrivate::ForceYachtIsmUsage(BootStripe);
+	MooredBoatPrivate::ForceYachtIsmUsage(HullStripe);
+	MooredBoatPrivate::ForceYachtIsmUsage(AntifoulMat);
+	MooredBoatPrivate::ForceYachtIsmUsage(Deck);
+	MooredBoatPrivate::ForceYachtIsmUsage(Cabin);
+	MooredBoatPrivate::ForceYachtIsmUsage(Glass);
+	MooredBoatPrivate::ForceYachtIsmUsage(Keel);
+	MooredBoatPrivate::ForceYachtIsmUsage(YachtSparMat.Get());
+	MooredBoatPrivate::ForceYachtIsmUsage(YachtRopeMat.Get());
+	for (const TObjectPtr<UMaterialInterface>& M : YachtMats)
+	{
+		MooredBoatPrivate::ForceYachtIsmUsage(M.Get());
+	}
+
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: yacht materials hullPaint=%s gelcoat=%s spar=%s"),
+		TEXT("MooredBoats: yacht materials hullPaint=%s gelcoat=%s boot=%s stripe=%s antifoul=%s spar=%s (no buoy fallback)"),
 		HullPaint ? TEXT("yes") : TEXT("no"),
 		Gelcoat ? TEXT("yes") : TEXT("no"),
+		BootStripe ? TEXT("yes") : TEXT("no"),
+		HullStripe ? TEXT("yes") : TEXT("no"),
+		AntifoulMat ? TEXT("yes") : TEXT("no"),
 		YachtSparMat ? TEXT("yes") : TEXT("no"));
 }
 
@@ -530,7 +604,12 @@ bool UMooredBoatSubsystem::BuildHullNaniteMesh(UProceduralMeshComponent* SourceP
 	{
 		StaticMats.Add(FStaticMaterial(SparMaterial.Get(), TEXT("Default"), TEXT("Default")));
 	}
+	for (const FStaticMaterial& Slot : StaticMats)
+	{
+		MooredBoatPrivate::ForceYachtIsmUsage(Slot.MaterialInterface);
+	}
 	SM->SetStaticMaterials(StaticMats);
+	SM->NeverStream = true;
 
 	// Small craft + thin paint-stripe bands: Nanite position quantization makes gelcoat /
 	// boot / cove edges look "pixelated". Prefer a full-detail static mesh (still one
@@ -632,9 +711,27 @@ bool UMooredBoatSubsystem::BuildHullNaniteMesh(UProceduralMeshComponent* SourceP
 	}
 
 	HullNaniteMesh = SM;
+	FBoxSphereBounds Bounds = SM->GetBounds();
+	if (Bounds.BoxExtent.SizeSquared() < 100.f)
+	{
+		FBox Box(ForceInit);
+		for (const FMooredHullSection& S : HullSections)
+		{
+			for (const FVector& P : S.Positions)
+			{
+				Box += P;
+			}
+		}
+		if (Box.Max.X >= Box.Min.X)
+		{
+			Bounds = FBoxSphereBounds(Box);
+			SM->SetExtendedBounds(Bounds);
+		}
+	}
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: hull static mesh ready (nanite=%d mats=%d verts~%d)"),
-		SM->IsNaniteEnabled() ? 1 : 0, StaticMats.Num(), MeshDesc.Vertices().Num());
+		TEXT("MooredBoats: hull static mesh ready name=%s nanite=%d mats=%d verts~%d extent=(%.0f,%.0f,%.0f)"),
+		*SM->GetName(), SM->IsNaniteEnabled() ? 1 : 0, StaticMats.Num(), MeshDesc.Vertices().Num(),
+		Bounds.BoxExtent.X, Bounds.BoxExtent.Y, Bounds.BoxExtent.Z);
 	return true;
 }
 
@@ -2139,6 +2236,11 @@ void UMooredBoatSubsystem::RebuildAround(const FVector& Focus)
 		if (!bHad) ++SpawnedMid;
 	}
 
+	if (bSceneryHismDirty)
+	{
+		FlushSceneryHismRender();
+	}
+
 	if (SpawnedNear > 0 || DropNear.Num() > 0 || SpawnedMid > 0 || DropMid.Num() > 0)
 	{
 		UE_LOG(LogSailSim, Log,
@@ -2160,111 +2262,456 @@ FTransform UMooredBoatSubsystem::MakeMooredHullTransform(const FMooredBoatSlot& 
 	return FTransform(FRotator(0.f, Slot.HeadingDeg, 0.f), Origin);
 }
 
+FTransform UMooredBoatSubsystem::MakeSparWorldTransform(
+	const FTransform& BoatWorld, const FVector& LocalA, const FVector& LocalB, float RadiusScale) const
+{
+	const FVector Dir = LocalB - LocalA;
+	const float Len = Dir.Size();
+	if (Len < 1.f)
+	{
+		return FTransform(FQuat::Identity, FVector::ZeroVector, FVector::ZeroVector);
+	}
+	// Same local cylinder layout as PlaceCylinder (BasicShapes/Cylinder is 100 uu tall).
+	const FVector Mid = (LocalA + LocalB) * 0.5f;
+	const FQuat Rot = FRotationMatrix::MakeFromZ(Dir.GetSafeNormal()).ToQuat();
+	const FTransform Local(Rot, Mid, FVector(RadiusScale, RadiusScale, Len / 100.f));
+	// USceneComponent world = relative * parent.
+	return Local * BoatWorld;
+}
+
+int32 UMooredBoatSubsystem::SceneryBucketForSlot(int32 SlotIndex) const
+{
+	const int32 N = FMath::Max(1, SceneryHullMids.Num() > 0 ? SceneryHullMids.Num() : MidHullHisms.Num());
+	const float H = MooredBoatPrivate::Hash01(SlotIndex, 101);
+	return FMath::Clamp(FMath::FloorToInt(H * static_cast<float>(N)), 0, N - 1);
+}
+
+void UMooredBoatSubsystem::EnsureSceneryPaint()
+{
+	if (bSceneryPaintReady) return;
+	bSceneryPaintReady = true;
+
+	UMaterialInterface* Parent = nullptr;
+	const int32 HullIdx = static_cast<int32>(EMooredHullPart::HullGloss);
+	if (YachtMats.IsValidIndex(HullIdx))
+	{
+		Parent = YachtMats[HullIdx].Get();
+	}
+	if (!Parent)
+	{
+		Parent = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_HullPaint.MI_Yacht_HullPaint"));
+	}
+	if (!Parent)
+	{
+		Parent = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
+	}
+	if (!Parent)
+	{
+		Parent = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/Materials/Yacht/M_Yacht_HullPaint.M_Yacht_HullPaint"));
+	}
+	if (!Parent)
+	{
+		UE_LOG(LogSailSim, Warning, TEXT("MooredBoats: scenery paint has no yacht parent — hull HISM uses mesh slots"));
+		return;
+	}
+	MooredBoatPrivate::ForceYachtIsmUsage(Parent);
+
+	const FLinearColor WhiteTopsides(0.96f, 0.975f, 0.995f, 1.f);
+	const FLinearColor Cream(0.92f, 0.90f, 0.84f, 1.f);
+	const FLinearColor Navy(0.02f, 0.06f, 0.16f, 1.f);
+	const FLinearColor DarkGreen(0.04f, 0.12f, 0.08f, 1.f);
+	const FLinearColor FlagRed(0.42f, 0.06f, 0.06f, 1.f);
+	const FLinearColor GoldStripe(0.72f, 0.55f, 0.18f, 1.f);
+	const FLinearColor BootDefault(0.03f, 0.06f, 0.12f, 1.f);
+	const FLinearColor Antifoul(0.16f, 0.10f, 0.08f, 1.f);
+
+	struct FBucket
+	{
+		FLinearColor Hull;
+		FLinearColor Stripe;
+		FLinearColor Boot;
+		float Rough;
+	};
+	const FBucket Buckets[MooredBoatPrivate::SceneryPaintBucketCount] = {
+		{ WhiteTopsides, Navy, BootDefault, 0.14f },
+		{ WhiteTopsides, FlagRed, BootDefault, 0.14f },
+		{ Navy, Cream, FLinearColor(0.02f, 0.02f, 0.03f, 1.f), 0.18f },
+		{ DarkGreen, GoldStripe, FLinearColor(0.02f, 0.02f, 0.03f, 1.f), 0.18f },
+	};
+	static_assert(UE_ARRAY_COUNT(Buckets) == MooredBoatPrivate::SceneryPaintBucketCount, "scenery paint buckets");
+
+	SceneryHullMids.Reset();
+	SceneryHullMids.Reserve(MooredBoatPrivate::SceneryPaintBucketCount);
+	for (const FBucket& B : Buckets)
+	{
+		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
+		if (!Mid) continue;
+		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), B.Hull);
+		Mid->SetVectorParameterValue(TEXT("ColorStripe"), B.Stripe);
+		Mid->SetVectorParameterValue(TEXT("ColorBoot"), B.Boot);
+		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), Antifoul);
+		Mid->SetVectorParameterValue(TEXT("BaseColor"), B.Hull);
+		Mid->SetVectorParameterValue(TEXT("Color"), B.Hull);
+		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), B.Rough);
+		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.20f);
+		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.28f);
+		Mid->SetScalarParameterValue(TEXT("Roughness"), B.Rough);
+		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 1.f);
+		Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("Specular"), 0.40f);
+		SceneryHullMids.Add(Mid);
+	}
+	UE_LOG(LogSailSim, Log, TEXT("MooredBoats: scenery paint buckets=%d parent=%s"),
+		SceneryHullMids.Num(), *Parent->GetPathName());
+}
+
+void UMooredBoatSubsystem::ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* H, bool bNaniteDisallowed) const
+{
+	if (!H) return;
+	H->SetMobility(EComponentMobility::Static);
+	H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	H->SetCastShadow(false);
+	H->bDisallowNanite = bNaniteDisallowed;
+	H->bNeverDistanceCull = false;
+	H->SetVisibility(true);
+	H->SetHiddenInGame(false);
+	H->SetReceivesDecals(false);
+	H->SetCanEverAffectNavigation(false);
+	// Batch instance adds, then one synchronous tree build in FlushSceneryHismRender.
+	// An unbuilt HISM cluster tree reports a CPU instance count and draws nothing.
+	H->bAutoRebuildTreeOnInstanceChanges = false;
+	StripMooredReflectionCost(H);
+	// Readable mid-harbor hulls. Do not SetForcedLodModel / MinLOD (that crushed them to dots).
+	const float CullStart = FMath::Max(MidHismRadiusCm * 0.85f, 20000.f);
+	const float CullEnd = FMath::Max(LoadRadiusCm * 1.25f, CullStart + 5000.f);
+	H->SetCullDistances(CullStart, CullEnd);
+}
+
+void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedStaticMeshComponent* Hism, int32 Bucket) const
+{
+	if (!Hism || !HullNaniteMesh) return;
+	UMaterialInstanceDynamic* BucketMid = SceneryHullMids.IsValidIndex(Bucket) ? SceneryHullMids[Bucket].Get() : nullptr;
+	const TArray<FStaticMaterial>& Mats = HullNaniteMesh->GetStaticMaterials();
+	const int32 Num = FMath::Max(Mats.Num(), Hism->GetNumMaterials());
+	for (int32 Mi = 0; Mi < Num; ++Mi)
+	{
+		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface : Hism->GetMaterial(Mi);
+		MooredBoatPrivate::ForceYachtIsmUsage(Mat);
+		if (BucketMid && MooredBoatPrivate::IsYachtTopsidesMaterial(Mat))
+		{
+			MooredBoatPrivate::ForceYachtIsmUsage(BucketMid);
+			Hism->SetMaterial(Mi, BucketMid);
+		}
+		else if (Mat)
+		{
+			Hism->SetMaterial(Mi, Mat);
+		}
+	}
+}
+
 void UMooredBoatSubsystem::EnsureMidHism()
 {
-	if (MidHullHism && IsValid(MidHismOwner)) return;
+	if (MidHullHisms.Num() > 0 && IsValid(MidHismOwner)) return;
 	UWorld* World = GetWorld();
 	if (!World || !HullNaniteMesh) return;
+
+	const FString HullName = HullNaniteMesh->GetName();
+	if (HullName.Contains(TEXT("Buoy")))
+	{
+		UE_LOG(LogSailSim, Error, TEXT("MooredBoats: refusing scenery mesh %s (buoy proxy)"), *HullName);
+		return;
+	}
+
+	EnsureSceneryPaint();
+	if (!CylinderMesh)
+	{
+		CylinderMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	}
+
+	// Harbor basin, not world origin. A Static HISM left at (0,0,0) sits ~21 km from
+	// Nantucket Harbor; its unexpanded bounds are frustum-culled and the field draws
+	// as EncAid buoys only. Same anchor rule as EncAid ISMs.
+	const FVector2D Harbor = FNavGeo::BoatStartWorldCm2D();
+	const FVector Anchor(Harbor.X, Harbor.Y, WaterlineOffsetCm);
+	const FTransform AnchorXf(FRotator::ZeroRotator, Anchor);
 
 	FActorSpawnParameters Sp;
 	Sp.ObjectFlags = RF_Transient;
 	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AActor* Owner = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, Sp);
+	Sp.bDeferConstruction = true;
+	AActor* Owner = World->SpawnActor<AActor>(AActor::StaticClass(), AnchorXf, Sp);
 	if (!Owner) return;
 #if WITH_EDITOR
-	Owner->SetActorLabel(TEXT("MooredMidHISM"));
+	Owner->SetActorLabel(TEXT("MooredSceneryHISM"));
 #endif
 	Owner->Tags.Add(FName(TEXT("MooredBoat")));
 	Owner->Tags.Add(FName(TEXT("MooredHISM")));
+	Owner->Tags.Add(FName(TEXT("MooredScenery")));
+	Owner->SetActorEnableCollision(false);
+	Owner->SetActorHiddenInGame(false);
+
 	USceneComponent* Root = NewObject<USceneComponent>(Owner, TEXT("Root"), RF_Transient);
 	Root->SetMobility(EComponentMobility::Static);
 	Owner->SetRootComponent(Root);
+	Root->SetWorldTransform(AnchorXf);
 	Root->RegisterComponent();
 	Owner->AddInstanceComponent(Root);
 
-	UHierarchicalInstancedStaticMeshComponent* H =
-		NewObject<UHierarchicalInstancedStaticMeshComponent>(Owner, TEXT("MidHullHISM"), RF_Transient);
-	H->SetupAttachment(Root);
-	H->SetMobility(EComponentMobility::Static);
-	H->SetStaticMesh(HullNaniteMesh.Get());
-	H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	H->SetCastShadow(false);
-	H->bDisallowNanite = !bHullUseNanite;
-	H->bNeverDistanceCull = false;
-	StripMooredReflectionCost(H);
-	// Start fade beyond mid band so mid-harbor stays readable boats (not dots);
-	// end cull past load radius for far-field scenery.
-	H->SetCullDistances(
-		FMath::Max(MidHismRadiusCm * 0.85f, 20000.f),
-		LoadRadiusCm * 1.25f);
-	ApplyHullMaterialsToStaticMesh(H);
-	H->RegisterComponent();
-	Owner->AddInstanceComponent(H);
+	const int32 BucketCount = FMath::Max(1, SceneryHullMids.Num());
+	MidHullHisms.Reset();
+	MidHullHisms.Reserve(BucketCount);
+	for (int32 B = 0; B < BucketCount; ++B)
+	{
+		UHierarchicalInstancedStaticMeshComponent* H =
+			NewObject<UHierarchicalInstancedStaticMeshComponent>(
+				Owner, *FString::Printf(TEXT("SceneryHullHISM_%d"), B), RF_Transient);
+		H->SetupAttachment(Root);
+		H->SetStaticMesh(HullNaniteMesh.Get());
+		ConfigureSceneryHism(H, !bHullUseNanite);
+		ApplySceneryBucketMaterials(H, B);
+		H->PreAllocateInstancesMemory(FMath::Max(8, MooringSceneryInstanceCount / BucketCount + 4));
+		H->RegisterComponent();
+		Owner->AddInstanceComponent(H);
+		MidHullHisms.Add(H);
+	}
+
+	if (CylinderMesh)
+	{
+		UMaterialInterface* SparMat = YachtSparMat.Get() ? YachtSparMat.Get() : SparMaterial.Get();
+		MooredBoatPrivate::ForceYachtIsmUsage(SparMat);
+		UHierarchicalInstancedStaticMeshComponent* Spar =
+			NewObject<UHierarchicalInstancedStaticMeshComponent>(Owner, TEXT("ScenerySparHISM"), RF_Transient);
+		Spar->SetupAttachment(Root);
+		Spar->SetStaticMesh(CylinderMesh.Get());
+		ConfigureSceneryHism(Spar, /*bNaniteDisallowed*/ true);
+		if (SparMat)
+		{
+			const int32 Slots = FMath::Max(1, Spar->GetNumMaterials());
+			for (int32 Mi = 0; Mi < Slots; ++Mi)
+			{
+				Spar->SetMaterial(Mi, SparMat);
+			}
+		}
+		Spar->PreAllocateInstancesMemory(FMath::Max(16, MooringSceneryInstanceCount * 2));
+		Spar->RegisterComponent();
+		Owner->AddInstanceComponent(Spar);
+		MidSparHism = Spar;
+	}
+	else
+	{
+		UE_LOG(LogSailSim, Warning, TEXT("MooredBoats: scenery spars skipped — engine cylinder missing"));
+	}
+
+	Owner->FinishSpawning(AnchorXf, /*bIsDefaultTransform*/ true);
+	Owner->SetActorTransform(AnchorXf, false, nullptr, ETeleportType::TeleportPhysics);
 
 	MidHismOwner = Owner;
-	MidHullHism = H;
+	bSceneryHismDirty = true;
+	SceneryDrawRefreshLeft = 4;
+	UE_LOG(LogSailSim, Log,
+		TEXT("MooredBoats: scenery HISM hull=%s buckets=%d spar=%s anchor=(%.0f,%.0f) (yacht meshes, not SM_Buoy)"),
+		*HullName, MidHullHisms.Num(),
+		MidSparHism ? *GetNameSafe(MidSparHism->GetStaticMesh()) : TEXT("none"),
+		Anchor.X, Anchor.Y);
 }
 
 void UMooredBoatSubsystem::ClearMidHism()
 {
 	MidHismSlotToInstance.Reset();
+	bSceneryHismDirty = false;
 	if (IsValid(MidHismOwner))
 	{
 		MidHismOwner->Destroy();
 	}
 	MidHismOwner = nullptr;
-	MidHullHism = nullptr;
+	MidHullHisms.Reset();
+	MidSparHism = nullptr;
+	bLoggedSceneryDraw = false;
 }
 
 void UMooredBoatSubsystem::AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot)
 {
 	if (!EnsureTemplate() || !bHullNaniteReady || !HullNaniteMesh) return;
 	EnsureMidHism();
-	if (!MidHullHism) return;
+	if (MidHullHisms.Num() == 0) return;
 
-	const FTransform Xf = MakeMooredHullTransform(Slot);
-	if (int32* Existing = MidHismSlotToInstance.Find(SlotIndex))
+	const int32 Bucket = SceneryBucketForSlot(SlotIndex);
+	UHierarchicalInstancedStaticMeshComponent* HullH =
+		MidHullHisms.IsValidIndex(Bucket) ? MidHullHisms[Bucket].Get() : MidHullHisms[0].Get();
+	if (!HullH) return;
+	const int32 HullBucket = MidHullHisms.IsValidIndex(Bucket) ? Bucket : 0;
+
+	const FTransform BoatXf = MakeMooredHullTransform(Slot);
+	FTransform MastXf;
+	FTransform BoomXf;
+	bool bMast = false;
+	bool bBoom = false;
+	if (TemplateSpars.bMastValid)
 	{
-		MidHullHism->UpdateInstanceTransform(*Existing, Xf, true, true, true);
+		MastXf = MakeSparWorldTransform(BoatXf, TemplateSpars.MastBase, TemplateSpars.MastTop, 0.10f);
+		bMast = MastXf.GetScale3D().Z > KINDA_SMALL_NUMBER;
+	}
+	if (TemplateSpars.bBoomValid)
+	{
+		BoomXf = MakeSparWorldTransform(BoatXf, TemplateSpars.BoomBase, TemplateSpars.BoomEnd, 0.08f);
+		bBoom = BoomXf.GetScale3D().Z > KINDA_SMALL_NUMBER;
+	}
+
+	if (FMooredSceneryRef* Existing = MidHismSlotToInstance.Find(SlotIndex))
+	{
+		if (MidHullHisms.IsValidIndex(Existing->Bucket) && MidHullHisms[Existing->Bucket]
+			&& Existing->HullInstance != INDEX_NONE)
+		{
+			MidHullHisms[Existing->Bucket]->UpdateInstanceTransform(Existing->HullInstance, BoatXf, true, true, true);
+		}
+		if (MidSparHism)
+		{
+			if (bMast && Existing->MastInstance != INDEX_NONE)
+			{
+				MidSparHism->UpdateInstanceTransform(Existing->MastInstance, MastXf, true, true, true);
+			}
+			if (bBoom && Existing->BoomInstance != INDEX_NONE)
+			{
+				MidSparHism->UpdateInstanceTransform(Existing->BoomInstance, BoomXf, true, true, true);
+			}
+		}
+		bSceneryHismDirty = true;
 		return;
 	}
-	const int32 Id = MidHullHism->AddInstance(Xf, /*bWorldSpace*/ true);
-	MidHismSlotToInstance.Add(SlotIndex, Id);
+
+	FMooredSceneryRef Ref;
+	Ref.Bucket = HullBucket;
+	Ref.HullInstance = HullH->AddInstance(BoatXf, /*bWorldSpace*/ true);
+	if (Ref.HullInstance == INDEX_NONE) return;
+	if (MidSparHism && bMast)
+	{
+		Ref.MastInstance = MidSparHism->AddInstance(MastXf, /*bWorldSpace*/ true);
+	}
+	if (MidSparHism && bBoom)
+	{
+		Ref.BoomInstance = MidSparHism->AddInstance(BoomXf, /*bWorldSpace*/ true);
+	}
+	MidHismSlotToInstance.Add(SlotIndex, Ref);
+	bSceneryHismDirty = true;
 }
 
 void UMooredBoatSubsystem::RemoveMidHism(int32 SlotIndex)
 {
-	int32* InstId = MidHismSlotToInstance.Find(SlotIndex);
-	if (!InstId || !MidHullHism)
+	FMooredSceneryRef* Ref = MidHismSlotToInstance.Find(SlotIndex);
+	if (!Ref)
 	{
-		MidHismSlotToInstance.Remove(SlotIndex);
 		return;
 	}
-	// Swap-remove: HISM removes by index and may reorder — rebuild map if needed.
-	const int32 RemoveIdx = *InstId;
-	const int32 LastIdx = MidHullHism->GetInstanceCount() - 1;
-	if (RemoveIdx < 0 || RemoveIdx > LastIdx)
+	bSceneryHismDirty = true;
+
+	auto RemoveHull = [&](int32 Bucket, int32 RemoveIdx)
 	{
-		MidHismSlotToInstance.Remove(SlotIndex);
-		return;
-	}
-	if (RemoveIdx != LastIdx)
-	{
-		// Find which slot owns LastIdx and retarget.
-		for (auto& Pair : MidHismSlotToInstance)
+		UHierarchicalInstancedStaticMeshComponent* H =
+			MidHullHisms.IsValidIndex(Bucket) ? MidHullHisms[Bucket].Get() : nullptr;
+		if (!H || RemoveIdx < 0) return;
+		const int32 LastIdx = H->GetInstanceCount() - 1;
+		if (RemoveIdx > LastIdx) return;
+		if (RemoveIdx != LastIdx)
 		{
-			if (Pair.Value == LastIdx)
+			for (auto& Pair : MidHismSlotToInstance)
 			{
-				Pair.Value = RemoveIdx;
-				break;
+				if (Pair.Value.Bucket == Bucket && Pair.Value.HullInstance == LastIdx)
+				{
+					Pair.Value.HullInstance = RemoveIdx;
+					break;
+				}
 			}
 		}
-	}
-	MidHullHism->RemoveInstance(RemoveIdx);
+		H->RemoveInstance(RemoveIdx);
+	};
+
+	auto RemoveSpar = [&](int32 RemoveIdx)
+	{
+		if (!MidSparHism || RemoveIdx < 0) return;
+		const int32 LastIdx = MidSparHism->GetInstanceCount() - 1;
+		if (RemoveIdx > LastIdx) return;
+		if (RemoveIdx != LastIdx)
+		{
+			for (auto& Pair : MidHismSlotToInstance)
+			{
+				if (Pair.Value.MastInstance == LastIdx)
+				{
+					Pair.Value.MastInstance = RemoveIdx;
+					break;
+				}
+				if (Pair.Value.BoomInstance == LastIdx)
+				{
+					Pair.Value.BoomInstance = RemoveIdx;
+					break;
+				}
+			}
+		}
+		MidSparHism->RemoveInstance(RemoveIdx);
+	};
+
+	const int32 HullBucket = Ref->Bucket;
+	const int32 HullIdx = Ref->HullInstance;
+	int32 SparA = Ref->MastInstance;
+	int32 SparB = Ref->BoomInstance;
+	// Drop the map entry before swap-remove so this slot is not retargeted.
 	MidHismSlotToInstance.Remove(SlotIndex);
+	RemoveHull(HullBucket, HullIdx);
+	if (SparA != INDEX_NONE && SparB != INDEX_NONE && SparA < SparB)
+	{
+		Swap(SparA, SparB);
+	}
+	if (SparA != INDEX_NONE)
+	{
+		RemoveSpar(SparA);
+	}
+	if (SparB != INDEX_NONE && SparB != SparA)
+	{
+		// Higher index was removed first. The lower index is unchanged unless it
+		// was the previous last element — RemoveSpar already remapped map entries,
+		// but SparB is a local copy. Re-read is unnecessary: SparB < SparA (after
+		// swap) and SparA was the higher index, so SparB was not Last.
+		RemoveSpar(SparB);
+	}
+
 	if (MidHismSlotToInstance.Num() == 0)
 	{
 		ClearMidHism();
+	}
+}
+
+void UMooredBoatSubsystem::FlushSceneryHismRender()
+{
+	bSceneryHismDirty = false;
+	auto FlushOne = [](UHierarchicalInstancedStaticMeshComponent* H)
+	{
+		if (!H || !IsValid(H)) return;
+		if (H->GetInstanceCount() <= 0) return;
+		H->BuildTreeIfOutdated(/*Async*/ false, /*ForceUpdate*/ true);
+		H->UpdateBounds();
+		H->MarkRenderStateDirty();
+	};
+	int32 HullInstances = 0;
+	for (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>& H : MidHullHisms)
+	{
+		if (H) HullInstances += H->GetInstanceCount();
+		FlushOne(H.Get());
+	}
+	const int32 SparInstances = MidSparHism ? MidSparHism->GetInstanceCount() : 0;
+	FlushOne(MidSparHism.Get());
+
+	if (!bLoggedSceneryDraw && HullInstances > 0)
+	{
+		bLoggedSceneryDraw = true;
+		const UStaticMesh* Mesh = HullNaniteMesh.Get();
+		UE_LOG(LogSailSim, Log,
+			TEXT("MooredBoats: scenery draw flush hullInst=%d sparInst=%d mesh=%s buckets=%d (J/105 hull + spar, not buoys)"),
+			HullInstances, SparInstances,
+			Mesh ? *Mesh->GetName() : TEXT("none"),
+			MidHullHisms.Num());
 	}
 }
 
@@ -2316,10 +2763,21 @@ void UMooredBoatSubsystem::Tick(float DeltaTime)
 	if (Accum < UpdateIntervalSec) return;
 	Accum = 0.f;
 
+	// Keep the HISM proxy dirty for a few stream ticks so ISM shaders that
+	// finish compiling after the first place still bind (cold PIE draws nothing otherwise).
+	if (SceneryDrawRefreshLeft > 0 && MidHullHisms.Num() > 0)
+	{
+		bSceneryHismDirty = true;
+	}
+
 	const FVector Focus = GetFocusLocation();
 	if (Focus.IsNearlyZero() && LastFocus.IsNearlyZero()) return;
 	const int32 Before = Resident.Num();
 	RebuildAround(Focus.IsNearlyZero() ? LastFocus : Focus);
+	if (SceneryDrawRefreshLeft > 0 && MidHullHisms.Num() > 0)
+	{
+		--SceneryDrawRefreshLeft;
+	}
 	// New residents need a force refresh (seed intensity may not match current preset).
 	if (Resident.Num() != Before)
 	{

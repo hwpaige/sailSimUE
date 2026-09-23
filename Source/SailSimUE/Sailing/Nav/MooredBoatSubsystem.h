@@ -61,6 +61,19 @@ struct FMooredBoatSway
 	TArray<TWeakObjectPtr<UStaticMeshComponent>, TInlineAllocator<4>> PennantSegs;
 };
 
+/**
+ * One harbor-fill boat in the static scenery HISM (not a NearFull hero).
+ * HullInstance indexes that paint bucket's hull HISM. Mast/Boom index the
+ * shared spar HISM (engine cylinder + MI_Yacht_Spar).
+ */
+struct FMooredSceneryRef
+{
+	int32 Bucket = 0;
+	int32 HullInstance = INDEX_NONE;
+	int32 MastInstance = INDEX_NONE;
+	int32 BoomInstance = INDEX_NONE;
+};
+
 /** Material role for a cached moored-boat mesh section. */
 enum class EMooredHullPart : uint8
 {
@@ -121,10 +134,11 @@ public:
 	int32 MaxBoats = 1;
 
 	/**
-	 * Harbor fill: Static HISM scenery budget (shared hull SM + Yacht mats).
-	 * The only density knob (8–400, default 96). Independent of MaxBoats /
-	 * MaxNearFullBoats. World may add mesh variants later — keep shared MAT
-	 * slots only (no unique MIDs per instance).
+	 * Harbor fill: Static HISM scenery budget. Instances the shared baked
+	 * J/105 hull SM (PMC→SM) plus a spar HISM (mast/boom). Yacht materials
+	 * only — never SM_Buoy. The only density knob (8–400, default 96).
+	 * Independent of MaxBoats / MaxNearFullBoats. Paint variety is a handful
+	 * of shared HullPaint MIDs (one per bucket), not a unique MID per boat.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -303,15 +317,30 @@ private:
 	UPROPERTY()
 	TMap<int32, TObjectPtr<AActor>> Resident;
 
-	/** Slot index → mid-band HISM instance id. */
-	TMap<int32, int32> MidHismSlotToInstance;
+	/** Slot index → scenery HISM instance (hull bucket + spar). */
+	TMap<int32, FMooredSceneryRef> MidHismSlotToInstance;
 
-	/** Holder actor for mid-field HISM hulls. */
+	/** Holder actor for harbor-fill HISM (anchored in the basin, not world origin). */
 	UPROPERTY()
 	TObjectPtr<AActor> MidHismOwner = nullptr;
 
+	/** One hull HISM per shared paint bucket. All use HullNaniteMesh. */
 	UPROPERTY()
-	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidHullHism = nullptr;
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> MidHullHisms;
+
+	/** Mast + boom instances (engine cylinder, MI_Yacht_Spar). Not buoys. */
+	UPROPERTY()
+	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidSparHism = nullptr;
+
+	/** Shared HullPaint MIDs (BaseColor / roughness / stripe). Not per instance. */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryHullMids;
+
+	bool bSceneryPaintReady = false;
+	bool bSceneryHismDirty = false;
+	bool bLoggedSceneryDraw = false;
+	/** Re-flush HISM a few stream ticks so ISM shaders that finish late still bind. */
+	int32 SceneryDrawRefreshLeft = 0;
 
 	/** Slot index → sway runtime (near full only). */
 	TMap<int32, FMooredBoatSway> SwayState;
@@ -385,11 +414,18 @@ private:
 	static void StripMooredReflectionCost(UPrimitiveComponent* Prim);
 	void ClearAll();
 	void RebuildAround(const FVector& Focus);
+	void EnsureSceneryPaint();
 	void EnsureMidHism();
 	void ClearMidHism();
 	void AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot);
 	void RemoveMidHism(int32 SlotIndex);
+	void FlushSceneryHismRender();
+	int32 SceneryBucketForSlot(int32 SlotIndex) const;
+	void ApplySceneryBucketMaterials(UHierarchicalInstancedStaticMeshComponent* Hism, int32 Bucket) const;
+	void ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* Hism, bool bDisallowNanite) const;
 	FTransform MakeMooredHullTransform(const FMooredBoatSlot& Slot) const;
+	/** Boat-local cylinder (engine BasicShapes/Cylinder) composed onto the boat world transform. */
+	FTransform MakeSparWorldTransform(const FTransform& BoatWorld, const FVector& LocalA, const FVector& LocalB, float RadiusScale) const;
 	AActor* SpawnMooredBoat(const FMooredBoatSlot& Slot, int32 SlotIndex);
 	void InitSwayState(int32 SlotIndex, TArrayView<UStaticMeshComponent* const> PennantSegs);
 	void UpdateAllSway(float DeltaTime);
