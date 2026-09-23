@@ -60,7 +60,7 @@ One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) →
 SailSimToolset.RunPreferOnGate
 ```
 
-Returns JSON:
+Returns JSON (also written to `Saved/SailSim/last_prefer_on_gate.json`):
 
 ```
 { "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 16,
@@ -69,6 +69,33 @@ Returns JSON:
 ```
 
 `failCode` values: `wrong_map`, `pie_not_running`, `moored_count` (≠16 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. Does not change MaxBoats / moored strip / forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
+
+### Console fallback (no MCP schema refresh)
+
+New `AICallable` UFUNCTIONs often need an editor **module reload** before they appear in the live MCP tool schema. Until then Ops can invoke the same gate via console (or MCP `ExecuteConsole`):
+
+```
+SailSim.RunPreferOnGate
+```
+
+MCP path when schema still lacks `RunPreferOnGate`:
+
+```
+SailSimToolset.ExecuteConsole  →  Commands="SailSim.RunPreferOnGate"
+```
+
+Live Coding that relinks `SailSimToolset` **does** pick up the `IConsoleManager` registration in `StartupModule` (console cmd works after Live Coding). MCP tool schema refresh still often needs a full editor module reload / editor restart — do **not** kill UnrealEditor without asking.
+
+### Compose script (schema-safe)
+
+When Live Coding has not refreshed MCP yet, compose Prefer-ON from existing tools:
+
+```
+python3 Scripts/ops_run_prefer_on_gate.py
+# optional: SAILSIM_MCP_URL=http://127.0.0.1:8765/mcp SAILSIM_TIMEOUT_S=120
+```
+
+Uses `Mcp-Session-Id`, then EnsurePIE → SetCVars (Prefer-ON / DSF2) → poll GetPerfSnapshot until `moored==16` → CapturePlayerView (`FramingPreset=midHarborMoored` if present in schema). Prints the same JSON shape.
 
 ## StartPIE / EnsurePIE
 

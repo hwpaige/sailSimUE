@@ -65,6 +65,20 @@ namespace SailSimToolsetPrivate
 		return Out;
 	}
 
+	/** Ops artifact for console + MCP Prefer-ON gate. */
+	static void PersistPreferOnGateJson(const FString& Json)
+	{
+		const FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("SailSim"));
+		IFileManager::Get().MakeDirectory(*Dir, true);
+		const FString Path = FPaths::Combine(Dir, TEXT("last_prefer_on_gate.json"));
+		if (!FFileHelper::SaveStringToFile(Json, *Path))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("RunPreferOnGate: failed to write %s"), *Path);
+			return;
+		}
+		UE_LOG(LogTemp, Display, TEXT("RunPreferOnGate wrote %s"), *Path);
+	}
+
 	static bool IsSailBoatClass(const AActor* Actor)
 	{
 		const UClass* Cls = Actor ? Actor->GetClass() : nullptr;
@@ -1736,8 +1750,10 @@ FString USailSimToolset::RunPreferOnGate()
 		{
 			Root->SetStringField(TEXT("cpvPath"), TEXT(""));
 		}
+		const FString Out = JsonString(Root);
+		PersistPreferOnGateJson(Out);
 		UE_LOG(LogTemp, Error, TEXT("RunPreferOnGate FAIL code=%s sha=%s err=%s"), *Code, *Sha, *Error);
-		return JsonString(Root);
+		return Out;
 	};
 
 	if (!GEditor)
@@ -1921,8 +1937,10 @@ FString USailSimToolset::RunPreferOnGate()
 	Root->SetBoolField(TEXT("ok"), true);
 	Root->SetStringField(TEXT("failCode"), TEXT(""));
 	Root->SetStringField(TEXT("error"), TEXT(""));
+	const FString Out = JsonString(Root);
+	PersistPreferOnGateJson(Out);
 	UE_LOG(LogTemp, Display,
 		TEXT("RunPreferOnGate OK sha=%s moored=%d frameMs_avg=%.2f fps=%.1f cpv=%s"),
 		*Sha, LastMoored, FrameAvg, FpsAvg, *CpvPath);
-	return JsonString(Root);
+	return Out;
 }
