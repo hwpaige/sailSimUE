@@ -38,11 +38,14 @@ public:
 	 * 1) EnsurePIE (already-playing = success; expects SailSim_Ocean)
 	 * 2) SetCVars Prefer-ON stick (Lumen Reflections Allow=1, DownsampleFactor=2 / DSF2)
 	 * 3) Short settle pump (viewport present) until frame samples stabilize
-	 * 4) Assert mid-harbor moored >= ~2/3 of MooringSceneryInstanceCount (filled HISM field);
-	 *    else failCode=moored_count. MaxBoats / NearFull stay heroes-only.
+	 * 4) Assert mid-harbor moored >= scenery floor (~64; soft target = MooringSceneryInstanceCount, default 96);
+	 *    else failCode=moored_count. Reports scenery count + heroes (MaxBoats / MaxNearFullBoats, default 1).
+	 *    Harbor fill is scenery count only.
 	 * 5) CapturePlayerView FramingPreset=midHarborMoored (noon Lit CPV saved under Saved/Screenshots)
-	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, cpvPath, sha, ok, failCode?}
-	 * Does not raise MaxBoats; scenery is additive HISM. ProfileGPUDump stays parked.
+	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
+	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, sha, ok, failCode?}
+	 * Does not raise MaxBoats (heroes stay 1). Scenery is additive HISM. Prefer-ON / DSF2 unchanged.
+	 * ProfileGPUDump stays parked.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
 	static FString RunPreferOnGate();

@@ -19,6 +19,7 @@ Port the browser SailSim (Angular UI + FastAPI numpy loft + ~12k-line Three.js/W
 
 Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verified):
 - Single session `SailBoatPawn_0` at open water `(95000, 72000)`; map boat + Landscape proxies removed.
+- Mooring model: **1 hero** (`MaxBoats` = 1, `MaxNearFullBoats` = 1) + harbor fill `MooringSceneryInstanceCount` = 96. Prefer-ON density gate reports scenery (floor ~64 / soft ~96) and heroes. `MaxBoats` is not harbor fill (`docs/perf/MOORING_SCENERY.md`).
 - Native Water + **28-wave Gerstner**, material polish, local tess ~140 km, backend `GerstnerWaterBody`.
 - Cloth: Verlet + shear/batten springs; fill × scale into VPP.
 - Presets 1–4, LOA scale −/=, Python re-loft **R**.

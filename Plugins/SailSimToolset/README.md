@@ -54,7 +54,7 @@ Optional second arg. Teleports the possessed pawn before capture (empty = leave 
 
 ## RunPreferOnGate
 
-One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) → settle pump → assert `moored==16` → midHarborMoored CPV.
+One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) → settle pump → assert scenery floor (~64, soft ~96) and report heroes (default 1) → midHarborMoored CPV.
 
 ```
 SailSimToolset.RunPreferOnGate
@@ -63,12 +63,14 @@ SailSimToolset.RunPreferOnGate
 Returns JSON (also written to `Saved/SailSim/last_prefer_on_gate.json`):
 
 ```
-{ "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 16,
+{ "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 96,
+  "mooringSceneryBudget": 96, "mooringSceneryFloor": 64,
+  "heroesMaxBoats": 1, "heroesNearFullCap": 1, "heroesNear": 1,
   "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-....png",
   "sha": "018b9ab", "failCode": "", "error": "" }
 ```
 
-`failCode` values: `wrong_map`, `pie_not_running`, `moored_count` (≠16 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. Does not change MaxBoats / moored strip / forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
+`failCode` values: `wrong_map`, `pie_not_running`, `moored_count` (scenery below floor ~64 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. Does not change hero caps (`MaxBoats` / `MaxNearFullBoats` default 1), scenery budget, moored strip, or forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
 
 ### Console fallback (no MCP schema refresh)
 
@@ -113,7 +115,7 @@ Flow:
 2. Initialize MCP session (`Mcp-Session-Id`).
 3. Wait/retry (default 30–90s, backoff) until `SailSimToolset.SailSimToolset` appears via `list_toolsets` + `describe_toolset`. Only then may it fail `missing_tools` with: *SailSimToolset not registered yet; kill CrashReportClient on :8765 and ensure Unreal MCP bound.*
 4. Prefer `call_tool` → `RunPreferOnGate` when describe shows it.
-5. Else compose via `call_tool` (toolset `SailSimToolset.SailSimToolset`): EnsurePIE → SetCVars (Prefer-ON / DSF2) → poll GetPerfSnapshot until `moored==16` → CapturePlayerView (`FramingPreset=midHarborMoored` if schema has it; else CPV + note).
+5. Else compose via `call_tool` (toolset `SailSimToolset.SailSimToolset`): EnsurePIE → SetCVars (Prefer-ON / DSF2) → poll GetPerfSnapshot until scenery `moored` ≥ floor ~64 (soft ~96) → CapturePlayerView (`FramingPreset=midHarborMoored` if schema has it; else CPV + note). Heroes (`MaxBoats` / `MaxNearFullBoats`, default 1) are reported and are not the pass bar.
 
 Console fallback (no MCP / schema still stale after Live Coding):
 
@@ -188,7 +190,7 @@ Package path, or a short name under `/Game/Maps/` (`SailSim_Ocean` → `/Game/Ma
 
 ## Gate sequence
 
-**Prefer-ON (one call):** `RunPreferOnGate` — EnsurePIE + DSF2 SetCVars + moored=16 assert + midHarborMoored CPV.
+**Prefer-ON (one call):** `RunPreferOnGate` — EnsurePIE + DSF2 SetCVars + scenery floor (~64, soft ~96) assert, heroes reported (default 1) + midHarborMoored CPV.
 
 Manual / Design:
 

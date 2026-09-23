@@ -113,17 +113,18 @@ public:
 	bool bEnabled = true;
 
 	/**
-	 * Legacy Prefer-ON full-system reference (do not raise for harbor fill).
-	 * Live NearFull heroes = MaxNearFullBoats. Harbor AAA fill =
-	 * MooringSceneryInstanceCount (Static HISM, additive).
+	 * Hero / full-system boats only (player path). Default 1; a few extras
+	 * are allowed. Not harbor fill or density — that budget is
+	 * MooringSceneryInstanceCount. Live NearFull heroes = MaxNearFullBoats.
 	 */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "1", ClampMax = "32"))
-	int32 MaxBoats = 16;
+	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 MaxBoats = 1;
 
 	/**
-	 * Static HISM scenery budget for the mooring field (shared hull SM + Yacht mats).
-	 * Independent of MaxBoats / MaxNearFullBoats. Default ~96; scalable toward hundreds.
-	 * World may add mesh variants later — keep shared MAT slots only (no unique MIDs per instance).
+	 * Harbor fill: Static HISM scenery budget (shared hull SM + Yacht mats).
+	 * The only density knob (8–400, default 96). Independent of MaxBoats /
+	 * MaxNearFullBoats. World may add mesh variants later — keep shared MAT
+	 * slots only (no unique MIDs per instance).
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -155,7 +156,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0.0"))
 	float NearFullRadiusCm = 2500.f;
 
-	/** Cap on simultaneous NearFull actors (closest to focus). Field = Static HISM. */
+	/** Live NearFull heroes (closest to focus). Aligned with MaxBoats; typically 1. Field = Static HISM. */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0", ClampMax = "8"))
 	int32 MaxNearFullBoats = 1;
 
