@@ -34,7 +34,7 @@ void FSailSimToolsetModule::StartupModule()
 	{
 		GSailSimRunPreferOnGateCmd = IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("SailSim.RunPreferOnGate"),
-			TEXT("Ops Prefer-ON gate: EnsurePIE + DSF2 Prefer-ON stick + moored==16 assert + midHarborMoored CPV. Writes Saved/SailSim/last_prefer_on_gate.json. Does not change MaxBoats / moored strip. ProfileGPUDump stays parked."),
+			TEXT("Ops Prefer-ON gate: EnsurePIE + DSF2 Prefer-ON stick + scenery floor (~64, soft ~96) assert, reports heroes (MaxBoats default 1) + midHarborMoored CPV. Writes Saved/SailSim/last_prefer_on_gate.json. Does not change Prefer-ON / DSF2 / moored strip. ProfileGPUDump stays parked."),
 			FConsoleCommandDelegate::CreateStatic(&ExecSailSimRunPreferOnGate),
 			ECVF_Default);
 	}

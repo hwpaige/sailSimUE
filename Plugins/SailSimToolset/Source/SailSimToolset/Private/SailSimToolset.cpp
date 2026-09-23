@@ -829,7 +829,7 @@ namespace SailSimToolsetPrivate
 		return Path;
 	}
 
-	/** Prefer-ON stick used by RunPreferOnGate (DSF2). Does not touch MaxBoats. */
+	/** Prefer-ON stick used by RunPreferOnGate (DSF2). Does not change hero caps or scenery budget. */
 	static const TCHAR* PreferOnCVarBlock()
 	{
 		return TEXT(
@@ -1840,14 +1840,21 @@ FString USailSimToolset::RunPreferOnGate()
 	Root->SetNumberField(TEXT("moored"), LastMoored);
 	FString CpvPath;
 
-	// 4) Assert mid-harbor moored field is AAA-filled (Static HISM scenery budget).
-	// MaxBoats / NearFull stay heroes-only; Prefer-ON expects filled midHarborMoored.
+	// 4) Harbor fill gate keys off scenery count (floor ~64, soft = budget, default 96).
+	// Heroes (MaxBoats / MaxNearFullBoats, default 1) are reported and do not set the bar.
+	constexpr int32 SceneryFloor = 64;
 	int32 SceneryBudget = 96;
 	int32 SlotCount = -1;
+	int32 HeroesMax = 1;
+	int32 HeroesNearCap = 1;
+	int32 HeroesNear = 0;
 	if (UMooredBoatSubsystem* Moored = PlayWorld->GetSubsystem<UMooredBoatSubsystem>())
 	{
 		SceneryBudget = FMath::Max(1, Moored->MooringSceneryInstanceCount);
 		SlotCount = Moored->GetSlotCount();
+		HeroesMax = Moored->MaxBoats;
+		HeroesNearCap = Moored->MaxNearFullBoats;
+		HeroesNear = Moored->GetNearFullCount();
 		if (APlayerController* PC = PlayWorld->GetFirstPlayerController())
 		{
 			if (APawn* Pawn = PC->GetPawn())
@@ -1857,18 +1864,24 @@ FString USailSimToolset::RunPreferOnGate()
 		}
 		PumpViewportFrames(PlayWorld, 4, 1.0f);
 		LastMoored = SailSimGetPerf().MooredCount;
+		HeroesNear = Moored->GetNearFullCount();
 		Root->SetNumberField(TEXT("moored"), LastMoored);
 	}
+	const int32 Sampled = FMath::Min(SceneryBudget, SlotCount > 0 ? SlotCount : SceneryBudget);
+	const int32 MinFilled = FMath::Max(SceneryFloor, (Sampled * 2) / 3);
 	Root->SetNumberField(TEXT("mooringSceneryBudget"), SceneryBudget);
+	Root->SetNumberField(TEXT("mooringSceneryFloor"), MinFilled);
 	Root->SetNumberField(TEXT("mooredSlots"), SlotCount);
-	const int32 MinFilled = FMath::Max(48, (FMath::Min(SceneryBudget, SlotCount > 0 ? SlotCount : SceneryBudget) * 2) / 3);
+	Root->SetNumberField(TEXT("heroesMaxBoats"), HeroesMax);
+	Root->SetNumberField(TEXT("heroesNearFullCap"), HeroesNearCap);
+	Root->SetNumberField(TEXT("heroesNear"), HeroesNear);
 	if (LastMoored < MinFilled)
 	{
 		return Fail(
 			TEXT("moored_count"),
 			FString::Printf(
-				TEXT("expected mid-harbor filled moored>=%d (scenery budget %d slots=%d), got %d — Design midHarborMoored PASS needs boats not empty water"),
-				MinFilled, SceneryBudget, SlotCount, LastMoored));
+				TEXT("expected mid-harbor scenery moored>=%d (soft scenery %d, floor %d, slots=%d); heroes MaxBoats=%d NearFull≤%d near=%d; got moored=%d"),
+				MinFilled, SceneryBudget, SceneryFloor, SlotCount, HeroesMax, HeroesNearCap, HeroesNear, LastMoored));
 	}
 
 	// 5) Noon CPV — same path as CapturePlayerView (midHarborMoored already applied); save PNG for cpvPath.
@@ -1962,7 +1975,7 @@ FString USailSimToolset::RunPreferOnGate()
 	const FString Out = JsonString(Root);
 	PersistPreferOnGateJson(Out);
 	UE_LOG(LogTemp, Display,
-		TEXT("RunPreferOnGate OK sha=%s moored=%d frameMs_avg=%.2f fps=%.1f cpv=%s"),
-		*Sha, LastMoored, FrameAvg, FpsAvg, *CpvPath);
+		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s"),
+		*Sha, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath);
 	return Out;
 }

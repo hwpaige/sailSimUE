@@ -163,8 +163,8 @@ TStatId UMooredBoatSubsystem::GetStatId() const
 
 FString UMooredBoatSubsystem::GetStatusLine() const
 {
-	return FString::Printf(TEXT("moored near=%d hism=%d (scenery %d / heroes MaxBoats=%d NearFull≤%d)"),
-		Resident.Num(), MidHismSlotToInstance.Num(), MooringSceneryInstanceCount,
+	return FString::Printf(TEXT("moored scenery hism=%d/%d heroes near=%d (MaxBoats=%d NearFull≤%d)"),
+		MidHismSlotToInstance.Num(), MooringSceneryInstanceCount, Resident.Num(),
 		MaxBoats, MaxNearFullBoats);
 }
 
@@ -251,9 +251,9 @@ bool UMooredBoatSubsystem::ReloadSlots()
 		return MooredBoatPrivate::Hash01(A.StableId, 11) < MooredBoatPrivate::Hash01(B.StableId, 11);
 	});
 
-	// AAA harbor fill = Static HISM scenery budget (additive). MaxBoats / NearFull
-	// stay heroes-only and do not cap this count. OccupancyFraction is a soft
-	// density hint logged only — MooringSceneryInstanceCount is the hard budget.
+	// Harbor fill = MooringSceneryInstanceCount only. MaxBoats / MaxNearFullBoats
+	// are hero caps and must not scale this slot budget (still 96 when MaxBoats=1).
+	// OccupancyFraction is a soft hint logged only.
 	const int32 OccHint = FMath::Clamp(
 		FMath::RoundToInt(Cands.Num() * OccupancyFraction), 1, Cands.Num());
 	const int32 Target = FMath::Clamp(MooringSceneryInstanceCount, 1, Cands.Num());
@@ -297,8 +297,8 @@ bool UMooredBoatSubsystem::ReloadSlots()
 
 	bSlotsReady = Slots.Num() > 0;
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: %d slots from %d floating moorings (target=%d scenery=%d occHint=%d MaxBoats=%d) windFrom=%.0f°"),
-		Slots.Num(), Cands.Num(), Target, MooringSceneryInstanceCount, OccHint, MaxBoats, WindFromDeg);
+		TEXT("MooredBoats: %d slots from %d floating moorings (scenery=%d target=%d heroes MaxBoats=%d NearFull≤%d occHint=%d) windFrom=%.0f°"),
+		Slots.Num(), Cands.Num(), MooringSceneryInstanceCount, Target, MaxBoats, MaxNearFullBoats, OccHint, WindFromDeg);
 	return bSlotsReady;
 }
 

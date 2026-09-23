@@ -12,9 +12,10 @@ Routing:
        else compose EnsurePIE → SetCVars → poll GetPerfSnapshot → CapturePlayerView.
   4) If tools are advertised flat, call them directly (legacy / tool-search off).
 
-Prints JSON: {frameMs_avg,fps,moored,cpvPath,sha,ok,failCode}
+Prints JSON: {frameMs_avg,fps,moored,mooringSceneryBudget,mooringSceneryFloor,heroesMaxBoats,heroesNearFullCap,cpvPath,sha,ok,failCode}
 
-Does NOT raise MaxBoats (heroes stay MaxNearFull). Expects filled HISM scenery. ProfileGPUDump stays parked.
+Does NOT raise MaxBoats (hero cap stays 1; MaxNearFullBoats stays 1). Harbor fill is
+MooringSceneryInstanceCount (floor ~64 / soft ~96). ProfileGPUDump stays parked.
 Does NOT kill UnrealEditor.
 
 Env:
@@ -41,10 +42,29 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_URL = "http://127.0.0.1:8765/mcp"
 DEFAULT_PORT = 8765
 PREFER_ON_CVARS = "r.Lumen.Reflections.Allow=1\nr.Lumen.Reflections.DownsampleFactor=2"
-# Filled mid-harbor HISM scenery (MooringSceneryInstanceCount default 96).
-# Pass when moored >= MIN; exact 16 was MaxBoats-era Prefer-ON density.
-TARGET_MOORED_MIN = 64
-TARGET_MOORED = 96  # soft target / docs; assert uses MIN
+# Harbor fill is HISM scenery only (MooringSceneryInstanceCount default 96).
+# Pass when moored >= floor; soft target is the scenery count. Heroes are reported, not the bar.
+TARGET_MOORED_MIN = 64  # scenery floor
+TARGET_MOORED = 96  # soft scenery target
+HERO_MAX_BOATS = 1
+HERO_NEAR_FULL = 1
+GATE_REPORT_KEYS = (
+    "frameMs_avg",
+    "fps",
+    "moored",
+    "mooringSceneryBudget",
+    "mooringSceneryFloor",
+    "mooredSlots",
+    "heroesMaxBoats",
+    "heroesNearFullCap",
+    "heroesNear",
+    "cpvPath",
+    "ok",
+    "failCode",
+    "error",
+    "note",
+    "sha",
+)
 META_TOOL_NAMES = frozenset({"list_toolsets", "describe_toolset", "call_tool"})
 SAILSIM_TOOLSET_CANDIDATES = (
     "SailSimToolset.SailSimToolset",
@@ -828,11 +848,16 @@ def compose_gate(router: ToolRouter, timeout_s: float) -> Dict[str, Any]:
     elif out["frameMs_avg"] > 0.1:
         out["fps"] = 1000.0 / out["frameMs_avg"]
 
+    out["mooringSceneryBudget"] = TARGET_MOORED
+    out["mooringSceneryFloor"] = TARGET_MOORED_MIN
+    out["heroesMaxBoats"] = HERO_MAX_BOATS
+    out["heroesNearFullCap"] = HERO_NEAR_FULL
     if moored < TARGET_MOORED_MIN:
         out["failCode"] = "moored_count"
         out["error"] = (
-            f"expected mid-harbor filled moored>={TARGET_MOORED_MIN} "
-            f"(scenery target ~{TARGET_MOORED}), got {moored}"
+            f"expected mid-harbor scenery moored>={TARGET_MOORED_MIN} "
+            f"(floor {TARGET_MOORED_MIN}, soft scenery ~{TARGET_MOORED}); "
+            f"heroes MaxBoats={HERO_MAX_BOATS} NearFull≤{HERO_NEAR_FULL}; got moored={moored}"
         )
         return out
 
@@ -908,7 +933,7 @@ def main() -> int:
     # Prefer one-shot RunPreferOnGate when describe / catalog shows it
     one = run_via_run_prefer_on_gate(router)
     if one is not None:
-        for k in ("frameMs_avg", "fps", "moored", "cpvPath", "ok", "failCode", "error", "note", "sha"):
+        for k in GATE_REPORT_KEYS:
             if k in one and one[k] is not None:
                 out[k] = one[k]
         out["sha"] = out.get("sha") or sha
