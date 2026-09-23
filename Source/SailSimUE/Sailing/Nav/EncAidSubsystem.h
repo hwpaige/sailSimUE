@@ -32,6 +32,10 @@ struct FEncAidDesc
  * Places Content/Buoys static meshes at NOAA ENC S-57 aid positions
  * (lateral buoys, beacons, mooring balls, daymarks, etc.).
  *
+ * Mooring balls (SM_Buoy) are navaids only. They are not harbor fill and not
+ * an AAA stand-in for the moored fleet — that fill is MooredBoatSubsystem
+ * scenery HISM (baked J/105 hull + /Game/Materials/Yacht/ slots).
+ *
  * ISM actors are anchored near the boat; materials are forced to the
  * InstancedStaticMeshes usage flag so cold PIE always draws (pack materials
  * often lack that flag until a mid-session recompile).

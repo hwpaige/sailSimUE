@@ -121,10 +121,13 @@ public:
 	int32 MaxBoats = 1;
 
 	/**
-	 * Harbor fill: Static HISM scenery budget (shared hull SM + Yacht mats).
-	 * The only density knob (8–400, default 96). Independent of MaxBoats /
-	 * MaxNearFullBoats. World may add mesh variants later — keep shared MAT
-	 * slots only (no unique MIDs per instance).
+	 * Harbor fill: Static HISM of the baked J/105 hull (PMC→SM), not SM_Buoy
+	 * and not a placeholder proxy. Materials are the shared /Game/Materials/Yacht/
+	 * slots (HullPaint gelcoat bands, Deck, Cabin, Glass, Keel). Fleet variety is
+	 * BaseColor/Roughness on a few shared MIDs of those MIs — not unique assets
+	 * and not one MID per instance. The only density knob (8–400, default 96).
+	 * Independent of MaxBoats / MaxNearFullBoats. Spars are hero cylinders; they
+	 * are not part of the hull bake, so scenery does not instance them.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -303,15 +306,23 @@ private:
 	UPROPERTY()
 	TMap<int32, TObjectPtr<AActor>> Resident;
 
-	/** Slot index → mid-band HISM instance id. */
+	/**
+	 * Slot index → packed scenery ref (paint bucket in the high half, HISM
+	 * instance id in the low half). One HISM per shared paint MID.
+	 */
 	TMap<int32, int32> MidHismSlotToInstance;
 
-	/** Holder actor for mid-field HISM hulls. */
+	/** Holder actor for mid-field scenery HISM hulls. */
 	UPROPERTY()
 	TObjectPtr<AActor> MidHismOwner = nullptr;
 
+	/** One Static HISM per shared yacht-paint MID. All use the baked hull SM. */
 	UPROPERTY()
-	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidHullHism = nullptr;
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> SceneryHullHisms;
+
+	/** Shared HullPaint MIDs (BaseColor / Roughness / topside equivalents). Not per instance. */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryPaintMids;
 
 	/** Slot index → sway runtime (near full only). */
 	TMap<int32, FMooredBoatSway> SwayState;
@@ -385,7 +396,12 @@ private:
 	static void StripMooredReflectionCost(UPrimitiveComponent* Prim);
 	void ClearAll();
 	void RebuildAround(const FVector& Focus);
-	void EnsureMidHism();
+	void EnsureSceneryOwner();
+	void EnsureSceneryPaintMids();
+	void EnsureSceneryHismBucket(int32 Bucket);
+	void ApplySceneryPaintToHism(UHierarchicalInstancedStaticMeshComponent* Hism, int32 Bucket) const;
+	void CommitSceneryHismRenderState();
+	int32 SceneryPaintBucketForSlot(int32 SlotIndex) const;
 	void ClearMidHism();
 	void AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot);
 	void RemoveMidHism(int32 SlotIndex);
