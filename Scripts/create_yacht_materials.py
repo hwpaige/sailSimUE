@@ -113,11 +113,21 @@ def build_pbr_graph(mat: unreal.Material, two_sided: bool, with_fresnel: bool) -
     unreal.MaterialEditingLibrary.recompile_material(mat)
 
 
+def enable_instanced_usage(mat) -> None:
+    """Scenery HISM draws nothing unless yacht parents allow instanced static meshes."""
+    if not mat:
+        return
+    mat.set_editor_property("used_with_instanced_static_meshes", True)
+
+
 def create_or_load_master(name: str, two_sided: bool, with_fresnel: bool) -> unreal.Material:
     path = f"{FOLDER}/{name}"
     if unreal.EditorAssetLibrary.does_asset_exist(path):
         unreal.log(f"Exists: {path}")
-        return unreal.EditorAssetLibrary.load_asset(path)
+        mat = unreal.EditorAssetLibrary.load_asset(path)
+        enable_instanced_usage(mat)
+        unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)
+        return mat
 
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
     factory = unreal.MaterialFactoryNew()
@@ -125,6 +135,7 @@ def create_or_load_master(name: str, two_sided: bool, with_fresnel: bool) -> unr
     if not mat:
         raise RuntimeError(f"Failed to create {name}")
     build_pbr_graph(mat, two_sided=two_sided, with_fresnel=with_fresnel)
+    enable_instanced_usage(mat)
     unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)
     unreal.log(f"Created master {path}")
     return mat
@@ -334,6 +345,7 @@ def create_hull_paint_master() -> unreal.Material:
 
     unreal.MaterialEditingLibrary.layout_material_expressions(mat)
     unreal.MaterialEditingLibrary.recompile_material(mat)
+    enable_instanced_usage(mat)
     unreal.EditorAssetLibrary.save_asset(path, only_if_is_dirty=False)
     unreal.log(
         f"Created hull paint master {path} (clearcoat={b_clear} cc_pins={prop_cc_amt is not None})"
