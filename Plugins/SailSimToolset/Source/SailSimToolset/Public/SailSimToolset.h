@@ -24,10 +24,27 @@ public:
 	 * Lit screenshot of the possessed ASailBoatPawn from its camera boom during PIE.
 	 * Renders PlayWorld->Scene directly (not the free editor camera, not the editor viewport grid).
 	 * MinWorldSeconds: require the PIE world to have been running at least this long (0 skips the time gate).
+	 * FramingPreset (SailSim_Ocean known-good pawn teleports; empty = leave boat where it is):
+	 *   midHarborMoored — Nantucket Harbor basin (FNavGeo::BoatStart); moored hulls visible L/R of player
+	 *   gelcoatHull     — same basin, yawed for close lit gelcoat / near-hull fill
+	 *   horizon         — ~2.5 km north of harbor, open water / horizon
 	 * Fails with a coded error if PIE is down, the session boat is missing, or the boom transform is not usable.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
-	static FToolsetImage CapturePlayerView(float MinWorldSeconds = 0.5f);
+	static FToolsetImage CapturePlayerView(float MinWorldSeconds = 0.5f, const FString& FramingPreset = TEXT(""));
+
+	/**
+	 * One-shot Prefer-ON gate for Ops. Composes existing tools (does not rewrite them):
+	 * 1) EnsurePIE (already-playing = success; expects SailSim_Ocean)
+	 * 2) SetCVars Prefer-ON stick (Lumen Reflections Allow=1, DownsampleFactor=2 / DSF2)
+	 * 3) Short settle pump (viewport present) until frame samples stabilize
+	 * 4) Assert hud.moored == 16 from SailSimGetPerf / GetPerfSnapshot; else failCode=moored_count
+	 * 5) CapturePlayerView FramingPreset=midHarborMoored (noon Lit CPV saved under Saved/Screenshots)
+	 * 6) JSON: {frameMs_avg, fps, moored, cpvPath, sha, ok, failCode?}
+	 * Does not change MaxBoats / moored strip / forced LOD. ProfileGPUDump stays parked.
+	 */
+	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
+	static FString RunPreferOnGate();
 
 	/**
 	 * Find actors by case-insensitive substring on name, label, or class

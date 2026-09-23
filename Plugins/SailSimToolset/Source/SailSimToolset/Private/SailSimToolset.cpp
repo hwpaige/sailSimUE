@@ -34,6 +34,11 @@
 #include "PlayInEditorDataTypes.h"
 #include "RenderingThread.h"
 #include "Sailing/SailSimPerf.h"
+#include "Sailing/Nav/NavGeo.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "Modules/ModuleManager.h"
+#include "Misc/DateTime.h"
 #include "SceneManagement.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -808,9 +813,177 @@ namespace SailSimToolsetPrivate
 		}
 		return Path;
 	}
+
+	/** Prefer-ON stick used by RunPreferOnGate (DSF2). Does not touch MaxBoats. */
+	static const TCHAR* PreferOnCVarBlock()
+	{
+		return TEXT(
+			"r.Lumen.Reflections.Allow=1\n"
+			"r.Lumen.Reflections.DownsampleFactor=2");
+	}
+
+	static FString ReadGitShaShort()
+	{
+		const FString GitDir = FPaths::Combine(FPaths::ProjectDir(), TEXT(".git"));
+		FString Head;
+		if (!FFileHelper::LoadFileToString(Head, *FPaths::Combine(GitDir, TEXT("HEAD"))))
+		{
+			return TEXT("unknown");
+		}
+		Head.TrimStartAndEndInline();
+		if (Head.StartsWith(TEXT("ref:")))
+		{
+			const FString Ref = Head.Mid(4).TrimStartAndEnd();
+			FString Sha;
+			if (FFileHelper::LoadFileToString(Sha, *FPaths::Combine(GitDir, Ref)))
+			{
+				Sha.TrimStartAndEndInline();
+				return Sha.Left(7);
+			}
+			return TEXT("unknown");
+		}
+		return Head.Left(7);
+	}
+
+	struct FFramingPreset
+	{
+		FString Name;
+		FVector2D XYOffsetCm = FVector2D::ZeroVector; // relative to BoatStart, +X north +Y east
+		float YawDeg = 90.f;
+		FString Note;
+	};
+
+	static bool ResolveFramingPreset(const FString& NameIn, FFramingPreset& Out, FString& OutError)
+	{
+		const FString Name = NameIn.TrimStartAndEnd();
+		if (Name.IsEmpty())
+		{
+			OutError = TEXT("empty");
+			return false;
+		}
+		const FString Key = Name.ToLower();
+		Out.Name = Name;
+		if (Key == TEXT("midharbormoored") || Key == TEXT("mid_harbor_moored"))
+		{
+			// Nantucket Harbor inner basin (FNavGeo::BoatStart). Moored fleet prefers near harbor.
+			Out.XYOffsetCm = FVector2D::ZeroVector;
+			Out.YawDeg = FNavGeo::BoatStartHeadingDeg; // 90 east — moored hulls L/R of player
+			Out.Note = TEXT("FNavGeo::BoatStartWorldCm2D + BoatStartHeadingDeg (harbor basin)");
+			return true;
+		}
+		if (Key == TEXT("gelcoathull") || Key == TEXT("gelcoat_hull"))
+		{
+			// Same basin, yawed so boom fills with lit gelcoat / near hull.
+			Out.XYOffsetCm = FVector2D(-1200.f, 600.f);
+			Out.YawDeg = 135.f;
+			Out.Note = TEXT("BoatStart + (-12m N, +6m E), yaw 135 for close gelcoat");
+			return true;
+		}
+		if (Key == TEXT("horizon"))
+		{
+			// ~2.5 km north of harbor — open water / horizon, away from moored strip.
+			Out.XYOffsetCm = FVector2D(250000.f, 0.f);
+			Out.YawDeg = 0.f;
+			Out.Note = TEXT("BoatStart + 2.5km north, yaw 0 (horizon)");
+			return true;
+		}
+		OutError = FString::Printf(
+			TEXT("unknown FramingPreset '%s' (expected midHarborMoored|gelcoatHull|horizon)"), *Name);
+		return false;
+	}
+
+	/**
+	 * Teleport possessed SailBoatPawn to a SailSim_Ocean framing preset.
+	 * Preserves current Z (water snap already applied by game). Clears physics velocity if present.
+	 */
+	static bool ApplyFramingPreset(UWorld* PlayWorld, const FString& PresetName, FString& OutError, FString& OutApplied)
+	{
+		OutApplied.Reset();
+		if (PresetName.TrimStartAndEnd().IsEmpty())
+		{
+			return true;
+		}
+		FFramingPreset Preset;
+		if (!ResolveFramingPreset(PresetName, Preset, OutError))
+		{
+			return false;
+		}
+		AActor* Boat = FindPossessedSailBoat(PlayWorld);
+		if (!Boat)
+		{
+			OutError = TEXT("no possessed ASailBoatPawn to teleport");
+			return false;
+		}
+		const FVector2D Harbor = FNavGeo::BoatStartWorldCm2D();
+		const FVector Cur = Boat->GetActorLocation();
+		FVector NewLoc(Harbor.X + Preset.XYOffsetCm.X, Harbor.Y + Preset.XYOffsetCm.Y, Cur.Z);
+		const FRotator NewRot(0.f, Preset.YawDeg, 0.f);
+		Boat->SetActorLocationAndRotation(NewLoc, NewRot, false, nullptr, ETeleportType::TeleportPhysics);
+		if (UPrimitiveComponent* RootPrim = Cast<UPrimitiveComponent>(Boat->GetRootComponent()))
+		{
+			RootPrim->SetPhysicsLinearVelocity(FVector::ZeroVector);
+			RootPrim->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+		}
+		// Extend spring arm after teleport so ResolveBoomView does not see a collapsed boom.
+		if (USpringArmComponent* Arm = Boat->FindComponentByClass<USpringArmComponent>())
+		{
+			Arm->TickComponent(0.016f, ELevelTick::LEVELTICK_All, nullptr);
+		}
+		OutApplied = FString::Printf(
+			TEXT("%s loc=(%.0f,%.0f,%.0f) yaw=%.0f note=%s"),
+			*Preset.Name, NewLoc.X, NewLoc.Y, NewLoc.Z, Preset.YawDeg, *Preset.Note);
+		UE_LOG(LogTemp, Display, TEXT("CapturePlayerView framing %s"), *OutApplied);
+		return true;
+	}
+
+	static int32 PumpViewportFrames(UWorld* PlayWorld, int32 MaxFrames, float MaxSeconds)
+	{
+		FString ViewportSource;
+		FViewport* Viewport = FindFrameViewport(PlayWorld, ViewportSource);
+		if (!Viewport)
+		{
+			return 0;
+		}
+		const double Deadline = FPlatformTime::Seconds() + MaxSeconds;
+		int32 Frames = 0;
+		while (Frames < MaxFrames && FPlatformTime::Seconds() < Deadline)
+		{
+			Viewport->Draw();
+			FlushRenderingCommands();
+			++Frames;
+		}
+		return Frames;
+	}
+
+	static bool SaveBitmapPng(const TArray<FColor>& Bitmap, int32 Width, int32 Height, const FString& AbsPath, FString& OutError)
+	{
+		IImageWrapperModule& ImageWrapperModule =
+			FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+		TSharedPtr<IImageWrapper> Png = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+		if (!Png.IsValid()
+			|| !Png->SetRaw(Bitmap.GetData(), Bitmap.Num() * sizeof(FColor), Width, Height, ERGBFormat::BGRA, 8))
+		{
+			OutError = TEXT("png_encode_failed");
+			return false;
+		}
+		const TArray64<uint8>& Compressed = Png->GetCompressed();
+		if (!FFileHelper::SaveArrayToFile(Compressed, *AbsPath))
+		{
+			OutError = TEXT("png_write_failed");
+			return false;
+		}
+		return true;
+	}
+
+	static bool LevelLooksLikeOcean(const FString& PackagePath)
+	{
+		return PackagePath.Contains(TEXT("SailSim_Ocean"), ESearchCase::IgnoreCase);
+	}
+
+
 }
 
-FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds)
+FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FString& FramingPreset)
 {
 	FToolsetImage Out;
 
@@ -834,6 +1007,22 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds)
 			MinWorldSeconds,
 			SailSimToolsetPrivate::IsStreamingBusy(PlayWorld) ? TEXT("true") : TEXT("false")));
 		return Out;
+	}
+
+	{
+		FString FramingError;
+		FString FramingApplied;
+		if (!SailSimToolsetPrivate::ApplyFramingPreset(PlayWorld, FramingPreset, FramingError, FramingApplied))
+		{
+			UKismetSystemLibrary::RaiseScriptError(FString::Printf(TEXT(
+				"CapturePlayerView code=bad_framing: %s"), *FramingError));
+			return Out;
+		}
+		if (!FramingApplied.IsEmpty())
+		{
+			// One present so streaming / spring arm catch the teleport before capture.
+			SailSimToolsetPrivate::PumpViewportFrames(PlayWorld, 2, 0.5f);
+		}
 	}
 
 	SailSimToolsetPrivate::FBoomView Boom;
@@ -1516,4 +1705,224 @@ FString USailSimToolset::LoadMap(const FString& MapPath)
 	Obj->SetStringField(TEXT("code"), bLoaded ? TEXT("loaded") : TEXT("load_failed"));
 	Obj->SetStringField(TEXT("error"), bLoaded ? TEXT("") : TEXT("FEditorFileUtils::LoadMap returned false."));
 	return SailSimToolsetPrivate::JsonString(Obj);
+}
+
+FString USailSimToolset::RunPreferOnGate()
+{
+	using namespace SailSimToolsetPrivate;
+	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	const FString Sha = ReadGitShaShort();
+	Root->SetStringField(TEXT("sha"), Sha);
+	Root->SetBoolField(TEXT("ok"), false);
+
+	auto Fail = [&](const FString& Code, const FString& Error) -> FString
+	{
+		Root->SetBoolField(TEXT("ok"), false);
+		Root->SetStringField(TEXT("failCode"), Code);
+		Root->SetStringField(TEXT("error"), Error);
+		if (!Root->HasField(TEXT("moored")))
+		{
+			Root->SetNumberField(TEXT("moored"), -1);
+		}
+		if (!Root->HasField(TEXT("frameMs_avg")))
+		{
+			Root->SetNumberField(TEXT("frameMs_avg"), 0);
+		}
+		if (!Root->HasField(TEXT("fps")))
+		{
+			Root->SetNumberField(TEXT("fps"), 0);
+		}
+		if (!Root->HasField(TEXT("cpvPath")))
+		{
+			Root->SetStringField(TEXT("cpvPath"), TEXT(""));
+		}
+		UE_LOG(LogTemp, Error, TEXT("RunPreferOnGate FAIL code=%s sha=%s err=%s"), *Code, *Sha, *Error);
+		return JsonString(Root);
+	};
+
+	if (!GEditor)
+	{
+		return Fail(TEXT("no_editor"), TEXT("editor not available"));
+	}
+
+	// Map check: Prefer-ON gate is SailSim_Ocean only.
+	FString EditorLevel;
+	if (UWorld* EditorWorld = GEditor->GetEditorWorldContext().World())
+	{
+		EditorLevel = EditorWorld->GetOutermost() ? EditorWorld->GetOutermost()->GetName() : EditorWorld->GetMapName();
+	}
+	UWorld* PlayWorld = GetPlayWorld();
+	FString PieLevel;
+	if (PlayWorld)
+	{
+		PieLevel = PlayWorld->GetOutermost() ? PlayWorld->GetOutermost()->GetName() : PlayWorld->GetName();
+	}
+	const FString LevelForCheck = !PieLevel.IsEmpty() ? PieLevel : EditorLevel;
+	if (!LevelLooksLikeOcean(LevelForCheck))
+	{
+		return Fail(
+			TEXT("wrong_map"),
+			FString::Printf(
+				TEXT("expected SailSim_Ocean, got EditorLevel=%s PIELevel=%s (LoadMap then EnsurePIE; do not kill the editor)"),
+				*EditorLevel, *PieLevel));
+	}
+
+	// 1) EnsurePIE — already-playing = success. Request if down; one short pump; else fail.
+	if (!PlayWorld)
+	{
+		RequestOrDescribePIE(0.5f);
+		PumpViewportFrames(nullptr, 4, 1.0f);
+		PlayWorld = GetPlayWorld();
+		if (!PlayWorld)
+		{
+			return Fail(
+				TEXT("pie_not_running"),
+				TEXT("EnsurePIE queued but PIE is not up yet. Retry RunPreferOnGate after the editor ticks (do not kill UnrealEditor)."));
+		}
+	}
+
+	// 2) Prefer-ON cvars (DSF2 stick)
+	const FString CVarResult = USailSimToolset::SetCVars(PreferOnCVarBlock());
+	Root->SetStringField(TEXT("cvars"), CVarResult);
+
+	// 3) Settle — teleport mid-harbor first so moored stream in, then pump + sample.
+	{
+		FString FramingError;
+		FString FramingApplied;
+		if (!ApplyFramingPreset(PlayWorld, TEXT("midHarborMoored"), FramingError, FramingApplied))
+		{
+			return Fail(TEXT("bad_framing"), FramingError);
+		}
+		Root->SetStringField(TEXT("framing"), FramingApplied);
+	}
+
+	TArray<float> FrameSamples;
+	TArray<float> FpsSamples;
+	int32 LastMoored = -1;
+	const int32 Pumped = PumpViewportFrames(PlayWorld, 8, 2.0f);
+	Root->SetNumberField(TEXT("framesPumped"), Pumped);
+	for (int32 I = 0; I < 5; ++I)
+	{
+		PumpViewportFrames(PlayWorld, 1, 0.35f);
+		const FSailSimPerf& Perf = SailSimGetPerf();
+		const float FrameMs = GAverageMS;
+		const float Fps = GAverageFPS > 0.f ? GAverageFPS : (FrameMs > 0.1f ? 1000.f / FrameMs : 0.f);
+		FrameSamples.Add(FrameMs);
+		FpsSamples.Add(Fps);
+		LastMoored = Perf.MooredCount;
+	}
+
+	float FrameSum = 0.f;
+	float FpsSum = 0.f;
+	for (float V : FrameSamples) { FrameSum += V; }
+	for (float V : FpsSamples) { FpsSum += V; }
+	const float FrameAvg = FrameSamples.Num() > 0 ? FrameSum / FrameSamples.Num() : 0.f;
+	const float FpsAvg = FpsSamples.Num() > 0 ? FpsSum / FpsSamples.Num() : 0.f;
+	Root->SetNumberField(TEXT("frameMs_avg"), FrameAvg);
+	Root->SetNumberField(TEXT("fps"), FpsAvg);
+	Root->SetNumberField(TEXT("moored"), LastMoored);
+	FString CpvPath;
+
+	// 4) Assert moored == 16
+	if (LastMoored != 16)
+	{
+		return Fail(
+			TEXT("moored_count"),
+			FString::Printf(
+				TEXT("expected moored=16 from MooredBoatSubsystem/FSailSimPerf, got %d (Prefer-ON gate does not deepen moored LOD)"),
+				LastMoored));
+	}
+
+	// 5) Noon CPV — same path as CapturePlayerView (midHarborMoored already applied); save PNG for cpvPath.
+	{
+		FBoomView Boom;
+		FString BoomError;
+		if (!ResolveBoomView(PlayWorld, Boom, BoomError))
+		{
+			return Fail(TEXT("cpv_no_boom"), BoomError);
+		}
+		const int32 Width = 1920;
+		const int32 Height = 1080;
+		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
+		RT->RenderTargetFormat = RTF_RGBA8;
+		RT->ClearColor = FLinearColor(1.f, 0.f, 1.f, 1.f);
+		RT->bAutoGenerateMips = false;
+		RT->InitAutoFormat(Width, Height);
+		RT->UpdateResourceImmediate(true);
+		const FRooted RootedRT(RT);
+		FString CaptureError;
+		{
+			FScopedConditionalWorldSwitcher PlayScope(PlayWorld);
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.ObjectFlags |= RF_Transient;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			ASceneCapture2D* CaptureActor = PlayWorld->SpawnActor<ASceneCapture2D>(
+				Boom.Location, Boom.Rotation, SpawnParams);
+			if (!CaptureActor || CaptureActor->GetWorld() != PlayWorld)
+			{
+				if (CaptureActor) { CaptureActor->Destroy(); }
+				CaptureError = TEXT("wrong_world");
+			}
+			else
+			{
+				USceneCaptureComponent2D* Cap = CaptureActor->GetCaptureComponent2D();
+				Cap->TextureTarget = RT;
+				Cap->FOVAngle = Boom.FOV;
+				Cap->bCaptureEveryFrame = false;
+				Cap->bCaptureOnMovement = false;
+				Cap->bAlwaysPersistRenderingState = true;
+				Cap->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+				Cap->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
+				ApplyLitGameShowFlags(Cap->ShowFlags);
+				Cap->SetWorldLocationAndRotation(Boom.Location, Boom.Rotation);
+				if (!Cap->IsRegistered()) { Cap->RegisterComponent(); }
+				Cap->MarkRenderStateDirty();
+				for (int32 Pass = 0; Pass < 2; ++Pass)
+				{
+					PlayWorld->SendAllEndOfFrameUpdates();
+					Cap->CaptureScene();
+					FlushRenderingCommands();
+				}
+				CaptureActor->Destroy();
+			}
+		}
+		if (!CaptureError.IsEmpty())
+		{
+			return Fail(TEXT("cpv_failed"), CaptureError);
+		}
+		FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
+		TArray<FColor> Bitmap;
+		if (!RTResource || !RTResource->ReadPixels(Bitmap) || Bitmap.Num() != Width * Height)
+		{
+			return Fail(TEXT("cpv_read_failed"), TEXT("ReadPixels failed"));
+		}
+		if (BitmapIsSentinel(Bitmap))
+		{
+			return Fail(TEXT("cpv_sentinel"), TEXT("magenta clear — capture did not write"));
+		}
+		for (FColor& Pixel : Bitmap) { Pixel.A = 255; }
+
+		const FString ShotDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Screenshots"), TEXT("SailSim"));
+		IFileManager::Get().MakeDirectory(*ShotDir, true);
+		const FString FileName = FString::Printf(
+			TEXT("ocean-%s-preferON-midHarborMoored-%s.png"),
+			*Sha,
+			*FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S")));
+		const FString AbsPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ShotDir, FileName));
+		FString SaveError;
+		if (!SaveBitmapPng(Bitmap, Width, Height, AbsPath, SaveError))
+		{
+			return Fail(TEXT("cpv_save_failed"), SaveError);
+		}
+		Root->SetStringField(TEXT("cpvPath"), AbsPath);
+		CpvPath = AbsPath;
+	}
+
+	Root->SetBoolField(TEXT("ok"), true);
+	Root->SetStringField(TEXT("failCode"), TEXT(""));
+	Root->SetStringField(TEXT("error"), TEXT(""));
+	UE_LOG(LogTemp, Display,
+		TEXT("RunPreferOnGate OK sha=%s moored=%d frameMs_avg=%.2f fps=%.1f cpv=%s"),
+		*Sha, LastMoored, FrameAvg, FpsAvg, *CpvPath);
+	return JsonString(Root);
 }

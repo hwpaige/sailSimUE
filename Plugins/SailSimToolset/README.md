@@ -40,6 +40,35 @@ Coded errors (script error text, no image):
 | `wrong_world` | Capture actor was not spawned in the PIE world. |
 | `capture_did_not_write` | Render target is still the magenta clear. |
 | `read_failed` / `encode_failed` | Pixel read or PNG encode failed. |
+| `bad_framing` | Unknown `FramingPreset` string. |
+
+### FramingPreset (SailSim_Ocean)
+
+Optional second arg. Teleports the possessed pawn before capture (empty = leave boat where it is). Origins from `FNavGeo::BoatStartWorldCm2D()` (Nantucket Harbor 41.2850°N, 70.0900°W):
+
+| preset | transform |
+| --- | --- |
+| `midHarborMoored` | Harbor basin + `BoatStartHeadingDeg` (90° east). Moored hulls visible L/R of player — fixes empty-water density FAILs. |
+| `gelcoatHull` | Harbor + (−12 m N, +6 m E), yaw 135° — close lit gelcoat / near-hull fill. |
+| `horizon` | Harbor + 2.5 km north, yaw 0° — open water / horizon. |
+
+## RunPreferOnGate
+
+One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) → settle pump → assert `moored==16` → midHarborMoored CPV.
+
+```
+SailSimToolset.RunPreferOnGate
+```
+
+Returns JSON:
+
+```
+{ "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 16,
+  "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-....png",
+  "sha": "018b9ab", "failCode": "", "error": "" }
+```
+
+`failCode` values: `wrong_map`, `pie_not_running`, `moored_count` (≠16 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. Does not change MaxBoats / moored strip / forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
 
 ## StartPIE / EnsurePIE
 
@@ -108,8 +137,12 @@ Package path, or a short name under `/Game/Maps/` (`SailSim_Ocean` → `/Game/Ma
 
 ## Gate sequence
 
+**Prefer-ON (one call):** `RunPreferOnGate` — EnsurePIE + DSF2 SetCVars + moored=16 assert + midHarborMoored CPV.
+
+Manual / Design:
+
 1. `EnsurePIE` or `StartPIE` until `code` is `running` and `Settled` is true.
 2. `GetPlayerCameraTransform` — `source` is `SpringArmSocket`, location is next to the boat.
-3. `CapturePlayerView` — Lit hull from that boom. Accept only an image whose log line is `CapturePlayerView OK`.
+3. `CapturePlayerView` with `FramingPreset=midHarborMoored|gelcoatHull|horizon` — Lit from that boom. Accept only an image whose log line is `CapturePlayerView OK`.
 4. `GetPerfSnapshot` for `moored=`, `aids=`, `tiles T=`.
-5. `SetCVars` / `ExecuteConsole` for Prefer-ON A/Bs, then `ProfileGPUDump` for the pass split.
+5. `SetCVars` / `ExecuteConsole` for Prefer-ON A/Bs. `ProfileGPUDump` optional (parked for parse cost on the Prefer-ON gate).
