@@ -35,6 +35,7 @@
 #include "RenderingThread.h"
 #include "Sailing/SailSimPerf.h"
 #include "Sailing/Nav/NavGeo.h"
+#include "Sailing/Nav/MooredBoatSubsystem.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
@@ -1839,14 +1840,35 @@ FString USailSimToolset::RunPreferOnGate()
 	Root->SetNumberField(TEXT("moored"), LastMoored);
 	FString CpvPath;
 
-	// 4) Assert moored == 16
-	if (LastMoored != 16)
+	// 4) Assert mid-harbor moored field is AAA-filled (Static HISM scenery budget).
+	// MaxBoats / NearFull stay heroes-only; Prefer-ON expects filled midHarborMoored.
+	int32 SceneryBudget = 96;
+	int32 SlotCount = -1;
+	if (UMooredBoatSubsystem* Moored = PlayWorld->GetSubsystem<UMooredBoatSubsystem>())
+	{
+		SceneryBudget = FMath::Max(1, Moored->MooringSceneryInstanceCount);
+		SlotCount = Moored->GetSlotCount();
+		if (APlayerController* PC = PlayWorld->GetFirstPlayerController())
+		{
+			if (APawn* Pawn = PC->GetPawn())
+			{
+				Moored->ForceStreamAround(Pawn->GetActorLocation());
+			}
+		}
+		PumpViewportFrames(PlayWorld, 4, 1.0f);
+		LastMoored = SailSimGetPerf().MooredCount;
+		Root->SetNumberField(TEXT("moored"), LastMoored);
+	}
+	Root->SetNumberField(TEXT("mooringSceneryBudget"), SceneryBudget);
+	Root->SetNumberField(TEXT("mooredSlots"), SlotCount);
+	const int32 MinFilled = FMath::Max(48, (FMath::Min(SceneryBudget, SlotCount > 0 ? SlotCount : SceneryBudget) * 2) / 3);
+	if (LastMoored < MinFilled)
 	{
 		return Fail(
 			TEXT("moored_count"),
 			FString::Printf(
-				TEXT("expected moored=16 from MooredBoatSubsystem/FSailSimPerf, got %d (Prefer-ON gate does not deepen moored LOD)"),
-				LastMoored));
+				TEXT("expected mid-harbor filled moored>=%d (scenery budget %d slots=%d), got %d — Design midHarborMoored PASS needs boats not empty water"),
+				MinFilled, SceneryBudget, SlotCount, LastMoored));
 	}
 
 	// 5) Noon CPV — same path as CapturePlayerView (midHarborMoored already applied); save PNG for cpvPath.

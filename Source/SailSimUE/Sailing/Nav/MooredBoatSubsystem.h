@@ -113,15 +113,24 @@ public:
 	bool bEnabled = true;
 
 	/**
-	 * Cap on selected moorings that get a boat (near full + mid HISM combined).
-	 * Full multi-component actors only within NearFullRadiusCm; rest are HISM hulls.
+	 * Legacy Prefer-ON full-system reference (do not raise for harbor fill).
+	 * Live NearFull heroes = MaxNearFullBoats. Harbor AAA fill =
+	 * MooringSceneryInstanceCount (Static HISM, additive).
 	 */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "4", ClampMax = "120"))
-	int32 MaxBoats = 16; // keep 16 (Prefer-ON density PASS); deepen via static/HISM, not count cut
+	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "1", ClampMax = "32"))
+	int32 MaxBoats = 16;
 
-	/** Fraction of floating moorings that get a boat (before MaxBoats). */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "0.8"))
-	float OccupancyFraction = 0.28f;
+	/**
+	 * Static HISM scenery budget for the mooring field (shared hull SM + Yacht mats).
+	 * Independent of MaxBoats / MaxNearFullBoats. Default ~96; scalable toward hundreds.
+	 * World may add mesh variants later — keep shared MAT slots only (no unique MIDs per instance).
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
+	int32 MooringSceneryInstanceCount = 96;
+
+	/** Soft occupancy hint vs floating mooring count; hard fill cap = MooringSceneryInstanceCount. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float OccupancyFraction = 0.40f;
 
 	/** Min spacing between moored boat origins (cm). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
@@ -275,6 +284,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
 	int32 GetMidHismCount() const { return MidHismSlotToInstance.Num(); }
+
+	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
+	int32 GetMooringSceneryBudget() const { return MooringSceneryInstanceCount; }
 
 	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
 	FString GetStatusLine() const;

@@ -14,7 +14,7 @@ Routing:
 
 Prints JSON: {frameMs_avg,fps,moored,cpvPath,sha,ok,failCode}
 
-Does NOT change MaxBoats / moored deepen. ProfileGPUDump stays parked.
+Does NOT raise MaxBoats (heroes stay MaxNearFull). Expects filled HISM scenery. ProfileGPUDump stays parked.
 Does NOT kill UnrealEditor.
 
 Env:
@@ -41,7 +41,10 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_URL = "http://127.0.0.1:8765/mcp"
 DEFAULT_PORT = 8765
 PREFER_ON_CVARS = "r.Lumen.Reflections.Allow=1\nr.Lumen.Reflections.DownsampleFactor=2"
-TARGET_MOORED = 16
+# Filled mid-harbor HISM scenery (MooringSceneryInstanceCount default 96).
+# Pass when moored >= MIN; exact 16 was MaxBoats-era Prefer-ON density.
+TARGET_MOORED_MIN = 64
+TARGET_MOORED = 96  # soft target / docs; assert uses MIN
 META_TOOL_NAMES = frozenset({"list_toolsets", "describe_toolset", "call_tool"})
 SAILSIM_TOOLSET_CANDIDATES = (
     "SailSimToolset.SailSimToolset",
@@ -694,7 +697,7 @@ def poll_moored(router: ToolRouter, timeout_s: float) -> Tuple[Dict[str, Any], L
         if fps > 0:
             fpss.append(fps)
         last["_moored"] = moored_i
-        if moored_i == TARGET_MOORED:
+        if moored_i >= TARGET_MOORED_MIN:
             return last, frames, fpss
         time.sleep(0.75)
     return last, frames, fpss
@@ -825,9 +828,12 @@ def compose_gate(router: ToolRouter, timeout_s: float) -> Dict[str, Any]:
     elif out["frameMs_avg"] > 0.1:
         out["fps"] = 1000.0 / out["frameMs_avg"]
 
-    if moored != TARGET_MOORED:
+    if moored < TARGET_MOORED_MIN:
         out["failCode"] = "moored_count"
-        out["error"] = f"expected moored={TARGET_MOORED}, got {moored}"
+        out["error"] = (
+            f"expected mid-harbor filled moored>={TARGET_MOORED_MIN} "
+            f"(scenery target ~{TARGET_MOORED}), got {moored}"
+        )
         return out
 
     cpv_path, fail, ok = capture_player_view(router)

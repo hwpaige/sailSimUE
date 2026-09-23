@@ -163,8 +163,9 @@ TStatId UMooredBoatSubsystem::GetStatId() const
 
 FString UMooredBoatSubsystem::GetStatusLine() const
 {
-	return FString::Printf(TEXT("moored near=%d hism=%d (cap %d)"),
-		Resident.Num(), MidHismSlotToInstance.Num(), MaxBoats);
+	return FString::Printf(TEXT("moored near=%d hism=%d (scenery %d / heroes MaxBoats=%d NearFull≤%d)"),
+		Resident.Num(), MidHismSlotToInstance.Num(), MooringSceneryInstanceCount,
+		MaxBoats, MaxNearFullBoats);
 }
 
 bool UMooredBoatSubsystem::ResolveAidsPath(FString& OutPath) const
@@ -250,8 +251,12 @@ bool UMooredBoatSubsystem::ReloadSlots()
 		return MooredBoatPrivate::Hash01(A.StableId, 11) < MooredBoatPrivate::Hash01(B.StableId, 11);
 	});
 
-	const int32 Target = FMath::Clamp(
-		FMath::RoundToInt(Cands.Num() * OccupancyFraction), 1, MaxBoats);
+	// AAA harbor fill = Static HISM scenery budget (additive). MaxBoats / NearFull
+	// stay heroes-only and do not cap this count. OccupancyFraction is a soft
+	// density hint logged only — MooringSceneryInstanceCount is the hard budget.
+	const int32 OccHint = FMath::Clamp(
+		FMath::RoundToInt(Cands.Num() * OccupancyFraction), 1, Cands.Num());
+	const int32 Target = FMath::Clamp(MooringSceneryInstanceCount, 1, Cands.Num());
 	const float MinSp2 = MinBoatSpacingCm * MinBoatSpacingCm;
 	const float PreferR2 = PreferNearHarborCm * PreferNearHarborCm;
 	TArray<FVector> ChosenXY;
@@ -292,8 +297,8 @@ bool UMooredBoatSubsystem::ReloadSlots()
 
 	bSlotsReady = Slots.Num() > 0;
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: %d slots from %d floating moorings (target=%d) windFrom=%.0f°"),
-		Slots.Num(), Cands.Num(), Target, WindFromDeg);
+		TEXT("MooredBoats: %d slots from %d floating moorings (target=%d scenery=%d occHint=%d MaxBoats=%d) windFrom=%.0f°"),
+		Slots.Num(), Cands.Num(), Target, MooringSceneryInstanceCount, OccHint, MaxBoats, WindFromDeg);
 	return bSlotsReady;
 }
 
@@ -2059,6 +2064,27 @@ void UMooredBoatSubsystem::RebuildAround(const FVector& Focus)
 		}
 	}
 
+	// Cap Static HISM to MooringSceneryInstanceCount (closest to focus).
+	if (MooringSceneryInstanceCount > 0 && WantMid.Num() > MooringSceneryInstanceCount)
+	{
+		TArray<TPair<float, int32>> RankedMid;
+		RankedMid.Reserve(WantMid.Num());
+		for (int32 I : WantMid)
+		{
+			const FVector2D P(Slots[I].MooringWorldCm.X, Slots[I].MooringWorldCm.Y);
+			RankedMid.Emplace(FVector2D::DistSquared(F2, P), I);
+		}
+		RankedMid.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B)
+		{
+			return A.Key < B.Key;
+		});
+		WantMid.Reset();
+		for (int32 R = 0; R < RankedMid.Num() && R < MooringSceneryInstanceCount; ++R)
+		{
+			WantMid.Add(RankedMid[R].Value);
+		}
+	}
+
 	// Drop near actors no longer wanted (or demoted to mid).
 	TArray<int32> DropNear;
 	for (auto& Pair : Resident)
@@ -2166,7 +2192,11 @@ void UMooredBoatSubsystem::EnsureMidHism()
 	H->bDisallowNanite = !bHullUseNanite;
 	H->bNeverDistanceCull = false;
 	StripMooredReflectionCost(H);
-	H->SetCullDistances(MidHismRadiusCm * 0.5f, LoadRadiusCm * 1.1f);
+	// Start fade beyond mid band so mid-harbor stays readable boats (not dots);
+	// end cull past load radius for far-field scenery.
+	H->SetCullDistances(
+		FMath::Max(MidHismRadiusCm * 0.85f, 20000.f),
+		LoadRadiusCm * 1.25f);
 	ApplyHullMaterialsToStaticMesh(H);
 	H->RegisterComponent();
 	Owner->AddInstanceComponent(H);
