@@ -896,7 +896,7 @@ void UMooredBoatSubsystem::ApplyHullTo(UProceduralMeshComponent* Hull) const
 	Hull->bUseComplexAsSimpleCollision = false;
 	Hull->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Hull->SetCastShadow(true);
-	StripMooredReflectionCost(Hull, /*bForceCheapLod*/ false);
+	StripMooredReflectionCost(Hull);
 	Hull->SetReceivesDecals(false);
 	Hull->SetVisibility(true);
 	Hull->SetHiddenInGame(false);
@@ -953,29 +953,19 @@ void UMooredBoatSubsystem::DisableAllCastShadows(UPrimitiveComponent* Prim)
 	Prim->bCastVolumetricTranslucentShadow = false;
 	Prim->bCastInsetShadow = false;
 	Prim->bSelfShadowOnly = false;
-	StripMooredReflectionCost(Prim, /*bForceCheapLod*/ false);
+	StripMooredReflectionCost(Prim);
 }
 
-void UMooredBoatSubsystem::StripMooredReflectionCost(UPrimitiveComponent* Prim, bool bForceCheapLod)
+void UMooredBoatSubsystem::StripMooredReflectionCost(UPrimitiveComponent* Prim)
 {
 	if (!Prim) return;
-	// Keep main-pass visibility; remove from reflection / Lumen / DF paths that
-	// dominate SLW::LumenReflections when moored=16 sits on the water.
+	// Keep main-pass + auto LODs (8249a15 forced LOD1 crushed mid-harbor hulls into dots).
+	// Only strip reflection / Lumen / DF contribution that feeds SLW::LumenReflections.
 	Prim->bVisibleInReflectionCaptures = false;
 	Prim->SetVisibleInRayTracing(false);
 	Prim->SetAffectDistanceFieldLighting(false);
 	Prim->bAffectDynamicIndirectLighting = false;
 	Prim->bAffectIndirectLightingWhileHidden = false;
-	if (bForceCheapLod)
-	{
-		// Force LOD1+ on static meshes so water-visible silhouettes stay cheap.
-		if (UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(Prim))
-		{
-			Smc->SetForcedLodModel(2); // 0 = auto, 1 = LOD0, 2 = LOD1
-			Smc->bOverrideMinLOD = true;
-			Smc->MinLOD = 1;
-		}
-	}
 	Prim->MarkRenderStateDirty();
 }
 
@@ -1444,7 +1434,7 @@ void UMooredBoatSubsystem::AddStandingRigging(AActor* Boat, USceneComponent* Roo
 		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		C->SetCastShadow(false);
 		C->bNeverDistanceCull = true;
-		StripMooredReflectionCost(C, /*bForceCheapLod*/ true);
+		StripMooredReflectionCost(C);
 		C->RegisterComponent();
 		Boat->AddInstanceComponent(C);
 		return C;
@@ -1816,7 +1806,7 @@ AActor* UMooredBoatSubsystem::SpawnMooredBoat(const FMooredBoatSlot& Slot, int32
 		// Never force Nanite path if the mesh has Nanite off / we want crisp LODs.
 		HullSmc->bDisallowNanite = !bHullUseNanite;
 		HullSmc->bNeverDistanceCull = true;
-		StripMooredReflectionCost(HullSmc, /*bForceCheapLod*/ true);
+		StripMooredReflectionCost(HullSmc);
 		HullSmc->SetVisibility(true);
 		HullSmc->SetHiddenInGame(false);
 		ApplyHullMaterialsToStaticMesh(HullSmc);
@@ -1834,7 +1824,7 @@ AActor* UMooredBoatSubsystem::SpawnMooredBoat(const FMooredBoatSlot& Slot, int32
 		HullPmc->SetCastShadow(true);
 		HullPmc->SetReceivesDecals(false);
 		HullPmc->bNeverDistanceCull = true;
-		StripMooredReflectionCost(HullPmc, /*bForceCheapLod*/ false);
+		StripMooredReflectionCost(HullPmc);
 		HullPmc->RegisterComponent();
 		Boat->AddInstanceComponent(HullPmc);
 		ApplyHullTo(HullPmc);
@@ -2135,7 +2125,7 @@ void UMooredBoatSubsystem::EnsureMidHism()
 	H->SetCastShadow(false);
 	H->bDisallowNanite = !bHullUseNanite;
 	H->bNeverDistanceCull = false;
-	StripMooredReflectionCost(H, /*bForceCheapLod*/ true);
+	StripMooredReflectionCost(H);
 	H->SetCullDistances(MidHismRadiusCm * 0.5f, LoadRadiusCm * 1.1f);
 	ApplyHullMaterialsToStaticMesh(H);
 	H->RegisterComponent();
