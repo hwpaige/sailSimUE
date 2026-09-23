@@ -86,16 +86,40 @@ SailSimToolset.ExecuteConsole  →  Commands="SailSim.RunPreferOnGate"
 
 Live Coding that relinks `SailSimToolset` **does** pick up the `IConsoleManager` registration in `StartupModule` (console cmd works after Live Coding). MCP tool schema refresh still often needs a full editor module reload / editor restart — do **not** kill UnrealEditor without asking.
 
-### Compose script (schema-safe)
+### Ops standing rule — kill CRC before MCP gate
 
-When Live Coding has not refreshed MCP yet, compose Prefer-ON from existing tools:
+TCP **8765** must be owned by **UnrealEditor**. macOS CrashReportClient frequently steals that port after a crash / editor boot race. Before any Prefer-ON MCP gate:
+
+1. `lsof -nP -iTCP:8765 -sTCP:LISTEN` (or `sockstat`)
+2. If **CrashReportClient** (or anything that is not UnrealEditor) → kill CRC; do **not** kill UnrealEditor.
+3. If nothing is listening → start MCP (`ModelContextProtocol.StartServer` / `bAutoStartServer`).
+4. `Scripts/ops_run_prefer_on_gate.py` enforces this: `failCode=mcp_port_stolen` or `mcp_down`.
+
+### Compose script (schema-safe / tool-search)
+
+Unreal MCP tool-search advertises only meta-tools (`list_toolsets` / `describe_toolset` / `call_tool`). The ops script must **not** treat that as `missing_tools`.
 
 ```
 python3 Scripts/ops_run_prefer_on_gate.py
-# optional: SAILSIM_MCP_URL=http://127.0.0.1:8765/mcp SAILSIM_TIMEOUT_S=120
+# optional:
+#   SAILSIM_MCP_URL=http://127.0.0.1:8765/mcp
+#   SAILSIM_TIMEOUT_S=120
+#   SAILSIM_TOOLSET_WAIT_S=90   # wait/retry after editor boot / CRC clear
 ```
 
-Uses `Mcp-Session-Id`, then EnsurePIE → SetCVars (Prefer-ON / DSF2) → poll GetPerfSnapshot until `moored==16` → CapturePlayerView (`FramingPreset=midHarborMoored` if present in schema). Prints the same JSON shape.
+Flow:
+
+1. Port guard on `:8765` (see above).
+2. Initialize MCP session (`Mcp-Session-Id`).
+3. Wait/retry (default 30–90s, backoff) until `SailSimToolset.SailSimToolset` appears via `list_toolsets` + `describe_toolset`. Only then may it fail `missing_tools` with: *SailSimToolset not registered yet; kill CrashReportClient on :8765 and ensure Unreal MCP bound.*
+4. Prefer `call_tool` → `RunPreferOnGate` when describe shows it.
+5. Else compose via `call_tool` (toolset `SailSimToolset.SailSimToolset`): EnsurePIE → SetCVars (Prefer-ON / DSF2) → poll GetPerfSnapshot until `moored==16` → CapturePlayerView (`FramingPreset=midHarborMoored` if schema has it; else CPV + note).
+
+Console fallback (no MCP / schema still stale after Live Coding):
+
+```
+SailSim.RunPreferOnGate
+```
 
 ## StartPIE / EnsurePIE
 
