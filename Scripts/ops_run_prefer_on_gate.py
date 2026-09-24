@@ -60,6 +60,7 @@ GATE_REPORT_KEYS = (
     "heroesNear",
     "cpvPath",
     "captureSource",
+    "grab",
     "viewSource",
     "exposureFrames",
     "litOverride",

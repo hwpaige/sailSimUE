@@ -4,7 +4,6 @@
 
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
-#include "Components/SceneCaptureComponent2D.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "DynamicRHI.h"
@@ -13,8 +12,6 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/LevelStreaming.h"
-#include "Engine/SceneCapture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "FileHelpers.h"
@@ -43,7 +40,6 @@
 #include "Misc/DateTime.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
-#include "TextureResource.h"
 #include "UObject/UnrealType.h"
 #include "UnrealClient.h"
 
@@ -338,34 +334,6 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
-	/**
-	 * Show flags the PIE game viewport is already using.
-	 * Does not call ApplyViewMode(VMI_Lit) and does not change sky or time of day.
-	 */
-	static void ApplyLiveGameShowFlags(FEngineShowFlags& ShowFlags, UWorld* PlayWorld)
-	{
-		bool bCopied = false;
-		if (GEngine && PlayWorld)
-		{
-			if (UGameViewportClient* GameViewport = GEngine->GameViewportForWorld(PlayWorld))
-			{
-				if (FEngineShowFlags* Live = GameViewport->GetEngineShowFlags())
-				{
-					ShowFlags = *Live;
-					bCopied = true;
-				}
-			}
-		}
-		if (!bCopied)
-		{
-			ShowFlags = FEngineShowFlags(ESFIM_Game);
-		}
-		ShowFlags.SetGrid(false);
-		ShowFlags.SetModeWidgets(false);
-		ShowFlags.SetSelection(false);
-		ShowFlags.SetSelectionOutline(false);
-	}
-
 	static void AppendSettleFields(const TSharedRef<FJsonObject>& Obj, UWorld* PlayWorld, float MinWorldSeconds)
 	{
 		const bool bRunning = PlayWorld != nullptr;
@@ -500,49 +468,6 @@ namespace SailSimToolsetPrivate
 		Obj->SetBoolField(TEXT("Settled"), false);
 		Obj->SetNumberField(TEXT("MinWorldSeconds"), MinWorldSeconds);
 		return JsonString(Obj);
-	}
-
-	struct FRooted
-	{
-		UObject* Object = nullptr;
-
-		explicit FRooted(UObject* InObject)
-			: Object(InObject)
-		{
-			if (Object)
-			{
-				Object->AddToRoot();
-			}
-		}
-
-		~FRooted()
-		{
-			if (Object)
-			{
-				Object->RemoveFromRoot();
-			}
-		}
-	};
-
-	static bool BitmapIsSentinel(const TArray<FColor>& Bitmap)
-	{
-		if (Bitmap.Num() == 0)
-		{
-			return true;
-		}
-		const int32 Step = FMath::Max(1, Bitmap.Num() / 4000);
-		int32 Samples = 0;
-		int32 Hits = 0;
-		for (int32 Index = 0; Index < Bitmap.Num(); Index += Step)
-		{
-			const FColor& Pixel = Bitmap[Index];
-			++Samples;
-			if (Pixel.R > 200 && Pixel.B > 200 && Pixel.G < 48)
-			{
-				++Hits;
-			}
-		}
-		return Samples > 0 && (Hits * 100) / Samples >= 90;
 	}
 
 	static void SplitBatch(const FString& Text, TArray<FString>& OutLines)
@@ -1096,11 +1021,18 @@ namespace SailSimToolsetPrivate
 		return Samples > 0 && (Dark * 100) / Samples >= 95;
 	}
 
+	static bool ViewportHasPixels(const FViewport* Viewport)
+	{
+		return Viewport && Viewport->GetSizeXY().X > 1 && Viewport->GetSizeXY().Y > 1;
+	}
+
 	/**
-	 * PIE viewport that is rendering PlayWorld. The free editor viewport (empty grid)
-	 * is not returned: its world is the editor world, or its camera is nowhere near the pawn.
+	 * Framebuffer Harrison is looking at: the active level viewport while it is presenting PIE,
+	 * otherwise the PIE game viewport (play-in-new-window). Not a second camera.
+	 * Editor-camera distance is ignored — during in-viewport PIE, GetViewLocation can stay on the
+	 * free camera while this framebuffer is the Lit game view.
 	 */
-	static FViewport* FindPiePlayerViewport(UWorld* PlayWorld, const FPlayerView& View, FString& OutSource)
+	static FViewport* FindLitViewportFramebuffer(UWorld* PlayWorld, FString& OutSource)
 	{
 		OutSource.Reset();
 		if (!PlayWorld)
@@ -1108,15 +1040,45 @@ namespace SailSimToolsetPrivate
 			return nullptr;
 		}
 
+		if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+		{
+			FLevelEditorModule& LevelEditorModule =
+				FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+			if (TSharedPtr<IAssetViewport> Active = LevelEditorModule.GetFirstActiveViewport())
+			{
+				// During PIE in this panel, GetActiveViewport is the framebuffer on screen
+				// (the level viewport and the game viewport are swapped).
+				FViewport* Live = Active->GetActiveViewport();
+				if (Active->HasPlayInEditorViewport() && ViewportHasPixels(Live))
+				{
+					OutSource = TEXT("ActiveEditorViewport");
+					return Live;
+				}
+				FEditorViewportClient& Client = Active->GetAssetViewportClient();
+				if (ViewportHasPixels(Client.Viewport) && Client.GetWorld() == PlayWorld)
+				{
+					OutSource = TEXT("ActiveEditorViewport");
+					return Client.Viewport;
+				}
+			}
+		}
+
+		if (GCurrentLevelEditingViewportClient
+			&& ViewportHasPixels(GCurrentLevelEditingViewportClient->Viewport)
+			&& GCurrentLevelEditingViewportClient->GetWorld() == PlayWorld)
+		{
+			OutSource = TEXT("ActiveEditorViewport");
+			return GCurrentLevelEditingViewportClient->Viewport;
+		}
+
 		if (GEngine)
 		{
 			if (UGameViewportClient* GameViewport = GEngine->GameViewportForWorld(PlayWorld))
 			{
-				FViewport* Viewport = GameViewport->Viewport;
-				if (Viewport && Viewport->GetSizeXY().X > 1 && Viewport->GetSizeXY().Y > 1)
+				if (ViewportHasPixels(GameViewport->Viewport))
 				{
 					OutSource = TEXT("PIEGameViewport");
-					return Viewport;
+					return GameViewport->Viewport;
 				}
 			}
 		}
@@ -1125,123 +1087,15 @@ namespace SailSimToolsetPrivate
 		{
 			for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
 			{
-				if (!LevelVC || !LevelVC->Viewport || LevelVC->GetWorld() != PlayWorld)
+				if (!LevelVC || LevelVC->GetWorld() != PlayWorld || !ViewportHasPixels(LevelVC->Viewport))
 				{
 					continue;
 				}
-				if (LevelVC->Viewport->GetSizeXY().X <= 1 || LevelVC->Viewport->GetSizeXY().Y <= 1)
-				{
-					continue;
-				}
-				// Only when this client is already sitting on the pawn camera.
-				// A distant editor camera (empty grid) is left for the PIE game viewport or the clone.
-				const float Dist = FVector::Dist(LevelVC->GetViewLocation(), View.Location);
-				if (Dist < 250.f)
-				{
-					OutSource = TEXT("LevelViewportPIE");
-					return LevelVC->Viewport;
-				}
+				OutSource = TEXT("LevelViewportPIE");
+				return LevelVC->Viewport;
 			}
 		}
 		return nullptr;
-	}
-
-	/**
-	 * Fallback when the PIE viewport cannot be read. Clones the possessed camera POV
-	 * and its post-process. Show flags come from the live game viewport (or ESFIM_Game).
-	 * Does not apply VMI_Lit and does not change sky or time of day.
-	 * Eye adaptation on this second view can still lag the viewport; callers log SceneCaptureClone.
-	 */
-	static bool CaptureSceneClone(
-		UWorld* PlayWorld,
-		const FPlayerView& View,
-		TArray<FColor>& OutBitmap,
-		int32& OutWidth,
-		int32& OutHeight,
-		int32& OutFrames,
-		FString& OutError)
-	{
-		const int32 Width = 1920;
-		const int32 Height = 1080;
-		OutWidth = Width;
-		OutHeight = Height;
-		OutFrames = 0;
-		if (!PlayWorld || !PlayWorld->Scene)
-		{
-			OutError = TEXT("PlayWorld has no scene");
-			return false;
-		}
-
-		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
-		RT->RenderTargetFormat = RTF_RGBA8;
-		RT->ClearColor = FLinearColor(1.f, 0.f, 1.f, 1.f);
-		RT->bAutoGenerateMips = false;
-		RT->InitAutoFormat(Width, Height);
-		RT->UpdateResourceImmediate(true);
-		const FRooted RootedRT(RT);
-
-		{
-			FScopedConditionalWorldSwitcher PlayScope(PlayWorld);
-			FActorSpawnParameters SpawnParams;
-			SpawnParams.ObjectFlags |= RF_Transient;
-			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-			ASceneCapture2D* CaptureActor = PlayWorld->SpawnActor<ASceneCapture2D>(
-				View.Location, View.Rotation, SpawnParams);
-			if (!CaptureActor || CaptureActor->GetWorld() != PlayWorld)
-			{
-				if (CaptureActor)
-				{
-					CaptureActor->Destroy();
-				}
-				OutError = TEXT("scene capture was not spawned in the PIE world");
-				return false;
-			}
-
-			USceneCaptureComponent2D* Cap = CaptureActor->GetCaptureComponent2D();
-			Cap->TextureTarget = RT;
-			Cap->FOVAngle = View.FOV;
-			Cap->bCaptureEveryFrame = false;
-			Cap->bCaptureOnMovement = false;
-			Cap->bAlwaysPersistRenderingState = true;
-			Cap->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-			Cap->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
-			ApplyLiveGameShowFlags(Cap->ShowFlags, PlayWorld);
-			if (View.bHasPostProcess)
-			{
-				Cap->PostProcessSettings = View.PostProcess;
-				Cap->PostProcessBlendWeight = View.PostProcessBlendWeight;
-			}
-			Cap->SetWorldLocationAndRotation(View.Location, View.Rotation);
-			if (!Cap->IsRegistered())
-			{
-				Cap->RegisterComponent();
-			}
-			Cap->MarkRenderStateDirty();
-
-			// Persistent view state so eye adaptation can step. The pawn PPS (bias and speeds) is used as-is.
-			constexpr int32 Passes = 16;
-			for (int32 Pass = 0; Pass < Passes; ++Pass)
-			{
-				PlayWorld->SendAllEndOfFrameUpdates();
-				Cap->CaptureScene();
-				FlushRenderingCommands();
-				++OutFrames;
-			}
-			CaptureActor->Destroy();
-		}
-
-		FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
-		if (!RTResource || !RTResource->ReadPixels(OutBitmap) || OutBitmap.Num() != Width * Height)
-		{
-			OutError = TEXT("PIE scene capture did not produce pixels");
-			return false;
-		}
-		if (BitmapIsSentinel(OutBitmap))
-		{
-			OutError = TEXT("render target is still the magenta clear");
-			return false;
-		}
-		return true;
 	}
 
 	struct FSettledCapture
@@ -1257,9 +1111,9 @@ namespace SailSimToolsetPrivate
 	};
 
 	/**
-	 * Photograph the possessed player camera the way PIE presents it.
-	 * Advances the chase cam into PlayerCameraManager, draws the PIE game viewport,
-	 * then ReadPixels. SceneCaptureClone is only used when that viewport cannot be read.
+	 * Ground truth: the active editor/PIE Lit viewport framebuffer (HighResShot's read).
+	 * Framing only moves the possessed camera. Show flags, exposure, and post stay on that viewport.
+	 * There is no SceneCapture fallback.
 	 */
 	static bool CaptureSettledPlayerView(UWorld* PlayWorld, FSettledCapture& Out)
 	{
@@ -1284,69 +1138,50 @@ namespace SailSimToolsetPrivate
 		}
 
 		FString ViewportSource;
-		FViewport* Viewport = FindPiePlayerViewport(PlayWorld, Out.View, ViewportSource);
-		if (Viewport)
+		FViewport* Viewport = FindLitViewportFramebuffer(PlayWorld, ViewportSource);
+		if (!Viewport)
 		{
-			for (int32 Frame = 0; Frame < GPlayerViewSettleFrames; ++Frame)
-			{
-				AdvancePossessedCamera(PlayWorld, DeltaSeconds);
-				PlayWorld->SendAllEndOfFrameUpdates();
-				Viewport->Draw();
-				FlushRenderingCommands();
-				++Out.ExposureFrames;
-			}
-
-			FString ResolveError;
-			FPlayerView Presented;
-			if (ResolvePlayerView(PlayWorld, Presented, ResolveError))
-			{
-				Out.View = Presented;
-			}
-
-			const FIntPoint Size = Viewport->GetSizeXY();
-			TArray<FColor> Bitmap;
-			const bool bRead = Size.X > 1 && Size.Y > 1
-				&& Viewport->ReadPixels(Bitmap)
-				&& Bitmap.Num() == Size.X * Size.Y
-				&& !BitmapMostlyBlack(Bitmap);
-			if (bRead)
-			{
-				Out.Bitmap = MoveTemp(Bitmap);
-				Out.Width = Size.X;
-				Out.Height = Size.Y;
-				Out.CaptureSource = ViewportSource;
-				return true;
-			}
-		}
-
-		int32 CloneFrames = 0;
-		FString CloneError;
-		if (!CaptureSceneClone(
-			PlayWorld, Out.View, Out.Bitmap, Out.Width, Out.Height, CloneFrames, CloneError))
-		{
-			if (CloneError.Contains(TEXT("magenta")))
-			{
-				Out.ErrorCode = TEXT("capture_did_not_write");
-			}
-			else if (CloneError.Contains(TEXT("no scene")))
-			{
-				Out.ErrorCode = TEXT("no_pie_scene");
-			}
-			else if (CloneError.Contains(TEXT("not spawned")))
-			{
-				Out.ErrorCode = TEXT("wrong_world");
-			}
-			else
-			{
-				Out.ErrorCode = TEXT("read_failed");
-			}
-			Out.Error = CloneError.IsEmpty()
-				? TEXT("PIE viewport and player-camera clone both failed")
-				: CloneError;
+			Out.ErrorCode = TEXT("no_viewport");
+			Out.Error = TEXT(
+				"active editor/PIE Lit viewport framebuffer was not available. Scene capture is not used.");
 			return false;
 		}
-		Out.ExposureFrames = CloneFrames;
-		Out.CaptureSource = TEXT("SceneCaptureClone");
+
+		for (int32 Frame = 0; Frame < GPlayerViewSettleFrames; ++Frame)
+		{
+			AdvancePossessedCamera(PlayWorld, DeltaSeconds);
+			PlayWorld->SendAllEndOfFrameUpdates();
+			Viewport->Draw();
+			FlushRenderingCommands();
+			++Out.ExposureFrames;
+		}
+
+		FString ResolveError;
+		FPlayerView Presented;
+		if (ResolvePlayerView(PlayWorld, Presented, ResolveError))
+		{
+			Out.View = Presented;
+		}
+
+		const FIntPoint Size = Viewport->GetSizeXY();
+		const FIntRect Rect(0, 0, Size.X, Size.Y);
+		TArray<FColor> Bitmap;
+		// GetViewportScreenShot is the read FScreenshotRequest / editor HighResShot uses. Multiplier stays 1.
+		const bool bRead = Size.X > 1 && Size.Y > 1
+			&& GetViewportScreenShot(Viewport, Bitmap, Rect)
+			&& Bitmap.Num() == Size.X * Size.Y
+			&& !BitmapMostlyBlack(Bitmap);
+		if (!bRead)
+		{
+			Out.ErrorCode = TEXT("read_failed");
+			Out.Error = TEXT("viewport framebuffer grab failed. Scene capture is not used.");
+			return false;
+		}
+
+		Out.Bitmap = MoveTemp(Bitmap);
+		Out.Width = Size.X;
+		Out.Height = Size.Y;
+		Out.CaptureSource = ViewportSource;
 		return true;
 	}
 
@@ -1390,7 +1225,7 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FS
 		}
 	}
 
-	// Possessed camera, settled on the PIE viewport. No VMI_Lit / sky override.
+	// Pose from the framing preset, pixels from the active Lit viewport framebuffer.
 	SailSimToolsetPrivate::FSettledCapture Shot;
 	if (!SailSimToolsetPrivate::CaptureSettledPlayerView(PlayWorld, Shot))
 	{
@@ -1412,7 +1247,7 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FS
 
 	const SailSimToolsetPrivate::FPlayerView& View = Shot.View;
 	UE_LOG(LogTemp, Display,
-		TEXT("CapturePlayerView OK world=%s package=%s cam=%s view=%s boat=%s loc=(%.0f,%.0f,%.0f) boatLoc=(%.0f,%.0f,%.0f) editorCamDist=%.0f fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
+		TEXT("CapturePlayerView OK world=%s package=%s cam=%s grab=ViewportFramebuffer view=%s boat=%s loc=(%.0f,%.0f,%.0f) boatLoc=(%.0f,%.0f,%.0f) editorCamDist=%.0f fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
 		SailSimToolsetPrivate::WorldKind(PlayWorld),
 		*PlayWorld->GetOutermost()->GetName(),
 		*Shot.CaptureSource,
@@ -2172,6 +2007,7 @@ FString USailSimToolset::RunPreferOnGate()
 		}
 		Root->SetStringField(TEXT("cpvPath"), AbsPath);
 		Root->SetStringField(TEXT("captureSource"), Shot.CaptureSource);
+		Root->SetStringField(TEXT("grab"), TEXT("ViewportFramebuffer"));
 		Root->SetStringField(TEXT("viewSource"), Shot.View.Source);
 		Root->SetNumberField(TEXT("exposureFrames"), Shot.ExposureFrames);
 		Root->SetBoolField(TEXT("litOverride"), false);
@@ -2179,7 +2015,7 @@ FString USailSimToolset::RunPreferOnGate()
 		Root->SetNumberField(TEXT("postProcessBlendWeight"), Shot.View.PostProcessBlendWeight);
 		CpvPath = AbsPath;
 		UE_LOG(LogTemp, Display,
-			TEXT("CapturePlayerView OK world=PIE cam=%s view=%s boat=%s loc=(%.0f,%.0f,%.0f) fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
+			TEXT("CapturePlayerView OK world=PIE cam=%s grab=ViewportFramebuffer view=%s boat=%s loc=(%.0f,%.0f,%.0f) fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
 			*Shot.CaptureSource,
 			*Shot.View.Source,
 			*Shot.View.BoatName,
@@ -2196,7 +2032,7 @@ FString USailSimToolset::RunPreferOnGate()
 	const FString Out = JsonString(Root);
 	PersistPreferOnGateJson(Out);
 	UE_LOG(LogTemp, Display,
-		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s capture=%s litOverride=0"),
+		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s capture=%s grab=ViewportFramebuffer litOverride=0"),
 		*Sha, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath,
 		*Root->GetStringField(TEXT("captureSource")));
 	return Out;

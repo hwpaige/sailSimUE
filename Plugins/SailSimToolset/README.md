@@ -10,26 +10,26 @@ Rebuild **SailSimUE** and **SailSimToolset** together (`SailSimGetPerf` is in `S
 
 After Live Coding, the log line for a good capture is:
 
-`CapturePlayerView OK world=PIE ... cam=PIEGameViewport view=PlayerCameraManager ... litOverride=0 ... editorCamDist=<large>`
+`CapturePlayerView OK world=PIE ... cam=ActiveEditorViewport grab=ViewportFramebuffer view=PlayerCameraManager ... litOverride=0`
 
-`cam` is where the pixels came from (`PIEGameViewport` or `LevelViewportPIE`). `view` is the possessed camera (`PlayerCamera` or `PlayerCameraManager`). `editorCamDist` is the distance from that camera to the free editor camera. A hull shot is at the boat (Nantucket harbor coordinates). `litOverride=0` means the shot did not apply an editor Lit view mode.
+`cam` is which on-screen viewport was grabbed (`ActiveEditorViewport`, `PIEGameViewport`, or `LevelViewportPIE`). `grab=ViewportFramebuffer` means the pixels are that viewport's framebuffer (`GetViewportScreenShot`, the same read as editor HighResShot at 1x). `view` is the possessed camera pose. `litOverride=0` means show flags were left alone.
 
-`cam=SceneCaptureClone` means the PIE viewport could not be read. The clone copies the possessed camera POV and post process and the live game show flags. Treat that file as approximate (see remaining deltas below).
+There is no scene-capture fallback. If the Lit viewport cannot be read, the call errors.
 
 ## CapturePlayerView
 
-Reads the **PIE game viewport** after the possessed `ASailBoatPawn` camera has been pushed into `PlayerCameraManager`. That is the view Harrison sees in the PIE panel. It does not move `GCurrentLevelEditingViewportClient` and it does not call `ApplyViewMode(VMI_Lit)`.
+Grabs the **active editor/PIE Lit viewport framebuffer**. That is the image in the panel. Framing presets only move the possessed boat. The viewport's own Lit renderer (its show flags, exposure history, and post) draws the frame that is read back.
 
 What it does:
 
 1. Require `GEditor->PlayWorld` with `WorldType == PIE`.
-2. Find the possessed session boat (`GetPawn` / `bPlayerSessionBoat`). Ignore the editor world.
-3. Optional `FramingPreset` teleports that pawn (composition only). Orbit and zoom stay on the possessed camera.
-4. Advance the spring arm and call `PlayerCameraManager::UpdateCamera`, and `SetViewTarget` to the boat when the view target is something else.
-5. Draw the PIE game viewport (`GameViewportForWorld`) for 16 frames so the chase cam and the viewport's auto-exposure step on **that** view. Then `ReadPixels`.
-6. If that viewport cannot be read, fall back to a transient `ASceneCapture2D` at the camera POV with the camera's post-process blend (including day `AutoExposureBias`) and the live game show flags (`ESFIM_Game` when the game viewport has no flags). 16 `CaptureScene` passes. Log `cam=SceneCaptureClone`.
+2. Find the possessed session boat. Ignore the editor world.
+3. Optional `FramingPreset` teleports that pawn. Orbit and zoom stay on the possessed camera.
+4. Advance the spring arm and `PlayerCameraManager::UpdateCamera`, and `SetViewTarget` to the boat when needed, so the viewport's next present uses that pose.
+5. Draw the active level viewport that is presenting PIE (else the PIE game window) for 16 frames. Show flags are not written.
+6. `GetViewportScreenShot` on that viewport at its current size (HighResShot's 1x read). A magnified HighResShot is not used, because a higher-res re-render is a different image.
 
-The free editor viewport is not a capture source. `CaptureViewport` remains the editor camera.
+`EditorToolset.CaptureViewport` is still the free editor camera tool. This grab is the viewport that is actually presenting PIE.
 
 `MinWorldSeconds` defaults to `0.5`. The call errors with `code=not_settled` until the PIE world has been running that long. Pass `0` to skip the time gate. The possessed boat is always required.
 
@@ -40,10 +40,8 @@ Coded errors (script error text, no image):
 | `no_pie` | PIE is not running. Do not fall back to CaptureViewport. |
 | `not_settled` | World time is under `MinWorldSeconds`. Retry. |
 | `no_boom` | No possessed boat, or the player camera is not usable. |
-| `no_pie_scene` | PIE world has no scene. |
-| `wrong_world` | Capture actor was not spawned in the PIE world. |
-| `capture_did_not_write` | Render target is still the magenta clear. |
-| `read_failed` / `encode_failed` | Pixel read or PNG encode failed. |
+| `no_viewport` | The active editor/PIE Lit viewport framebuffer was not available. No scene capture is returned. |
+| `read_failed` / `encode_failed` | Viewport framebuffer read or PNG encode failed. No scene capture is returned. |
 | `bad_framing` | Unknown `FramingPreset` string. |
 
 ### FramingPreset (SailSim_Ocean)
@@ -70,8 +68,9 @@ Returns JSON (also written to `Saved/SailSim/last_prefer_on_gate.json`):
 { "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 96,
   "mooringSceneryBudget": 96, "mooringSceneryFloor": 64,
   "heroesMaxBoats": 1, "heroesNearFullCap": 1, "heroesNear": 1,
-  "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-PIEGameViewport-....png",
-  "captureSource": "PIEGameViewport", "viewSource": "PlayerCameraManager",
+  "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-ActiveEditorViewport-....png",
+  "captureSource": "ActiveEditorViewport", "grab": "ViewportFramebuffer",
+  "viewSource": "PlayerCameraManager",
   "exposureFrames": 16, "litOverride": false,
   "sha": "018b9ab", "failCode": "", "error": "" }
 ```
@@ -202,13 +201,13 @@ Manual / Design:
 
 1. `EnsurePIE` or `StartPIE` until `code` is `running` and `Settled` is true.
 2. `GetPlayerCameraTransform` — `source` is `PlayerCamera` or `PlayerCameraManager`, location is the possessed camera.
-3. `CapturePlayerView` with `FramingPreset=midHarborMoored|gelcoatHull|horizon`. Accept a log line `CapturePlayerView OK` with `litOverride=0` and `cam=PIEGameViewport` (or `LevelViewportPIE`).
+3. `CapturePlayerView` with `FramingPreset=midHarborMoored|gelcoatHull|horizon`. Accept `grab=ViewportFramebuffer` and `litOverride=0`. `cam` is `ActiveEditorViewport` when PIE is in the selected viewport.
 4. `GetPerfSnapshot` for `moored=`, `aids=`, `tiles T=`.
 5. `SetCVars` / `ExecuteConsole` for Prefer-ON A/Bs. `ProfileGPUDump` optional (parked for parse cost on the Prefer-ON gate).
 
 ## Ops — re-run Prefer-ON after the CPV fix
 
-Score gelcoat / mid-harbor from a new shot. Older PNGs under `Saved/Screenshots/SailSim/` were a second scene capture (spring-arm socket, `ApplyViewMode(VMI_Lit)`, two capture passes, camera post-process blend left at 0) and do not match the PIE viewport.
+Score gelcoat / mid-harbor from a new shot. Older PNGs under `Saved/Screenshots/SailSim/` came from a scene capture (a second camera) and are not the Lit viewport. Accept only `grab=ViewportFramebuffer`.
 
 1. TCP 8765 must be UnrealEditor. If CrashReportClient owns it, kill CrashReportClient only.
 2. PIE `SailSim_Ocean` (or let the gate call EnsurePIE). Possessed boat, game viewport visible.
@@ -231,7 +230,8 @@ SailSimToolset.CapturePlayerView  MinWorldSeconds=0.5  FramingPreset=gelcoatHull
 
 Pass checks in the log / `Saved/SailSim/last_prefer_on_gate.json`:
 
-- `captureSource` is `PIEGameViewport` (or `LevelViewportPIE`)
+- `grab` is `ViewportFramebuffer`
+- `captureSource` is `ActiveEditorViewport` (PIE in the selected viewport), or `PIEGameViewport` / `LevelViewportPIE` when that panel is the PIE surface
 - `litOverride` is false
 - `viewSource` is `PlayerCamera` or `PlayerCameraManager`
 - `cpvPath` is under `Saved/Screenshots/SailSim/`
@@ -240,13 +240,12 @@ Prefer-ON cvars stay `r.Lumen.Reflections.Allow=1` and `DownsampleFactor=2`. Her
 
 ### Why older CPV color scores were wrong
 
-The gate spawned `ASceneCapture2D` on the spring-arm socket and replaced show flags with `FEngineShowFlags(ESFIM_Game)` plus `ApplyViewMode(VMI_Lit)`. That second camera dropped the possessed `UCameraComponent` post process (`ApplyAtmosphereLook` sets day `AutoExposureBias` 0.35, blend weight 1) and started a fresh eye-adaptation history (two `CaptureScene` calls). The Lit view-mode reset is an editor flag override; the gate does not change time of day. Framing presets still move the pawn; they are the scoring composition. The PNG is now the possessed camera after that move.
+Design shots were a second `ASceneCapture2D` (spring-arm socket, `ApplyViewMode(VMI_Lit)`, its own exposure). That path is not the Lit viewport, so gelcoat looked worse than the panel. A later build still fell back to that clone when the on-screen viewport failed a camera-distance test (`GetViewLocation` stays on the free editor camera during in-viewport PIE). The gate now refuses that fallback and reads the presenting viewport with `GetViewportScreenShot`.
 
 ### Remaining deltas (no editor visual PASS from this change)
 
-- PNG size follows the PIE game viewport, so aspect can differ from a fixed 1920×1080 and from a different panel layout.
-- `ReadPixels` is the viewport backbuffer. UMG/HUD compositing may be absent even though it is on screen.
-- `cam=SceneCaptureClone` (PIE viewport missing or black) is 1920×1080 at the player POV with the camera post process and live game show flags. Its eye-adaptation history is still its own; do not score gelcoat from a clone file.
-- `horizon` jumps ~2.5 km. Sixteen viewport frames may not finish adaptation. `midHarborMoored` and `gelcoatHull` stay in the harbor, where the viewport exposure is already settled.
-- Presets do not reset orbit or zoom. The shot uses the possessed chase cam after the teleport.
-- `CaptureViewport` / `CaptureEditorImage` are still the free editor camera.
+- PNG size is the viewport's current size (same pixels as the panel). It is not forced to 1920×1080, and it is not a magnified HighResShot re-render.
+- Slate widgets drawn on top of the viewport RT are outside this read, same as editor HighResShot.
+- Sixteen presents after a framing teleport continue the viewport's own exposure. `horizon` (~2.5 km) can still be mid-adaptation. Harbor presets stay in the basin.
+- Presets do not reset orbit or zoom.
+- `EditorToolset.CaptureViewport` is still the free editor camera, not this grab.

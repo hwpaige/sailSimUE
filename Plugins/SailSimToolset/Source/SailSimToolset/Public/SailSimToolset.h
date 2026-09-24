@@ -11,8 +11,8 @@
  * Sail Buddy MCP helpers for Prefer-ON / PIE / Design gates.
  *
  * CaptureViewport and CaptureEditorImage stay on EditorToolset (free editor camera).
- * CapturePlayerView reads the PIE game viewport from the possessed ASailBoatPawn camera
- * (view target + that camera's post process). It does not apply a Lit view-mode override.
+ * CapturePlayerView grabs the active editor/PIE Lit viewport framebuffer (HighResShot's read).
+ * Framing presets only move the possessed camera. Show flags, exposure, and post stay on that viewport.
  * EditorToolset.StartPIE fails opaquely when a session is already running — use StartPIE / EnsurePIE here.
  */
 UCLASS()
@@ -22,9 +22,9 @@ class USailSimToolset : public UToolsetDefinition
 
 public:
 	/**
-	 * Screenshot of what the possessed ASailBoatPawn camera shows in PIE.
-	 * Reads the PIE game viewport after the chase cam and auto-exposure have stepped.
-	 * Does not apply ApplyViewMode(VMI_Lit) and does not change sky or time of day.
+	 * 1x framebuffer grab of the active editor/PIE Lit viewport (same read as HighResShot).
+	 * Framing presets move the possessed camera; the viewport's own Lit path presents the shot.
+	 * Does not spawn a scene capture and does not change show flags, sky, or time of day.
 	 * MinWorldSeconds: require the PIE world to have been running at least this long (0 skips the time gate).
 	 * FramingPreset (SailSim_Ocean pawn teleports, then the possessed camera is what gets shot;
 	 * empty = leave the boat where it is):
@@ -46,8 +46,8 @@ public:
 	 *    Harbor fill is scenery count only.
 	 * 5) CapturePlayerView FramingPreset=midHarborMoored (possessed-camera CPV under Saved/Screenshots)
 	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
-	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, captureSource, viewSource,
-	 *    exposureFrames, litOverride, sha, ok, failCode?}
+	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, captureSource, grab,
+	 *    viewSource, exposureFrames, litOverride, sha, ok, failCode?}
 	 * Does not raise MaxBoats (heroes stay 1). Scenery is additive HISM. Prefer-ON / DSF2 unchanged.
 	 * ProfileGPUDump stays parked.
 	 */
