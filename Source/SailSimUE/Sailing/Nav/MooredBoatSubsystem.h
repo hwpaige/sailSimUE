@@ -137,8 +137,9 @@ public:
 	 * Harbor fill: Static HISM scenery budget. Instances the shared baked
 	 * J/105 hull SM (PMC→SM) plus a spar HISM (mast/boom). Yacht materials
 	 * only — never SM_Buoy. The only density knob (8–400, default 96).
-	 * Independent of MaxBoats / MaxNearFullBoats. Paint is one shared white
-	 * gelcoat MID (not per boat, not HullPaint local-Z bands).
+	 * Independent of MaxBoats / MaxNearFullBoats. Paint is a few shared gelcoat
+	 * MIDs (solid BaseColor: white, navy, pale blue, cream). Not per boat.
+	 * Not HullPaint local-Z bands.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -332,7 +333,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidSparHism = nullptr;
 
-	/** Shared white gelcoat MID(s) for scenery hull shells. Not per instance. */
+	/** Shared gelcoat MIDs (one solid topside color each). Not per instance. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryHullMids;
 

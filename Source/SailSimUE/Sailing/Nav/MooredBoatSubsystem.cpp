@@ -2290,8 +2290,15 @@ FTransform UMooredBoatSubsystem::MakeSparWorldTransform(
 int32 UMooredBoatSubsystem::SceneryBucketForSlot(int32 SlotIndex) const
 {
 	const int32 N = FMath::Max(1, SceneryHullMids.Num() > 0 ? SceneryHullMids.Num() : MidHullHisms.Num());
+	if (N <= 1) return 0;
+	// Bucket 0 is white (~46%). The rest of the hash splits across the accent
+	// paints so the field stays mostly white with visible navy / pale blue / cream.
 	const float H = MooredBoatPrivate::Hash01(SlotIndex, 101);
-	return FMath::Clamp(FMath::FloorToInt(H * static_cast<float>(N)), 0, N - 1);
+	constexpr float WhiteShare = 0.46f;
+	if (H < WhiteShare) return 0;
+	const float U = (H - WhiteShare) / (1.f - WhiteShare);
+	const int32 Accent = 1 + FMath::FloorToInt(U * static_cast<float>(N - 1));
+	return FMath::Clamp(Accent, 1, N - 1);
 }
 
 void UMooredBoatSubsystem::EnsureSceneryPaint()
@@ -2299,11 +2306,10 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	if (bSceneryPaintReady) return;
 	bSceneryPaintReady = true;
 
-	// Solid gelcoat, not HullPaint local-Z bands. HullPaint picks antifoul (dark brown)
-	// when z < ZBootLo (4 cm). HISM cluster/instance local Z is not the loft waterline,
-	// so the whole shell took antifoul and the old MID also zeroed ClearCoat. Mid-harbor
-	// then read as flat black silhouettes. MI_Yacht_Gelcoat is BaseColor + fresnel and
-	// does not depend on that Z. One shared MID — not a unique material per boat.
+	// Solid gelcoat colors, not HullPaint local-Z bands. HullPaint picks antifoul
+	// (dark brown) when z < ZBootLo. HISM local Z is not the loft waterline, so that
+	// path painted whole shells antifoul. Each bucket is one BaseColor on
+	// MI_Yacht_Gelcoat. A handful of shared MIDs — not one MID per boat.
 	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(
 		nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
 	if (!Parent)
@@ -2329,21 +2335,35 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 	MooredBoatPrivate::ForceYachtIsmUsage(Parent);
 
-	// Same white as hero ApplyBoatPaintScheme topsides.
-	const FLinearColor WhiteTopsides(0.96f, 0.975f, 0.995f, 1.f);
-	SceneryHullMids.Reset();
-	SceneryHullMids.Reserve(1);
-	if (UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this))
+	// Topsides only. Navy is a readable blue, not near-black, so the shade floor
+	// (EmissiveBoost * BaseColor) cannot collapse it back to an antifoul silhouette.
+	struct FSceneryPaint
 	{
-		Mid->SetVectorParameterValue(TEXT("BaseColor"), WhiteTopsides);
-		Mid->SetVectorParameterValue(TEXT("Color"), WhiteTopsides);
+		const TCHAR* Name;
+		FLinearColor Color;
+	};
+	const FSceneryPaint Paints[] = {
+		{ TEXT("white"), FLinearColor(0.96f, 0.975f, 0.995f, 1.f) },
+		{ TEXT("navy"), FLinearColor(0.12f, 0.22f, 0.42f, 1.f) },
+		{ TEXT("paleBlue"), FLinearColor(0.62f, 0.78f, 0.90f, 1.f) },
+		{ TEXT("cream"), FLinearColor(0.91f, 0.86f, 0.72f, 1.f) },
+	};
+	SceneryHullMids.Reset();
+	SceneryHullMids.Reserve(UE_ARRAY_COUNT(Paints));
+	FString PaintNames;
+	for (const FSceneryPaint& Paint : Paints)
+	{
+		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
+		if (!Mid) continue;
+		Mid->SetVectorParameterValue(TEXT("BaseColor"), Paint.Color);
+		Mid->SetVectorParameterValue(TEXT("Color"), Paint.Color);
 		Mid->SetVectorParameterValue(TEXT("SpecularTint"), FLinearColor::White);
-		// If we had to fall back to HullPaint, every Z band is white so a bad
-		// local Z cannot select dark antifoul / boot / navy.
-		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), WhiteTopsides);
-		Mid->SetVectorParameterValue(TEXT("ColorStripe"), WhiteTopsides);
-		Mid->SetVectorParameterValue(TEXT("ColorBoot"), WhiteTopsides);
-		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), WhiteTopsides);
+		// HullPaint fallback: every Z band is this same solid color. A bad local
+		// Z cannot select the authored dark antifoul.
+		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), Paint.Color);
+		Mid->SetVectorParameterValue(TEXT("ColorStripe"), Paint.Color);
+		Mid->SetVectorParameterValue(TEXT("ColorBoot"), Paint.Color);
+		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), Paint.Color);
 		if (bZBandParent)
 		{
 			Mid->SetScalarParameterValue(TEXT("ZBootLo"), -100000.f);
@@ -2357,13 +2377,14 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.08f);
 		Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 		Mid->SetScalarParameterValue(TEXT("Specular"), 0.55f);
-		// Fresnel sheen on M_Yacht_PBR (ClearCoatBoost). Do not zero ClearCoat —
-		// that killed the gelcoat highlight on the previous scenery MIDs.
+		// Fresnel sheen on M_Yacht_PBR. Do not zero ClearCoat.
 		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.50f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 1.f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 0.05f);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mid);
 		SceneryHullMids.Add(Mid);
+		if (!PaintNames.IsEmpty()) PaintNames += TEXT(",");
+		PaintNames += Paint.Name;
 	}
 
 	UMaterialInterface* SparParent = YachtSparMat.Get();
@@ -2394,8 +2415,8 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: scenery gelcoat mids=%d parent=%s zBandFallback=%d spar=%s (white BaseColor, not antifoul)"),
-		SceneryHullMids.Num(), *Parent->GetPathName(), bZBandParent ? 1 : 0,
+		TEXT("MooredBoats: scenery gelcoat mids=%d [%s] parent=%s zBandFallback=%d spar=%s (solid BaseColor, white~46%%, not Z-antifoul)"),
+		SceneryHullMids.Num(), *PaintNames, *Parent->GetPathName(), bZBandParent ? 1 : 0,
 		ScenerySparMid ? TEXT("dielectric") : TEXT("none"));
 	SceneryShadeFloorApplied = -1.f;
 	ApplySceneryShadeFloor();
@@ -2424,10 +2445,9 @@ void UMooredBoatSubsystem::ApplySceneryShadeFloor()
 {
 	if (SceneryHullMids.Num() == 0) return;
 	const float Sun = SampleDirectionalSunIntensity();
-	// ~35% of head-on sun. Shadowed topsides (low NdotL, fresnel reflecting an
-	// empty environment) stay in the white-paint range; decks stay brighter.
-	// Zero when the sun is off so the field does not glow at night.
-	// One scalar on the shared MID — no Lumen cards, no mobility change.
+	// ~35% of head-on sun, multiplied by each bucket BaseColor. Shadowed topsides
+	// stay in that paint (white stays white, navy stays blue) instead of going
+	// black. Zero when the sun is off. One scalar per shared MID — no Lumen cards.
 	const float Floor = (Sun > 0.05f) ? (Sun * 0.35f) : 0.f;
 	if (SceneryShadeFloorApplied >= 0.f && FMath::IsNearlyEqual(Floor, SceneryShadeFloorApplied, 0.08f))
 	{
