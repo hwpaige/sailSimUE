@@ -137,8 +137,8 @@ public:
 	 * Harbor fill: Static HISM scenery budget. Instances the shared baked
 	 * J/105 hull SM (PMC→SM) plus a spar HISM (mast/boom). Yacht materials
 	 * only — never SM_Buoy. The only density knob (8–400, default 96).
-	 * Independent of MaxBoats / MaxNearFullBoats. Paint variety is a handful
-	 * of shared HullPaint MIDs (one per bucket), not a unique MID per boat.
+	 * Independent of MaxBoats / MaxNearFullBoats. Paint is one shared white
+	 * gelcoat MID (not per boat, not HullPaint local-Z bands).
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -324,7 +324,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<AActor> MidHismOwner = nullptr;
 
-	/** One hull HISM per shared paint bucket. All use HullNaniteMesh. */
+	/** Hull HISMs (one per shared gelcoat MID). All use HullNaniteMesh. */
 	UPROPERTY()
 	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> MidHullHisms;
 
@@ -332,9 +332,13 @@ private:
 	UPROPERTY()
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidSparHism = nullptr;
 
-	/** Shared HullPaint MIDs (BaseColor / roughness / stripe). Not per instance. */
+	/** Shared white gelcoat MID(s) for scenery hull shells. Not per instance. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryHullMids;
+
+	/** Dielectric aluminum for scenery masts/booms (metallic spar MI reads black without IBL). */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> ScenerySparMid = nullptr;
 
 	bool bSceneryPaintReady = false;
 	bool bSceneryHismDirty = false;

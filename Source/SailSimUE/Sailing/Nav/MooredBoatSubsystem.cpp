@@ -47,9 +47,6 @@ namespace MooredBoatPrivate
 			/ static_cast<float>(0xFFFFFFu);
 	}
 
-	/** Shared paint buckets for scenery hulls (not one MID per boat). */
-	constexpr int32 SceneryPaintBucketCount = 4;
-
 	/**
 	 * Without InstancedStaticMeshes usage, HISM draws nothing on a cold PIE
 	 * start (EncAid buoys already force this; yacht MIs did not).
@@ -88,12 +85,20 @@ namespace MooredBoatPrivate
 		}
 	}
 
-	static bool IsYachtTopsidesMaterial(const UMaterialInterface* Mat)
+	/** Above-water yacht slots that should read as white gelcoat on the scenery HISM. */
+	static bool ShouldUseSceneryGelcoat(const UMaterialInterface* Mat)
 	{
 		if (!Mat) return false;
 		const FString Path = Mat->GetPathName();
-		// Hull shell only. Boot/stripe/antifoul sections keep their own shared MIs.
-		return Path.Contains(TEXT("HullPaint")) || Path.Contains(TEXT("Gelcoat"));
+		if (Path.Contains(TEXT("Glass")) || Path.Contains(TEXT("Window"))) return false;
+		if (Path.Contains(TEXT("Keel"))) return false;
+		if (Path.Contains(TEXT("Rope"))) return false;
+		if (Path.Contains(TEXT("Spar"))) return false;
+		return Path.Contains(TEXT("Yacht"))
+			|| Path.Contains(TEXT("Hull"))
+			|| Path.Contains(TEXT("Deck"))
+			|| Path.Contains(TEXT("Cabin"))
+			|| Path.Contains(TEXT("Gelcoat"));
 	}
 }
 
@@ -2291,21 +2296,23 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	if (bSceneryPaintReady) return;
 	bSceneryPaintReady = true;
 
-	UMaterialInterface* Parent = nullptr;
-	const int32 HullIdx = static_cast<int32>(EMooredHullPart::HullGloss);
-	if (YachtMats.IsValidIndex(HullIdx))
+	// Solid gelcoat, not HullPaint local-Z bands. HullPaint picks antifoul (dark brown)
+	// when z < ZBootLo (4 cm). HISM cluster/instance local Z is not the loft waterline,
+	// so the whole shell took antifoul and the old MID also zeroed ClearCoat. Mid-harbor
+	// then read as flat black silhouettes. MI_Yacht_Gelcoat is BaseColor + fresnel and
+	// does not depend on that Z. One shared MID — not a unique material per boat.
+	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
+	if (!Parent)
 	{
-		Parent = YachtMats[HullIdx].Get();
+		Parent = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/Materials/Yacht/M_Yacht_PBR.M_Yacht_PBR"));
 	}
+	const bool bZBandParent = (Parent == nullptr);
 	if (!Parent)
 	{
 		Parent = LoadObject<UMaterialInterface>(
 			nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_HullPaint.MI_Yacht_HullPaint"));
-	}
-	if (!Parent)
-	{
-		Parent = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
 	}
 	if (!Parent)
 	{
@@ -2319,54 +2326,74 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 	MooredBoatPrivate::ForceYachtIsmUsage(Parent);
 
+	// Same white as hero ApplyBoatPaintScheme topsides.
 	const FLinearColor WhiteTopsides(0.96f, 0.975f, 0.995f, 1.f);
-	const FLinearColor Cream(0.92f, 0.90f, 0.84f, 1.f);
-	const FLinearColor Navy(0.02f, 0.06f, 0.16f, 1.f);
-	const FLinearColor DarkGreen(0.04f, 0.12f, 0.08f, 1.f);
-	const FLinearColor FlagRed(0.42f, 0.06f, 0.06f, 1.f);
-	const FLinearColor GoldStripe(0.72f, 0.55f, 0.18f, 1.f);
-	const FLinearColor BootDefault(0.03f, 0.06f, 0.12f, 1.f);
-	const FLinearColor Antifoul(0.16f, 0.10f, 0.08f, 1.f);
-
-	struct FBucket
-	{
-		FLinearColor Hull;
-		FLinearColor Stripe;
-		FLinearColor Boot;
-		float Rough;
-	};
-	const FBucket Buckets[MooredBoatPrivate::SceneryPaintBucketCount] = {
-		{ WhiteTopsides, Navy, BootDefault, 0.14f },
-		{ WhiteTopsides, FlagRed, BootDefault, 0.14f },
-		{ Navy, Cream, FLinearColor(0.02f, 0.02f, 0.03f, 1.f), 0.18f },
-		{ DarkGreen, GoldStripe, FLinearColor(0.02f, 0.02f, 0.03f, 1.f), 0.18f },
-	};
-	static_assert(UE_ARRAY_COUNT(Buckets) == MooredBoatPrivate::SceneryPaintBucketCount, "scenery paint buckets");
-
 	SceneryHullMids.Reset();
-	SceneryHullMids.Reserve(MooredBoatPrivate::SceneryPaintBucketCount);
-	for (const FBucket& B : Buckets)
+	SceneryHullMids.Reserve(1);
+	if (UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this))
 	{
-		UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Parent, this);
-		if (!Mid) continue;
-		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), B.Hull);
-		Mid->SetVectorParameterValue(TEXT("ColorStripe"), B.Stripe);
-		Mid->SetVectorParameterValue(TEXT("ColorBoot"), B.Boot);
-		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), Antifoul);
-		Mid->SetVectorParameterValue(TEXT("BaseColor"), B.Hull);
-		Mid->SetVectorParameterValue(TEXT("Color"), B.Hull);
-		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), B.Rough);
-		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.20f);
-		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.28f);
-		Mid->SetScalarParameterValue(TEXT("Roughness"), B.Rough);
-		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 0.f);
-		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 1.f);
+		Mid->SetVectorParameterValue(TEXT("BaseColor"), WhiteTopsides);
+		Mid->SetVectorParameterValue(TEXT("Color"), WhiteTopsides);
+		Mid->SetVectorParameterValue(TEXT("SpecularTint"), FLinearColor::White);
+		// If we had to fall back to HullPaint, every Z band is white so a bad
+		// local Z cannot select dark antifoul / boot / navy.
+		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), WhiteTopsides);
+		Mid->SetVectorParameterValue(TEXT("ColorStripe"), WhiteTopsides);
+		Mid->SetVectorParameterValue(TEXT("ColorBoot"), WhiteTopsides);
+		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), WhiteTopsides);
+		if (bZBandParent)
+		{
+			Mid->SetScalarParameterValue(TEXT("ZBootLo"), -100000.f);
+			Mid->SetScalarParameterValue(TEXT("ZBootHi"), -100000.f);
+			Mid->SetScalarParameterValue(TEXT("ZStripeLo"), 100000.f);
+			Mid->SetScalarParameterValue(TEXT("ZStripeHi"), 100001.f);
+		}
+		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), 0.08f);
+		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.10f);
+		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.10f);
+		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.08f);
 		Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-		Mid->SetScalarParameterValue(TEXT("Specular"), 0.40f);
+		Mid->SetScalarParameterValue(TEXT("Specular"), 0.55f);
+		// Fresnel sheen on M_Yacht_PBR (ClearCoatBoost). Do not zero ClearCoat —
+		// that killed the gelcoat highlight on the previous scenery MIDs.
+		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.50f);
+		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 1.f);
+		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 0.05f);
+		MooredBoatPrivate::ForceYachtIsmUsage(Mid);
 		SceneryHullMids.Add(Mid);
 	}
-	UE_LOG(LogSailSim, Log, TEXT("MooredBoats: scenery paint buckets=%d parent=%s"),
-		SceneryHullMids.Num(), *Parent->GetPathName());
+
+	UMaterialInterface* SparParent = YachtSparMat.Get();
+	if (!SparParent)
+	{
+		SparParent = SparMaterial.Get();
+	}
+	ScenerySparMid = nullptr;
+	if (SparParent)
+	{
+		MooredBoatPrivate::ForceYachtIsmUsage(SparParent);
+		if (UMaterialInstanceDynamic* SparMid = UMaterialInstanceDynamic::Create(SparParent, this))
+		{
+			// Authored spar MI is Metallic=1. With reflection captures and ray
+			// tracing stripped, that lobe is black. Dielectric aluminum shows
+			// the light mast color from albedo.
+			const FLinearColor Aluminum(0.90f, 0.91f, 0.92f, 1.f);
+			SparMid->SetVectorParameterValue(TEXT("BaseColor"), Aluminum);
+			SparMid->SetVectorParameterValue(TEXT("Color"), Aluminum);
+			SparMid->SetVectorParameterValue(TEXT("SpecularTint"), FLinearColor::White);
+			SparMid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+			SparMid->SetScalarParameterValue(TEXT("Roughness"), 0.22f);
+			SparMid->SetScalarParameterValue(TEXT("Specular"), 0.55f);
+			SparMid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.15f);
+			MooredBoatPrivate::ForceYachtIsmUsage(SparMid);
+			ScenerySparMid = SparMid;
+		}
+	}
+
+	UE_LOG(LogSailSim, Log,
+		TEXT("MooredBoats: scenery gelcoat mids=%d parent=%s zBandFallback=%d spar=%s (white BaseColor, not antifoul)"),
+		SceneryHullMids.Num(), *Parent->GetPathName(), bZBandParent ? 1 : 0,
+		ScenerySparMid ? TEXT("dielectric") : TEXT("none"));
 }
 
 void UMooredBoatSubsystem::ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* H, bool bNaniteDisallowed) const
@@ -2401,7 +2428,9 @@ void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedSta
 	{
 		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface.Get() : Hism->GetMaterial(Mi);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mat);
-		if (BucketMid && MooredBoatPrivate::IsYachtTopsidesMaterial(Mat))
+		// Null slot or any above-water yacht shell → shared white gelcoat.
+		// Glass / keel stay on their own MIs.
+		if (BucketMid && (!Mat || MooredBoatPrivate::ShouldUseSceneryGelcoat(Mat)))
 		{
 			MooredBoatPrivate::ForceYachtIsmUsage(BucketMid);
 			Hism->SetMaterial(Mi, BucketMid);
@@ -2481,7 +2510,15 @@ void UMooredBoatSubsystem::EnsureMidHism()
 
 	if (CylinderMesh)
 	{
-		UMaterialInterface* SparMat = YachtSparMat.Get() ? YachtSparMat.Get() : SparMaterial.Get();
+		UMaterialInterface* SparMat = ScenerySparMid.Get();
+		if (!SparMat)
+		{
+			SparMat = YachtSparMat.Get();
+		}
+		if (!SparMat)
+		{
+			SparMat = SparMaterial.Get();
+		}
 		MooredBoatPrivate::ForceYachtIsmUsage(SparMat);
 		UHierarchicalInstancedStaticMeshComponent* Spar =
 			NewObject<UHierarchicalInstancedStaticMeshComponent>(Owner, TEXT("ScenerySparHISM"), RF_Transient);
