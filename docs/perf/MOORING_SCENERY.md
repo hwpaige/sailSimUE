@@ -8,9 +8,15 @@ End state: **1 player / hero boat** + **the mooring field is scenery**.
 |------|---------|------|
 | `MaxBoats` | **1** | Hero / full-system boats only (player path; a few allowed). **Not** harbor fill or density. |
 | `MaxNearFullBoats` | **1** | Live NearFull heroes. Stays aligned with `MaxBoats`. |
-| `MooringSceneryInstanceCount` | **96** | **Harbor fill only.** Static HISM scenery budget (8–400, shared hull SM + Yacht mats). |
+| `MooringSceneryInstanceCount` | **96** | **Harbor fill only.** Static HISM scenery budget (8–400). |
 
 Harbor fill scales with `MooringSceneryInstanceCount` alone. `MaxBoats = 1` does not shrink the slot or HISM budget. Prefer-ON / DSF2 stay unchanged. Scenery instances use `StripMooredReflectionCost`, `CastShadow=false`, Static mobility, distance cull — **no** `SetForcedLodModel` / MinLOD crush.
+
+## Draw
+
+Scenery is the shared baked J/105 hull (`SM_MooredJ105_Hull`, PMC→SM) plus a spar HISM (engine cylinder, `MI_Yacht_Spar`). Materials are `/Game/Materials/Yacht/` only (`MI_Yacht_HullPaint` / Gelcoat / BootStripe / HullStripe / Antifoul / Deck / Cabin / Glass / Keel / Spar, and master `M_Yacht_HullPaint`). Paint variety is a few **shared** HullPaint MIDs (BaseColor / roughness / stripe), not a unique MID per boat, and not `SM_Buoy`.
+
+The HISM actor is anchored at the harbor basin (same placement rule as EncAid ISMs). Yacht materials are flagged `Used with Instanced Static Meshes` before the first place. Without that flag, a cold PIE draws an empty field of buoys while the CPU instance count still reads 96. After instance adds, the cluster tree is built synchronously (`BuildTreeIfOutdated`). Heroes (`MaxBoats` / NearFull) stay full actors and are not these instances.
 
 ## Ops Prefer-ON gate
 
