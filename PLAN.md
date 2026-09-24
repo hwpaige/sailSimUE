@@ -67,9 +67,9 @@ Unlit view shows the hull is correctly **light cream** (base color fine). It loo
 
 ## How we work
 - **MCP-first:** drive the editor via the `unreal` server; write C++/config to disk; recompile via editor Live Coding / build.
-- **Verify visually:** `CaptureViewport` for the free editor camera; `SailSimToolset.StartPIE` + `CapturePlayerView` (log `grab=ViewportFramebuffer` `litOverride=0`) for the active Lit viewport. Don't mark a step done on "build succeeded" alone. Scene capture is not a scoring shot.
+- **Verify visually:** `CaptureViewport` for the free editor camera; `SailSimToolset.StartPIE` + `CapturePlayerView` (log `grab=HighResShot` or `grab=ViewportFramebuffer`, `litOverride=0`) for the active Lit viewport. Don't mark a step done on "build succeeded" alone. Scene capture is not a scoring shot.
 - **Ask the user only for:** credentials, GUI-only actions MCP can't do, genuine design choices, and final feel/look verification.
 - **Never** copy `threejs-water-pro/src` into this repo.
 - Keep this file current: check tasks off, append findings.
 
-| mcp | **In progress:** SailSimToolset gate tools — CapturePlayerView (Lit viewport framebuffer), StartPIE/EnsurePIE, GetPerfSnapshot, SetCVars, ExecuteConsole, ProfileGPUDump, LoadMap | `Plugins/SailSimToolset` | med | Prefer-ON CPV log `grab=ViewportFramebuffer` `litOverride=0` |
+| mcp | **In progress:** SailSimToolset gate tools — CapturePlayerView (1x Lit viewport HighResShot), StartPIE/EnsurePIE, GetPerfSnapshot, SetCVars, ExecuteConsole, ProfileGPUDump, LoadMap | `Plugins/SailSimToolset` | med | Prefer-ON CPV log `grab=HighResShot` `litOverride=0` |

@@ -22,7 +22,7 @@ The HISM actor is anchored at the harbor basin (same placement rule as EncAid IS
 
 `RunPreferOnGate` / `ops_run_prefer_on_gate.py` frame `midHarborMoored` and pass on **scenery count** (floor ~64, soft target ~96 = `MooringSceneryInstanceCount`). JSON and status lines also report **heroes** (`MaxBoats`, `MaxNearFullBoats`, live NearFull count; defaults 1). The pass bar is not a hero cap.
 
-The CPV PNG is a 1x framebuffer grab of the active editor/PIE Lit viewport (`grab=ViewportFramebuffer`, `litOverride=false`), under `Saved/Screenshots/SailSim/`. Re-run after this toolset is Live Compiled: `SailSim.RunPreferOnGate` or `python3 Scripts/ops_run_prefer_on_gate.py`. Gelcoat close-up: `CapturePlayerView` with `FramingPreset=gelcoatHull` (same grab). Do not score hull color from a scene-capture PNG. See `Plugins/SailSimToolset/README.md` (Ops — re-run Prefer-ON).
+The CPV PNG is a 1x HighResShot of the active editor/PIE Lit viewport during its Draw (`grab=HighResShot`, or `ViewportFramebuffer` if that client did not consume the request; `litOverride=false`), under `Saved/Screenshots/SailSim/` and `Saved/SailSim/last_lit_viewport_grab.png`. Re-run after this toolset is Live Compiled: `SailSim.RunPreferOnGate` or `python3 Scripts/ops_run_prefer_on_gate.py`. Gelcoat close-up: `CapturePlayerView` with `FramingPreset=gelcoatHull` (same grab). Do not score hull color from a scene-capture PNG. See `Plugins/SailSimToolset/README.md` (How Ops captures for look gates).
 
 ## World follow-up
 

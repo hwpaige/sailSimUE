@@ -11,8 +11,8 @@
  * Sail Buddy MCP helpers for Prefer-ON / PIE / Design gates.
  *
  * CaptureViewport and CaptureEditorImage stay on EditorToolset (free editor camera).
- * CapturePlayerView grabs the active editor/PIE Lit viewport framebuffer (HighResShot's read).
- * Framing presets only move the possessed camera. Show flags, exposure, and post stay on that viewport.
+ * CapturePlayerView is a 1x HighResShot of the active editor/PIE Lit viewport during its Draw.
+ * Framing presets only move the possessed camera. Show flags, exposure, post, and time of day stay on that viewport.
  * EditorToolset.StartPIE fails opaquely when a session is already running — use StartPIE / EnsurePIE here.
  */
 UCLASS()
@@ -22,9 +22,9 @@ class USailSimToolset : public UToolsetDefinition
 
 public:
 	/**
-	 * 1x framebuffer grab of the active editor/PIE Lit viewport (same read as HighResShot).
-	 * Framing presets move the possessed camera; the viewport's own Lit path presents the shot.
-	 * Does not spawn a scene capture and does not change show flags, sky, or time of day.
+	 * 1x HighResShot of the active editor/PIE Lit viewport (its Draw, LDR, no resolution multiplier).
+	 * Framing presets move the possessed camera; that viewport's Lit path presents the shot.
+	 * Does not spawn a scene capture and does not change show flags, sky, exposure, or time of day.
 	 * MinWorldSeconds: require the PIE world to have been running at least this long (0 skips the time gate).
 	 * FramingPreset (SailSim_Ocean pawn teleports, then the possessed camera is what gets shot;
 	 * empty = leave the boat where it is):
@@ -44,7 +44,7 @@ public:
 	 * 4) Assert mid-harbor moored >= scenery floor (~64; soft target = MooringSceneryInstanceCount, default 96);
 	 *    else failCode=moored_count. Reports scenery count + heroes (MaxBoats / MaxNearFullBoats, default 1).
 	 *    Harbor fill is scenery count only.
-	 * 5) CapturePlayerView FramingPreset=midHarborMoored (possessed-camera CPV under Saved/Screenshots)
+	 * 5) CapturePlayerView FramingPreset=midHarborMoored (1x Lit viewport grab under Saved/Screenshots)
 	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
 	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, captureSource, grab,
 	 *    viewSource, exposureFrames, litOverride, sha, ok, failCode?}
