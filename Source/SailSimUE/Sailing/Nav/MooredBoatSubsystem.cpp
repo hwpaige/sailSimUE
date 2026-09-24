@@ -1070,6 +1070,9 @@ void UMooredBoatSubsystem::StripMooredReflectionCost(UPrimitiveComponent* Prim)
 	if (!Prim) return;
 	// Keep main-pass + auto LODs (8249a15 forced LOD1 crushed mid-harbor hulls into dots).
 	// Only strip reflection / Lumen / DF contribution that feeds SLW::LumenReflections.
+	// These flags stop the mesh contributing to Lumen / reflection captures / DF.
+	// They do not block the directional sun — decks stay lit. Do not turn them
+	// back on to "fix" dark hull sides; that reintroduces the reflection cost.
 	Prim->bVisibleInReflectionCaptures = false;
 	Prim->SetVisibleInRayTracing(false);
 	Prim->SetAffectDistanceFieldLighting(false);
@@ -2394,6 +2397,51 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		TEXT("MooredBoats: scenery gelcoat mids=%d parent=%s zBandFallback=%d spar=%s (white BaseColor, not antifoul)"),
 		SceneryHullMids.Num(), *Parent->GetPathName(), bZBandParent ? 1 : 0,
 		ScenerySparMid ? TEXT("dielectric") : TEXT("none"));
+	SceneryShadeFloorApplied = -1.f;
+	ApplySceneryShadeFloor();
+}
+
+float UMooredBoatSubsystem::SampleDirectionalSunIntensity() const
+{
+	UWorld* World = GetWorld();
+	if (!World) return 0.f;
+	float Best = 0.f;
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		ADirectionalLight* Sun = *It;
+		if (!IsValid(Sun)) continue;
+		if (Sun->GetActorNameOrLabel().Contains(TEXT("Moon"))) continue;
+		UDirectionalLightComponent* Comp = Cast<UDirectionalLightComponent>(Sun->GetLightComponent());
+		if (!Comp || !Comp->IsVisible()) continue;
+		// ComputeLightBrightness already divides lux by PI. Same scale as the
+		// directional term that lights the deck.
+		Best = FMath::Max(Best, Comp->ComputeLightBrightness());
+	}
+	return Best;
+}
+
+void UMooredBoatSubsystem::ApplySceneryShadeFloor()
+{
+	if (SceneryHullMids.Num() == 0) return;
+	const float Sun = SampleDirectionalSunIntensity();
+	// ~35% of head-on sun. Shadowed topsides (low NdotL, fresnel reflecting an
+	// empty environment) stay in the white-paint range; decks stay brighter.
+	// Zero when the sun is off so the field does not glow at night.
+	// One scalar on the shared MID — no Lumen cards, no mobility change.
+	const float Floor = (Sun > 0.05f) ? (Sun * 0.35f) : 0.f;
+	if (SceneryShadeFloorApplied >= 0.f && FMath::IsNearlyEqual(Floor, SceneryShadeFloorApplied, 0.08f))
+	{
+		return;
+	}
+	SceneryShadeFloorApplied = Floor;
+	for (const TObjectPtr<UMaterialInstanceDynamic>& Mid : SceneryHullMids)
+	{
+		if (!Mid) continue;
+		Mid->SetScalarParameterValue(TEXT("EmissiveBoost"), Floor);
+	}
+	UE_LOG(LogSailSim, Log,
+		TEXT("MooredBoats: scenery shade floor emissive=%.2f sun=%.2f (hull sides, not Lumen)"),
+		Floor, Sun);
 }
 
 void UMooredBoatSubsystem::ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* H, bool bNaniteDisallowed) const
@@ -2793,6 +2841,7 @@ void UMooredBoatSubsystem::Tick(float DeltaTime)
 	{
 		LightAccum = 0.f;
 		UpdateAllAnchorLights();
+		ApplySceneryShadeFloor();
 	}
 
 	// Stream load/unload on a slower interval.

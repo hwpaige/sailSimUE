@@ -341,6 +341,8 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> ScenerySparMid = nullptr;
 
 	bool bSceneryPaintReady = false;
+	/** Last EmissiveBoost applied to scenery gelcoat. -1 = not yet. */
+	float SceneryShadeFloorApplied = -1.f;
 	bool bSceneryHismDirty = false;
 	bool bLoggedSceneryDraw = false;
 	/** Re-flush HISM a few stream ticks so ISM shaders that finish late still bind. */
@@ -419,6 +421,10 @@ private:
 	void ClearAll();
 	void RebuildAround(const FVector& Focus);
 	void EnsureSceneryPaint();
+	/** Noon sun intensity (0 at night). Used to scale the scenery side-fill. */
+	float SampleDirectionalSunIntensity() const;
+	/** Emissive floor so sun-away hull sides stay white gelcoat. Not a Lumen bounce. */
+	void ApplySceneryShadeFloor();
 	void EnsureMidHism();
 	void ClearMidHism();
 	void AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot);
