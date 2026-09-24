@@ -12,7 +12,7 @@ Routing:
        else compose EnsurePIE → SetCVars → poll GetPerfSnapshot → CapturePlayerView.
   4) If tools are advertised flat, call them directly (legacy / tool-search off).
 
-Prints JSON: {frameMs_avg,fps,moored,mooringSceneryBudget,mooringSceneryFloor,heroesMaxBoats,heroesNearFullCap,cpvPath,sha,ok,failCode}
+Prints JSON: {frameMs_avg,fps,moored,mooringSceneryBudget,mooringSceneryFloor,heroesMaxBoats,heroesNearFullCap,cpvPath,captureSource,litOverride,sha,ok,failCode}
 
 Does NOT raise MaxBoats (hero cap stays 1; MaxNearFullBoats stays 1). Harbor fill is
 MooringSceneryInstanceCount (floor ~64 / soft ~96). ProfileGPUDump stays parked.
@@ -59,6 +59,12 @@ GATE_REPORT_KEYS = (
     "heroesNearFullCap",
     "heroesNear",
     "cpvPath",
+    "captureSource",
+    "viewSource",
+    "exposureFrames",
+    "litOverride",
+    "postProcessBlendWeight",
+    "fov",
     "ok",
     "failCode",
     "error",

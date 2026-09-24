@@ -2,7 +2,7 @@
 
 Editor MCP tools for Prefer-ON, PIE, and Design gates. They register on the existing editor toolset endpoint (`http://127.0.0.1:8765/mcp`) next to EditorToolset.
 
-`CaptureViewport` and `CaptureEditorImage` stay on EditorToolset. They follow the free editor camera. Do not use them for a possessed-boat Lit shot.
+`CaptureViewport` and `CaptureEditorImage` stay on EditorToolset. They follow the free editor camera. Use `CapturePlayerView` for the possessed boat in PIE.
 
 ## Mac Live Coding
 
@@ -10,22 +10,26 @@ Rebuild **SailSimUE** and **SailSimToolset** together (`SailSimGetPerf` is in `S
 
 After Live Coding, the log line for a good capture is:
 
-`CapturePlayerView OK world=PIE ... cam=SpringArmSocket ... editorCamDist=<large>`
+`CapturePlayerView OK world=PIE ... cam=PIEGameViewport view=PlayerCameraManager ... litOverride=0 ... editorCamDist=<large>`
 
-`editorCamDist` is the distance from the boom socket to the free editor camera. A hull shot is at the boat (Nantucket harbor coordinates), not on the editor grid.
+`cam` is where the pixels came from (`PIEGameViewport` or `LevelViewportPIE`). `view` is the possessed camera (`PlayerCamera` or `PlayerCameraManager`). `editorCamDist` is the distance from that camera to the free editor camera. A hull shot is at the boat (Nantucket harbor coordinates). `litOverride=0` means the shot did not apply an editor Lit view mode.
+
+`cam=SceneCaptureClone` means the PIE viewport could not be read. The clone copies the possessed camera POV and post process and the live game show flags. Treat that file as approximate (see remaining deltas below).
 
 ## CapturePlayerView
 
-Renders the **PIE world scene** from the possessed `ASailBoatPawn` **spring-arm socket**. It does not call `CaptureScene()` (that capture is flushed when the editor viewport draws, which is the empty grid) and it does not move `GCurrentLevelEditingViewportClient`.
+Reads the **PIE game viewport** after the possessed `ASailBoatPawn` camera has been pushed into `PlayerCameraManager`. That is the view Harrison sees in the PIE panel. It does not move `GCurrentLevelEditingViewportClient` and it does not call `ApplyViewMode(VMI_Lit)`.
 
-What it does instead:
+What it does:
 
 1. Require `GEditor->PlayWorld` with `WorldType == PIE`.
 2. Find the possessed session boat (`GetPawn` / `bPlayerSessionBoat`). Ignore the editor world.
-3. Read `USpringArmComponent` socket `SpringEndpoint` (FOV from the boat camera, default 72). Reject a boom that is still inside the hull, and reject a view that landed on the free editor camera.
-4. `FScopedConditionalWorldSwitcher` so `GWorld` is the PIE world, then spawn a transient `ASceneCapture2D` there. Lit game show flags, grid and selection off.
-5. `CaptureScene()` twice (immediate capture — not the deferred path the editor viewport flushes). The second pass keeps Lumen / exposure state. `FScene::UpdateSceneCaptureContents` is not called directly; on 5.7+ it requires an internal `ISceneRenderBuilder`.
-6. Read the render target. The target is cleared to magenta first. If the readback is still magenta, the call errors with `code=capture_did_not_write` instead of returning a stale editor image.
+3. Optional `FramingPreset` teleports that pawn (composition only). Orbit and zoom stay on the possessed camera.
+4. Advance the spring arm and call `PlayerCameraManager::UpdateCamera`, and `SetViewTarget` to the boat when the view target is something else.
+5. Draw the PIE game viewport (`GameViewportForWorld`) for 16 frames so the chase cam and the viewport's auto-exposure step on **that** view. Then `ReadPixels`.
+6. If that viewport cannot be read, fall back to a transient `ASceneCapture2D` at the camera POV with the camera's post-process blend (including day `AutoExposureBias`) and the live game show flags (`ESFIM_Game` when the game viewport has no flags). 16 `CaptureScene` passes. Log `cam=SceneCaptureClone`.
+
+The free editor viewport is not a capture source. `CaptureViewport` remains the editor camera.
 
 `MinWorldSeconds` defaults to `0.5`. The call errors with `code=not_settled` until the PIE world has been running that long. Pass `0` to skip the time gate. The possessed boat is always required.
 
@@ -35,7 +39,7 @@ Coded errors (script error text, no image):
 | --- | --- |
 | `no_pie` | PIE is not running. Do not fall back to CaptureViewport. |
 | `not_settled` | World time is under `MinWorldSeconds`. Retry. |
-| `no_boom` | No possessed boat, or the boom transform is not usable. |
+| `no_boom` | No possessed boat, or the player camera is not usable. |
 | `no_pie_scene` | PIE world has no scene. |
 | `wrong_world` | Capture actor was not spawned in the PIE world. |
 | `capture_did_not_write` | Render target is still the magenta clear. |
@@ -48,13 +52,13 @@ Optional second arg. Teleports the possessed pawn before capture (empty = leave 
 
 | preset | transform |
 | --- | --- |
-| `midHarborMoored` | Harbor basin + `BoatStartHeadingDeg` (90° east). Moored hulls visible L/R of player — fixes empty-water density FAILs. |
-| `gelcoatHull` | Harbor + (−12 m N, +6 m E), yaw 135° — close lit gelcoat / near-hull fill. |
-| `horizon` | Harbor + 2.5 km north, yaw 0° — open water / horizon. |
+| `midHarborMoored` | Harbor basin + `BoatStartHeadingDeg` (90° east). Moored hulls visible L/R of the possessed camera. |
+| `gelcoatHull` | Harbor + (−12 m N, +6 m E), yaw 135° — close gelcoat / near-hull fill from the possessed camera. |
+| `horizon` | Harbor + 2.5 km north, yaw 0° — open water / horizon. Exposure may still be adapting after this jump. |
 
 ## RunPreferOnGate
 
-One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) → settle pump → assert scenery floor (~64, soft ~96) and report heroes (default 1) → midHarborMoored CPV.
+One MCP call for Ops Prefer-ON. Composes EnsurePIE → SetCVars (DSF2 stick) → settle pump → assert scenery floor (~64, soft ~96) and report heroes (default 1) → midHarborMoored possessed-camera CPV.
 
 ```
 SailSimToolset.RunPreferOnGate
@@ -66,7 +70,9 @@ Returns JSON (also written to `Saved/SailSim/last_prefer_on_gate.json`):
 { "ok": true, "frameMs_avg": 27.9, "fps": 35.8, "moored": 96,
   "mooringSceneryBudget": 96, "mooringSceneryFloor": 64,
   "heroesMaxBoats": 1, "heroesNearFullCap": 1, "heroesNear": 1,
-  "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-....png",
+  "cpvPath": ".../Saved/Screenshots/SailSim/ocean-<sha>-preferON-midHarborMoored-PIEGameViewport-....png",
+  "captureSource": "PIEGameViewport", "viewSource": "PlayerCameraManager",
+  "exposureFrames": 16, "litOverride": false,
   "sha": "018b9ab", "failCode": "", "error": "" }
 ```
 
@@ -179,7 +185,7 @@ Returned `bucketsMs`: `SingleLayerWater`, `LumenGI`, `LumenReflections`, `Lumen`
 
 - `FindActorsByName` searches the PIE world when playing, otherwise the editor world. Each hit includes `world` and `playerControlled`.
 - `GetLevelPath` returns `EditorLevel`, `PIELevel`, `MapName`, and the same settle fields as EnsurePIE.
-- `GetPlayerCameraTransform` is the boom socket (`source: "SpringArmSocket"`), plus `editorCameraDistance`.
+- `GetPlayerCameraTransform` is the possessed camera (`source`: `PlayerCamera` or `PlayerCameraManager`), plus `postProcessBlendWeight` and `editorCameraDistance`.
 
 ## LoadMap
 
@@ -190,12 +196,57 @@ Package path, or a short name under `/Game/Maps/` (`SailSim_Ocean` → `/Game/Ma
 
 ## Gate sequence
 
-**Prefer-ON (one call):** `RunPreferOnGate` — EnsurePIE + DSF2 SetCVars + scenery floor (~64, soft ~96) assert, heroes reported (default 1) + midHarborMoored CPV.
+**Prefer-ON (one call):** `RunPreferOnGate` — EnsurePIE + DSF2 SetCVars + scenery floor (~64, soft ~96) assert, heroes reported (default 1) + midHarborMoored possessed-camera CPV.
 
 Manual / Design:
 
 1. `EnsurePIE` or `StartPIE` until `code` is `running` and `Settled` is true.
-2. `GetPlayerCameraTransform` — `source` is `SpringArmSocket`, location is next to the boat.
-3. `CapturePlayerView` with `FramingPreset=midHarborMoored|gelcoatHull|horizon` — Lit from that boom. Accept only an image whose log line is `CapturePlayerView OK`.
+2. `GetPlayerCameraTransform` — `source` is `PlayerCamera` or `PlayerCameraManager`, location is the possessed camera.
+3. `CapturePlayerView` with `FramingPreset=midHarborMoored|gelcoatHull|horizon`. Accept a log line `CapturePlayerView OK` with `litOverride=0` and `cam=PIEGameViewport` (or `LevelViewportPIE`).
 4. `GetPerfSnapshot` for `moored=`, `aids=`, `tiles T=`.
 5. `SetCVars` / `ExecuteConsole` for Prefer-ON A/Bs. `ProfileGPUDump` optional (parked for parse cost on the Prefer-ON gate).
+
+## Ops — re-run Prefer-ON after the CPV fix
+
+Score gelcoat / mid-harbor from a new shot. Older PNGs under `Saved/Screenshots/SailSim/` were a second scene capture (spring-arm socket, `ApplyViewMode(VMI_Lit)`, two capture passes, camera post-process blend left at 0) and do not match the PIE viewport.
+
+1. TCP 8765 must be UnrealEditor. If CrashReportClient owns it, kill CrashReportClient only.
+2. PIE `SailSim_Ocean` (or let the gate call EnsurePIE). Possessed boat, game viewport visible.
+3. Live Coding must have relinked `SailSimToolset` (this capture path). If the MCP schema is stale, use the console command.
+4. Run one of:
+
+```
+SailSim.RunPreferOnGate
+```
+
+```
+python3 Scripts/ops_run_prefer_on_gate.py
+```
+
+5. Gelcoat close-up (same capture path, not a second Lit camera):
+
+```
+SailSimToolset.CapturePlayerView  MinWorldSeconds=0.5  FramingPreset=gelcoatHull
+```
+
+Pass checks in the log / `Saved/SailSim/last_prefer_on_gate.json`:
+
+- `captureSource` is `PIEGameViewport` (or `LevelViewportPIE`)
+- `litOverride` is false
+- `viewSource` is `PlayerCamera` or `PlayerCameraManager`
+- `cpvPath` is under `Saved/Screenshots/SailSim/`
+
+Prefer-ON cvars stay `r.Lumen.Reflections.Allow=1` and `DownsampleFactor=2`. Heroes stay `MaxBoats=1`. Do not lower `MooringSceneryInstanceCount`.
+
+### Why older CPV color scores were wrong
+
+The gate spawned `ASceneCapture2D` on the spring-arm socket and replaced show flags with `FEngineShowFlags(ESFIM_Game)` plus `ApplyViewMode(VMI_Lit)`. That second camera dropped the possessed `UCameraComponent` post process (`ApplyAtmosphereLook` sets day `AutoExposureBias` 0.35, blend weight 1) and started a fresh eye-adaptation history (two `CaptureScene` calls). The Lit view-mode reset is an editor flag override; the gate does not change time of day. Framing presets still move the pawn; they are the scoring composition. The PNG is now the possessed camera after that move.
+
+### Remaining deltas (no editor visual PASS from this change)
+
+- PNG size follows the PIE game viewport, so aspect can differ from a fixed 1920×1080 and from a different panel layout.
+- `ReadPixels` is the viewport backbuffer. UMG/HUD compositing may be absent even though it is on screen.
+- `cam=SceneCaptureClone` (PIE viewport missing or black) is 1920×1080 at the player POV with the camera post process and live game show flags. Its eye-adaptation history is still its own; do not score gelcoat from a clone file.
+- `horizon` jumps ~2.5 km. Sixteen viewport frames may not finish adaptation. `midHarborMoored` and `gelcoatHull` stay in the harbor, where the viewport exposure is already settled.
+- Presets do not reset orbit or zoom. The shot uses the possessed chase cam after the teleport.
+- `CaptureViewport` / `CaptureEditorImage` are still the free editor camera.

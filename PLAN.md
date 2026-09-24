@@ -67,9 +67,9 @@ Unlit view shows the hull is correctly **light cream** (base color fine). It loo
 
 ## How we work
 - **MCP-first:** drive the editor via the `unreal` server; write C++/config to disk; recompile via editor Live Coding / build.
-- **Verify visually:** `CaptureViewport` for the free editor camera; `SailSimToolset.StartPIE` + `CapturePlayerView` (boom socket, log `cam=SpringArmSocket`) for the possessed boat. Don't mark a step done on "build succeeded" alone.
+- **Verify visually:** `CaptureViewport` for the free editor camera; `SailSimToolset.StartPIE` + `CapturePlayerView` (possessed camera, log `cam=PIEGameViewport` `litOverride=0`) for the PIE view. Don't mark a step done on "build succeeded" alone. Do not score gelcoat off `cam=SceneCaptureClone`.
 - **Ask the user only for:** credentials, GUI-only actions MCP can't do, genuine design choices, and final feel/look verification.
 - **Never** copy `threejs-water-pro/src` into this repo.
 - Keep this file current: check tasks off, append findings.
 
-| mcp | **In progress:** SailSimToolset gate tools — CapturePlayerView (PIE boom Lit), StartPIE/EnsurePIE, GetPerfSnapshot, SetCVars, ExecuteConsole, ProfileGPUDump, LoadMap | `Plugins/SailSimToolset` | med | Prefer-ON PIE CapturePlayerView shows hull gelcoat |
+| mcp | **In progress:** SailSimToolset gate tools — CapturePlayerView (PIE possessed camera), StartPIE/EnsurePIE, GetPerfSnapshot, SetCVars, ExecuteConsole, ProfileGPUDump, LoadMap | `Plugins/SailSimToolset` | med | Prefer-ON CPV log `cam=PIEGameViewport` `litOverride=0` |

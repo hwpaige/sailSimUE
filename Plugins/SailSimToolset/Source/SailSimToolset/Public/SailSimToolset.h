@@ -11,7 +11,8 @@
  * Sail Buddy MCP helpers for Prefer-ON / PIE / Design gates.
  *
  * CaptureViewport and CaptureEditorImage stay on EditorToolset (free editor camera).
- * CapturePlayerView renders the PIE scene from the possessed ASailBoatPawn camera boom.
+ * CapturePlayerView reads the PIE game viewport from the possessed ASailBoatPawn camera
+ * (view target + that camera's post process). It does not apply a Lit view-mode override.
  * EditorToolset.StartPIE fails opaquely when a session is already running — use StartPIE / EnsurePIE here.
  */
 UCLASS()
@@ -21,14 +22,16 @@ class USailSimToolset : public UToolsetDefinition
 
 public:
 	/**
-	 * Lit screenshot of the possessed ASailBoatPawn from its camera boom during PIE.
-	 * Renders PlayWorld->Scene directly (not the free editor camera, not the editor viewport grid).
+	 * Screenshot of what the possessed ASailBoatPawn camera shows in PIE.
+	 * Reads the PIE game viewport after the chase cam and auto-exposure have stepped.
+	 * Does not apply ApplyViewMode(VMI_Lit) and does not change sky or time of day.
 	 * MinWorldSeconds: require the PIE world to have been running at least this long (0 skips the time gate).
-	 * FramingPreset (SailSim_Ocean known-good pawn teleports; empty = leave boat where it is):
+	 * FramingPreset (SailSim_Ocean pawn teleports, then the possessed camera is what gets shot;
+	 * empty = leave the boat where it is):
 	 *   midHarborMoored — Nantucket Harbor basin (FNavGeo::BoatStart); moored hulls visible L/R of player
-	 *   gelcoatHull     — same basin, yawed for close lit gelcoat / near-hull fill
+	 *   gelcoatHull     — same basin, yawed for close gelcoat / near-hull fill
 	 *   horizon         — ~2.5 km north of harbor, open water / horizon
-	 * Fails with a coded error if PIE is down, the session boat is missing, or the boom transform is not usable.
+	 * Fails with a coded error if PIE is down, the session boat is missing, or the camera is not usable.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
 	static FToolsetImage CapturePlayerView(float MinWorldSeconds = 0.5f, const FString& FramingPreset = TEXT(""));
@@ -41,9 +44,10 @@ public:
 	 * 4) Assert mid-harbor moored >= scenery floor (~64; soft target = MooringSceneryInstanceCount, default 96);
 	 *    else failCode=moored_count. Reports scenery count + heroes (MaxBoats / MaxNearFullBoats, default 1).
 	 *    Harbor fill is scenery count only.
-	 * 5) CapturePlayerView FramingPreset=midHarborMoored (noon Lit CPV saved under Saved/Screenshots)
+	 * 5) CapturePlayerView FramingPreset=midHarborMoored (possessed-camera CPV under Saved/Screenshots)
 	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
-	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, sha, ok, failCode?}
+	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, captureSource, viewSource,
+	 *    exposureFrames, litOverride, sha, ok, failCode?}
 	 * Does not raise MaxBoats (heroes stay 1). Scenery is additive HISM. Prefer-ON / DSF2 unchanged.
 	 * ProfileGPUDump stays parked.
 	 */
@@ -81,7 +85,8 @@ public:
 	static FString GetLevelPath();
 
 	/**
-	 * PIE player camera boom transform as JSON. Errors if not in PIE or the boom is unresolved.
+	 * PIE possessed-camera transform as JSON (camera component / camera manager when they agree).
+	 * Errors if not in PIE or the camera is unresolved.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
 	static FString GetPlayerCameraTransform();
