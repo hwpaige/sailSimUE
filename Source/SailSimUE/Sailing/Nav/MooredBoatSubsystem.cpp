@@ -85,20 +85,14 @@ namespace MooredBoatPrivate
 		}
 	}
 
-	/** Above-water yacht slots that should read as white gelcoat on the scenery HISM. */
-	static bool ShouldUseSceneryGelcoat(const UMaterialInterface* Mat)
+	/** Glass and keel stay on their mesh MI. Every other slot takes the bucket paint. */
+	static bool IsSceneryKeptMeshMaterial(const UMaterialInterface* Mat)
 	{
 		if (!Mat) return false;
 		const FString Path = Mat->GetPathName();
-		if (Path.Contains(TEXT("Glass")) || Path.Contains(TEXT("Window"))) return false;
-		if (Path.Contains(TEXT("Keel"))) return false;
-		if (Path.Contains(TEXT("Rope"))) return false;
-		if (Path.Contains(TEXT("Spar"))) return false;
-		return Path.Contains(TEXT("Yacht"))
-			|| Path.Contains(TEXT("Hull"))
-			|| Path.Contains(TEXT("Deck"))
-			|| Path.Contains(TEXT("Cabin"))
-			|| Path.Contains(TEXT("Gelcoat"));
+		return Path.Contains(TEXT("Glass"))
+			|| Path.Contains(TEXT("Window"))
+			|| Path.Contains(TEXT("Keel"));
 	}
 }
 
@@ -2342,11 +2336,13 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		const TCHAR* Name;
 		FLinearColor Color;
 	};
+	// Separated enough to survive noon exposure. Pale blue / cream that sit next
+	// to white (0.9) photograph as the same hull once fresnel and tonemap hit them.
 	const FSceneryPaint Paints[] = {
 		{ TEXT("white"), FLinearColor(0.96f, 0.975f, 0.995f, 1.f) },
-		{ TEXT("navy"), FLinearColor(0.12f, 0.22f, 0.42f, 1.f) },
-		{ TEXT("paleBlue"), FLinearColor(0.62f, 0.78f, 0.90f, 1.f) },
-		{ TEXT("cream"), FLinearColor(0.91f, 0.86f, 0.72f, 1.f) },
+		{ TEXT("navy"), FLinearColor(0.05f, 0.12f, 0.36f, 1.f) },
+		{ TEXT("paleBlue"), FLinearColor(0.28f, 0.50f, 0.78f, 1.f) },
+		{ TEXT("cream"), FLinearColor(0.78f, 0.58f, 0.30f, 1.f) },
 	};
 	SceneryHullMids.Reset();
 	SceneryHullMids.Reserve(UE_ARRAY_COUNT(Paints));
@@ -2374,11 +2370,13 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), 0.08f);
 		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.10f);
 		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.10f);
-		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.08f);
+		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.16f);
 		Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-		Mid->SetScalarParameterValue(TEXT("Specular"), 0.55f);
-		// Fresnel sheen on M_Yacht_PBR. Do not zero ClearCoat.
-		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.50f);
+		Mid->SetScalarParameterValue(TEXT("Specular"), 0.50f);
+		// M_Yacht_PBR lerps BaseColor toward white by Fresnel * ClearCoatBoost.
+		// 0.50 at a mid-harbor grazing angle bleaches navy / pale blue / cream
+		// into the same white. A small boost keeps a gelcoat edge without that.
+		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.08f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 1.f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 0.05f);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mid);
@@ -2445,10 +2443,11 @@ void UMooredBoatSubsystem::ApplySceneryShadeFloor()
 {
 	if (SceneryHullMids.Num() == 0) return;
 	const float Sun = SampleDirectionalSunIntensity();
-	// ~35% of head-on sun, multiplied by each bucket BaseColor. Shadowed topsides
-	// stay in that paint (white stays white, navy stays blue) instead of going
-	// black. Zero when the sun is off. One scalar per shared MID — no Lumen cards.
-	const float Floor = (Sun > 0.05f) ? (Sun * 0.35f) : 0.f;
+	// A fraction of head-on sun, capped. Uncapped, a bright directional
+	// (ComputeLightBrightness in the tens or hundreds) times BaseColor tonemaps
+	// every bucket to white — the HighResShot all-white field. The cap still
+	// lifts a sun-away side off black. Zero when the sun is off.
+	const float Floor = (Sun > 0.05f) ? FMath::Min(Sun * 0.22f, 0.85f) : 0.f;
 	if (SceneryShadeFloorApplied >= 0.f && FMath::IsNearlyEqual(Floor, SceneryShadeFloorApplied, 0.08f))
 	{
 		return;
@@ -2496,9 +2495,9 @@ void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedSta
 	{
 		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface.Get() : Hism->GetMaterial(Mi);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mat);
-		// Null slot or any above-water yacht shell → shared white gelcoat.
-		// Glass / keel stay on their own MIs.
-		if (BucketMid && (!Mat || MooredBoatPrivate::ShouldUseSceneryGelcoat(Mat)))
+		// Default to the bucket color. The mesh slot is white gelcoat / HullPaint;
+		// leaving it in place made every HISM draw that same white. Glass and keel stay.
+		if (BucketMid && !MooredBoatPrivate::IsSceneryKeptMeshMaterial(Mat))
 		{
 			MooredBoatPrivate::ForceYachtIsmUsage(BucketMid);
 			Hism->SetMaterial(Mi, BucketMid);
@@ -2507,6 +2506,10 @@ void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedSta
 		{
 			Hism->SetMaterial(Mi, Mat);
 		}
+	}
+	if (BucketMid && Hism->GetNumMaterials() == 0)
+	{
+		Hism->SetMaterial(0, BucketMid);
 	}
 }
 
@@ -2569,9 +2572,11 @@ void UMooredBoatSubsystem::EnsureMidHism()
 		H->SetupAttachment(Root);
 		H->SetStaticMesh(HullNaniteMesh.Get());
 		ConfigureSceneryHism(H, !bHullUseNanite);
-		ApplySceneryBucketMaterials(H, B);
 		H->PreAllocateInstancesMemory(FMath::Max(8, MooringSceneryInstanceCount / BucketCount + 4));
 		H->RegisterComponent();
+		// SetMaterial before RegisterComponent is dropped when the proxy copies
+		// the static mesh's white gelcoat. Bind the bucket color after register.
+		ApplySceneryBucketMaterials(H, B);
 		Owner->AddInstanceComponent(H);
 		MidHullHisms.Add(H);
 	}
@@ -2800,10 +2805,16 @@ void UMooredBoatSubsystem::FlushSceneryHismRender()
 		H->MarkRenderStateDirty();
 	};
 	int32 HullInstances = 0;
-	for (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>& H : MidHullHisms)
+	for (int32 B = 0; B < MidHullHisms.Num(); ++B)
 	{
-		if (H) HullInstances += H->GetInstanceCount();
-		FlushOne(H.Get());
+		UHierarchicalInstancedStaticMeshComponent* H = MidHullHisms[B].Get();
+		if (!H) continue;
+		HullInstances += H->GetInstanceCount();
+		FlushOne(H);
+		// Tree build can copy the static mesh's white gelcoat back onto the
+		// component. Bind the bucket color after the tree, then refresh the proxy.
+		ApplySceneryBucketMaterials(H, B);
+		H->MarkRenderStateDirty();
 	}
 	const int32 SparInstances = MidSparHism ? MidSparHism->GetInstanceCount() : 0;
 	FlushOne(MidSparHism.Get());
@@ -2817,6 +2828,14 @@ void UMooredBoatSubsystem::FlushSceneryHismRender()
 			HullInstances, SparInstances,
 			Mesh ? *Mesh->GetName() : TEXT("none"),
 			MidHullHisms.Num());
+		for (int32 B = 0; B < MidHullHisms.Num(); ++B)
+		{
+			const UHierarchicalInstancedStaticMeshComponent* H = MidHullHisms[B].Get();
+			if (!H) continue;
+			UE_LOG(LogSailSim, Log,
+				TEXT("MooredBoats: scenery bucket %d inst=%d mat=%s"),
+				B, H->GetInstanceCount(), *GetNameSafe(H->GetMaterial(0)));
+		}
 	}
 }
 
