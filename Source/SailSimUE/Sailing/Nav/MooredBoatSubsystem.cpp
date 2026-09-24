@@ -2329,20 +2329,20 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 	MooredBoatPrivate::ForceYachtIsmUsage(Parent);
 
-	// Topsides only. Navy is a readable blue, not near-black, so the shade floor
-	// (EmissiveBoost * BaseColor) cannot collapse it back to an antifoul silhouette.
+	// Mid-harbor hulls are a few pixels at a grazing angle. Paints that sit near
+	// white (pale blue 0.6/0.8/0.9, cream 0.9) plus a white fresnel/specular lobe
+	// tonemap to one white field. Luminance is split on purpose: white ~0.97,
+	// cream ~0.58, pale blue ~0.35, navy ~0.08, and the two blues are hue-separated.
 	struct FSceneryPaint
 	{
 		const TCHAR* Name;
 		FLinearColor Color;
 	};
-	// Separated enough to survive noon exposure. Pale blue / cream that sit next
-	// to white (0.9) photograph as the same hull once fresnel and tonemap hit them.
 	const FSceneryPaint Paints[] = {
 		{ TEXT("white"), FLinearColor(0.96f, 0.975f, 0.995f, 1.f) },
-		{ TEXT("navy"), FLinearColor(0.05f, 0.12f, 0.36f, 1.f) },
-		{ TEXT("paleBlue"), FLinearColor(0.28f, 0.50f, 0.78f, 1.f) },
-		{ TEXT("cream"), FLinearColor(0.78f, 0.58f, 0.30f, 1.f) },
+		{ TEXT("navy"), FLinearColor(0.02f, 0.07f, 0.42f, 1.f) },
+		{ TEXT("paleBlue"), FLinearColor(0.10f, 0.36f, 0.95f, 1.f) },
+		{ TEXT("cream"), FLinearColor(0.92f, 0.52f, 0.14f, 1.f) },
 	};
 	SceneryHullMids.Reset();
 	SceneryHullMids.Reserve(UE_ARRAY_COUNT(Paints));
@@ -2353,7 +2353,8 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		if (!Mid) continue;
 		Mid->SetVectorParameterValue(TEXT("BaseColor"), Paint.Color);
 		Mid->SetVectorParameterValue(TEXT("Color"), Paint.Color);
-		Mid->SetVectorParameterValue(TEXT("SpecularTint"), FLinearColor::White);
+		// Fresnel target. White here is what bleached the field. Same hue as the paint.
+		Mid->SetVectorParameterValue(TEXT("SpecularTint"), Paint.Color);
 		// HullPaint fallback: every Z band is this same solid color. A bad local
 		// Z cannot select the authored dark antifoul.
 		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), Paint.Color);
@@ -2367,16 +2368,17 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 			Mid->SetScalarParameterValue(TEXT("ZStripeLo"), 100000.f);
 			Mid->SetScalarParameterValue(TEXT("ZStripeHi"), 100001.f);
 		}
-		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), 0.08f);
-		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.10f);
-		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.10f);
-		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.16f);
+		Mid->SetScalarParameterValue(TEXT("RoughTopsides"), 0.48f);
+		Mid->SetScalarParameterValue(TEXT("RoughStripe"), 0.48f);
+		Mid->SetScalarParameterValue(TEXT("RoughBoot"), 0.48f);
+		// Grazing mid-harbor pixels are mostly the specular lobe. A glossy white
+		// lobe replaces the paint. Diffuse roughness keeps the BaseColor.
+		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.48f);
 		Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-		Mid->SetScalarParameterValue(TEXT("Specular"), 0.50f);
-		// M_Yacht_PBR lerps BaseColor toward white by Fresnel * ClearCoatBoost.
-		// 0.50 at a mid-harbor grazing angle bleaches navy / pale blue / cream
-		// into the same white. A small boost keeps a gelcoat edge without that.
-		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.08f);
+		Mid->SetScalarParameterValue(TEXT("Specular"), 0.22f);
+		// M_Yacht_PBR lerps BaseColor toward SpecularTint by Fresnel * ClearCoatBoost.
+		// Any boost at this angle washes the three accents into the white hulls.
+		Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoat"), 1.f);
 		Mid->SetScalarParameterValue(TEXT("ClearCoatRoughness"), 0.05f);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mid);
@@ -2413,7 +2415,7 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: scenery gelcoat mids=%d [%s] parent=%s zBandFallback=%d spar=%s (solid BaseColor, white~46%%, not Z-antifoul)"),
+		TEXT("MooredBoats: scenery gelcoat mids=%d [%s] parent=%s zBandFallback=%d spar=%s (mid contrast navy/paleBlue/cream, accent emissive 0, roughness 0.48, white~46%%)"),
 		SceneryHullMids.Num(), *PaintNames, *Parent->GetPathName(), bZBandParent ? 1 : 0,
 		ScenerySparMid ? TEXT("dielectric") : TEXT("none"));
 	SceneryShadeFloorApplied = -1.f;
@@ -2443,24 +2445,25 @@ void UMooredBoatSubsystem::ApplySceneryShadeFloor()
 {
 	if (SceneryHullMids.Num() == 0) return;
 	const float Sun = SampleDirectionalSunIntensity();
-	// A fraction of head-on sun, capped. Uncapped, a bright directional
-	// (ComputeLightBrightness in the tens or hundreds) times BaseColor tonemaps
-	// every bucket to white — the HighResShot all-white field. The cap still
-	// lifts a sun-away side off black. Zero when the sun is off.
-	const float Floor = (Sun > 0.05f) ? FMath::Min(Sun * 0.22f, 0.85f) : 0.f;
-	if (SceneryShadeFloorApplied >= 0.f && FMath::IsNearlyEqual(Floor, SceneryShadeFloorApplied, 0.08f))
+	// White only, and capped. EmissiveBoost is multiplied by BaseColor, so the
+	// same floor that lifts a white side turns pale blue and cream into white
+	// emitters at mid-harbor. Accent buckets stay at 0 and read as their paint.
+	// Zero for white too when the sun is off.
+	const float WhiteFloor = (Sun > 0.05f) ? FMath::Min(Sun * 0.04f, 0.18f) : 0.f;
+	if (SceneryShadeFloorApplied >= 0.f && FMath::IsNearlyEqual(WhiteFloor, SceneryShadeFloorApplied, 0.02f))
 	{
 		return;
 	}
-	SceneryShadeFloorApplied = Floor;
-	for (const TObjectPtr<UMaterialInstanceDynamic>& Mid : SceneryHullMids)
+	SceneryShadeFloorApplied = WhiteFloor;
+	for (int32 I = 0; I < SceneryHullMids.Num(); ++I)
 	{
+		UMaterialInstanceDynamic* Mid = SceneryHullMids[I].Get();
 		if (!Mid) continue;
-		Mid->SetScalarParameterValue(TEXT("EmissiveBoost"), Floor);
+		Mid->SetScalarParameterValue(TEXT("EmissiveBoost"), (I == 0) ? WhiteFloor : 0.f);
 	}
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: scenery shade floor emissive=%.2f sun=%.2f (hull sides, not Lumen)"),
-		Floor, Sun);
+		TEXT("MooredBoats: scenery shade floor white=%.2f accents=0 sun=%.2f (accents stay paint, not Lumen)"),
+		WhiteFloor, Sun);
 }
 
 void UMooredBoatSubsystem::ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* H, bool bNaniteDisallowed) const

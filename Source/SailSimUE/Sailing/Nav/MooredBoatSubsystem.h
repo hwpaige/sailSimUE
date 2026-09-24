@@ -424,7 +424,7 @@ private:
 	void EnsureSceneryPaint();
 	/** Noon sun intensity (0 at night). Used to scale the scenery side-fill. */
 	float SampleDirectionalSunIntensity() const;
-	/** Capped emissive floor so sun-away hull sides stay in their paint. Not a Lumen bounce. */
+	/** Small emissive floor on the white bucket only. Accent paints stay at 0 so they do not wash white. */
 	void ApplySceneryShadeFloor();
 	void EnsureMidHism();
 	void ClearMidHism();
