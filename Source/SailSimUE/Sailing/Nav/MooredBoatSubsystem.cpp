@@ -85,14 +85,23 @@ namespace MooredBoatPrivate
 		}
 	}
 
-	/** Glass and keel stay on their mesh MI. Every other slot takes the bucket paint. */
-	static bool IsSceneryKeptMeshMaterial(const UMaterialInterface* Mat)
+	/**
+	 * Hull shell only (HullPaint / Gelcoat). Deck and cabin stay the authored
+	 * white topside MIs. Glass, keel, boot, cove, and antifoul stay on their
+	 * mesh MIs. One bucket MID must not cover the whole boat.
+	 */
+	static bool IsSceneryHullAccentSlot(const UMaterialInterface* Mat)
 	{
-		if (!Mat) return false;
+		if (!Mat) return true;
 		const FString Path = Mat->GetPathName();
-		return Path.Contains(TEXT("Glass"))
-			|| Path.Contains(TEXT("Window"))
-			|| Path.Contains(TEXT("Keel"));
+		if (Path.Contains(TEXT("Deck")) || Path.Contains(TEXT("Cabin"))) return false;
+		if (Path.Contains(TEXT("Glass")) || Path.Contains(TEXT("Window"))) return false;
+		if (Path.Contains(TEXT("Keel")) || Path.Contains(TEXT("Rope")) || Path.Contains(TEXT("Spar"))) return false;
+		// Dedicated stripe sections keep their shared MIs (not the solid hull accent).
+		if (Path.Contains(TEXT("Boot")) || Path.Contains(TEXT("Stripe")) || Path.Contains(TEXT("Antifoul"))) return false;
+		return Path.Contains(TEXT("HullPaint"))
+			|| Path.Contains(TEXT("Gelcoat"))
+			|| Path.Contains(TEXT("Hull"));
 	}
 }
 
@@ -2285,8 +2294,9 @@ int32 UMooredBoatSubsystem::SceneryBucketForSlot(int32 SlotIndex) const
 {
 	const int32 N = FMath::Max(1, SceneryHullMids.Num() > 0 ? SceneryHullMids.Num() : MidHullHisms.Num());
 	if (N <= 1) return 0;
-	// Bucket 0 is white (~46%). The rest of the hash splits across the accent
-	// paints so the field stays mostly white with visible navy / pale blue / cream.
+	// Bucket 0 is a white hull (~46%). The rest of the hash splits across the
+	// accent hulls so the field stays mostly white with visible navy / pale
+	// blue / cream. Deck and cabin are white on every bucket.
 	const float H = MooredBoatPrivate::Hash01(SlotIndex, 101);
 	constexpr float WhiteShare = 0.46f;
 	if (H < WhiteShare) return 0;
@@ -2300,10 +2310,12 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	if (bSceneryPaintReady) return;
 	bSceneryPaintReady = true;
 
-	// Solid gelcoat colors, not HullPaint local-Z bands. HullPaint picks antifoul
-	// (dark brown) when z < ZBootLo. HISM local Z is not the loft waterline, so that
-	// path painted whole shells antifoul. Each bucket is one BaseColor on
-	// MI_Yacht_Gelcoat. A handful of shared MIDs — not one MID per boat.
+	// Shared gelcoat hull accents, not HullPaint local-Z bands. HullPaint picks
+	// antifoul (dark brown) when z < ZBootLo. HISM local Z is not the loft
+	// waterline, so that path painted whole shells antifoul. Each bucket is one
+	// hull-shell BaseColor on MI_Yacht_Gelcoat. Deck and cabin are not these
+	// MIDs — they stay the authored white topside materials. A handful of
+	// shared MIDs — not one MID per boat, and not one MID on every slot.
 	UMaterialInterface* Parent = LoadObject<UMaterialInterface>(
 		nullptr, TEXT("/Game/Materials/Yacht/MI_Yacht_Gelcoat.MI_Yacht_Gelcoat"));
 	if (!Parent)
@@ -2355,14 +2367,16 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 		Mid->SetVectorParameterValue(TEXT("Color"), Paint.Color);
 		// Fresnel target. White here is what bleached the field. Same hue as the paint.
 		Mid->SetVectorParameterValue(TEXT("SpecularTint"), Paint.Color);
-		// HullPaint fallback: every Z band is this same solid color. A bad local
-		// Z cannot select the authored dark antifoul.
-		Mid->SetVectorParameterValue(TEXT("ColorTopsides"), Paint.Color);
-		Mid->SetVectorParameterValue(TEXT("ColorStripe"), Paint.Color);
-		Mid->SetVectorParameterValue(TEXT("ColorBoot"), Paint.Color);
-		Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), Paint.Color);
+		// Gelcoat shows BaseColor only. Copying the accent into ColorTopsides /
+		// ColorStripe / ColorBoot / ColorAntifoul made a HullPaint parent one
+		// solid band. Do that only on the HullPaint fallback, and push the Z
+		// thresholds off the shell so a bad HISM local Z cannot select antifoul.
 		if (bZBandParent)
 		{
+			Mid->SetVectorParameterValue(TEXT("ColorTopsides"), Paint.Color);
+			Mid->SetVectorParameterValue(TEXT("ColorStripe"), Paint.Color);
+			Mid->SetVectorParameterValue(TEXT("ColorBoot"), Paint.Color);
+			Mid->SetVectorParameterValue(TEXT("ColorAntifoul"), Paint.Color);
 			Mid->SetScalarParameterValue(TEXT("ZBootLo"), -100000.f);
 			Mid->SetScalarParameterValue(TEXT("ZBootHi"), -100000.f);
 			Mid->SetScalarParameterValue(TEXT("ZStripeLo"), 100000.f);
@@ -2415,7 +2429,7 @@ void UMooredBoatSubsystem::EnsureSceneryPaint()
 	}
 
 	UE_LOG(LogSailSim, Log,
-		TEXT("MooredBoats: scenery gelcoat mids=%d [%s] parent=%s zBandFallback=%d spar=%s (mid contrast navy/paleBlue/cream, accent emissive 0, roughness 0.48, white~46%%)"),
+		TEXT("MooredBoats: scenery gelcoat mids=%d [%s] parent=%s zBandFallback=%d spar=%s (hull slot only, deck/cabin authored white, accent emissive 0, roughness 0.48, white hull~46%%)"),
 		SceneryHullMids.Num(), *PaintNames, *Parent->GetPathName(), bZBandParent ? 1 : 0,
 		ScenerySparMid ? TEXT("dielectric") : TEXT("none"));
 	SceneryShadeFloorApplied = -1.f;
@@ -2498,9 +2512,11 @@ void UMooredBoatSubsystem::ApplySceneryBucketMaterials(UHierarchicalInstancedSta
 	{
 		UMaterialInterface* Mat = Mats.IsValidIndex(Mi) ? Mats[Mi].MaterialInterface.Get() : Hism->GetMaterial(Mi);
 		MooredBoatPrivate::ForceYachtIsmUsage(Mat);
-		// Default to the bucket color. The mesh slot is white gelcoat / HullPaint;
-		// leaving it in place made every HISM draw that same white. Glass and keel stay.
-		if (BucketMid && !MooredBoatPrivate::IsSceneryKeptMeshMaterial(Mat))
+		// Hull shell only. The mesh slot is white HullPaint; leaving that in
+		// place made every hull the same white (or antifoul, if local Z won).
+		// Deck and cabin stay their authored white MIs so the boat is not one
+		// solid color. Glass, keel, boot, and stripe stay on the mesh too.
+		if (BucketMid && MooredBoatPrivate::IsSceneryHullAccentSlot(Mat))
 		{
 			MooredBoatPrivate::ForceYachtIsmUsage(BucketMid);
 			Hism->SetMaterial(Mi, BucketMid);
@@ -2835,9 +2851,15 @@ void UMooredBoatSubsystem::FlushSceneryHismRender()
 		{
 			const UHierarchicalInstancedStaticMeshComponent* H = MidHullHisms[B].Get();
 			if (!H) continue;
+			FString SlotMats;
+			for (int32 Mi = 0; Mi < H->GetNumMaterials(); ++Mi)
+			{
+				if (!SlotMats.IsEmpty()) SlotMats += TEXT("|");
+				SlotMats += GetNameSafe(H->GetMaterial(Mi));
+			}
 			UE_LOG(LogSailSim, Log,
-				TEXT("MooredBoats: scenery bucket %d inst=%d mat=%s"),
-				B, H->GetInstanceCount(), *GetNameSafe(H->GetMaterial(0)));
+				TEXT("MooredBoats: scenery bucket %d inst=%d mats=%s"),
+				B, H->GetInstanceCount(), *SlotMats);
 		}
 	}
 }

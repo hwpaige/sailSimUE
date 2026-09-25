@@ -14,7 +14,7 @@ Harbor fill scales with `MooringSceneryInstanceCount` alone. `MaxBoats = 1` does
 
 ## Draw
 
-Scenery is the shared baked J/105 hull (`SM_MooredJ105_Hull`, PMC→SM) plus a spar HISM (engine cylinder, `MI_Yacht_Spar`). Materials are `/Game/Materials/Yacht/` only (`MI_Yacht_HullPaint` / Gelcoat / BootStripe / HullStripe / Antifoul / Deck / Cabin / Glass / Keel / Spar, and master `M_Yacht_HullPaint`). Paint variety is a few **shared** HullPaint MIDs (BaseColor / roughness / stripe), not a unique MID per boat, and not `SM_Buoy`.
+Scenery is the shared baked J/105 hull (`SM_MooredJ105_Hull`, PMC→SM) plus a spar HISM (engine cylinder, `MI_Yacht_Spar`). Materials are `/Game/Materials/Yacht/` only (`MI_Yacht_HullPaint` / Gelcoat / BootStripe / HullStripe / Antifoul / Deck / Cabin / Glass / Keel / Spar, and master `M_Yacht_HullPaint`). Paint variety is a few **shared** gelcoat MIDs on the **hull shell slot only** (white, navy, pale blue, cream). Deck and cabin stay the authored white topside MIs. Not a unique MID per boat, not one solid paint on every slot, and not `SM_Buoy`. HullPaint local-Z antifoul is not used on the HISM (that path darkens the whole shell).
 
 The HISM actor is anchored at the harbor basin (same placement rule as EncAid ISMs). Yacht materials are flagged `Used with Instanced Static Meshes` before the first place. Without that flag, a cold PIE draws an empty field of buoys while the CPU instance count still reads 96. After instance adds, the cluster tree is built synchronously (`BuildTreeIfOutdated`). Heroes (`MaxBoats` / NearFull) stay full actors and are not these instances.
 
