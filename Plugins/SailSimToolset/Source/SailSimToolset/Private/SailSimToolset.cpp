@@ -3,7 +3,7 @@
 #include "SailSimToolset.h"
 
 #include "Camera/CameraComponent.h"
-#include "Components/SceneCaptureComponent2D.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "DynamicRHI.h"
@@ -12,8 +12,6 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/LevelStreaming.h"
-#include "Engine/SceneCapture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "FileHelpers.h"
@@ -40,10 +38,8 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/DateTime.h"
-#include "SceneManagement.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
-#include "TextureResource.h"
 #include "UObject/UnrealType.h"
 #include "UnrealClient.h"
 
@@ -195,11 +191,14 @@ namespace SailSimToolsetPrivate
 		return SessionBoat;
 	}
 
-	struct FBoomView
+	struct FPlayerView
 	{
 		FVector Location = FVector::ZeroVector;
 		FRotator Rotation = FRotator::ZeroRotator;
 		float FOV = 72.f;
+		float PostProcessBlendWeight = 0.f;
+		bool bHasPostProcess = false;
+		FPostProcessSettings PostProcess;
 		FString Source;
 		FString BoatName;
 		FVector BoatLocation = FVector::ZeroVector;
@@ -207,10 +206,13 @@ namespace SailSimToolsetPrivate
 	};
 
 	/**
-	 * Camera boom socket on the possessed boat. Does not read the editor viewport
-	 * or PlayerCameraManager (those still track the free editor camera on Prefer-ON).
+	 * Possessed ASailBoatPawn camera — the PIE view target.
+	 * UCameraComponent::GetCameraView supplies FOV and the pawn post-process
+	 * (day auto-exposure bias / speeds from ApplyAtmosphereLook).
+	 * PlayerCameraManager is accepted only when its cache is already on that camera.
+	 * A cache still sitting on the free editor camera is ignored.
 	 */
-	static bool ResolveBoomView(UWorld* PlayWorld, FBoomView& Out, FString& OutError)
+	static bool ResolvePlayerView(UWorld* PlayWorld, FPlayerView& Out, FString& OutError)
 	{
 		AActor* Boat = FindPossessedSailBoat(PlayWorld);
 		if (!Boat)
@@ -232,23 +234,51 @@ namespace SailSimToolsetPrivate
 
 		if (Arm)
 		{
-			// Push the socket out to TargetArmLength before we read it. A freshly
-			// possessed pawn can still report the boom origin (inside the hull).
+			// Push the socket out before we read it. A freshly possessed pawn can
+			// still report the boom origin (inside the hull).
 			Arm->TickComponent(0.016f, ELevelTick::LEVELTICK_All, nullptr);
-			Out.Location = Arm->GetSocketLocation(USpringArmComponent::SocketName);
-			Out.Rotation = Arm->GetSocketRotation(USpringArmComponent::SocketName);
-			Out.Source = TEXT("SpringArmSocket");
-			if (Cam)
+		}
+		Boat->UpdateComponentTransforms();
+
+		if (Cam)
+		{
+			FMinimalViewInfo POV;
+			Cam->GetCameraView(0.f, POV);
+			Out.Location = POV.Location;
+			Out.Rotation = POV.Rotation;
+			Out.FOV = POV.FOV > 1.f ? POV.FOV : Cam->FieldOfView;
+			Out.PostProcess = POV.PostProcessSettings;
+			Out.PostProcessBlendWeight = FMath::Max(POV.PostProcessBlendWeight, Cam->PostProcessBlendWeight);
+			Out.bHasPostProcess = true;
+			Out.Source = TEXT("PlayerCamera");
+
+			if (APlayerController* PC = PlayWorld->GetFirstPlayerController())
 			{
-				Out.FOV = Cam->FieldOfView;
+				APlayerCameraManager* PCM = PC->PlayerCameraManager;
+				if (PCM && PC->GetViewTarget() == Boat)
+				{
+					const FVector PcmLoc = PCM->GetCameraLocation();
+					// Cache matches the pawn camera. This is the view the PIE viewport drew.
+					if (FVector::Dist(PcmLoc, Out.Location) < 200.f)
+					{
+						Out.Location = PcmLoc;
+						Out.Rotation = PCM->GetCameraRotation();
+						const float PcmFov = PCM->GetFOVAngle();
+						if (PcmFov > 1.f)
+						{
+							Out.FOV = PcmFov;
+						}
+						Out.Source = TEXT("PlayerCameraManager");
+					}
+				}
 			}
 		}
 		else
 		{
-			Out.Location = Cam->GetComponentLocation();
-			Out.Rotation = Cam->GetComponentRotation();
-			Out.FOV = Cam->FieldOfView;
-			Out.Source = TEXT("CameraComponent");
+			Out.Location = Arm->GetSocketLocation(USpringArmComponent::SocketName);
+			Out.Rotation = Arm->GetSocketRotation(USpringArmComponent::SocketName);
+			Out.FOV = 72.f;
+			Out.Source = TEXT("SpringArmSocket");
 		}
 
 		if (GCurrentLevelEditingViewportClient)
@@ -257,24 +287,51 @@ namespace SailSimToolsetPrivate
 				Out.Location, GCurrentLevelEditingViewportClient->GetViewLocation());
 		}
 
-		const float BoomReach = FVector::Dist(Out.Location, Out.BoatLocation);
-		if (BoomReach < 50.f)
+		const float CameraReach = FVector::Dist(Out.Location, Out.BoatLocation);
+		if (CameraReach < 50.f)
 		{
 			OutError = FString::Printf(
-				TEXT("camera boom is %.0fcm from the hull (not extended). source=%s"),
-				BoomReach, *Out.Source);
+				TEXT("player camera is %.0fcm from the hull (not extended). source=%s"),
+				CameraReach, *Out.Source);
 			return false;
 		}
 
-		// Safety: a boom that landed on the free editor camera is the empty-grid shot.
+		// A view that landed on the free editor camera is the empty-grid shot.
 		if (Out.EditorCameraDistance >= 0.f && Out.EditorCameraDistance < 10.f
 			&& FVector::Dist(Out.BoatLocation, Out.Location) > 10000.f)
 		{
-			OutError = TEXT("resolved view matches the free editor camera, not the boat boom");
+			OutError = TEXT("resolved view matches the free editor camera, not the possessed boat camera");
 			return false;
 		}
 
 		return true;
+	}
+
+	/** Tick the possessed chase cam and push it into the PIE camera manager. Does not touch sky or exposure settings. */
+	static void AdvancePossessedCamera(UWorld* PlayWorld, float DeltaSeconds)
+	{
+		if (!PlayWorld)
+		{
+			return;
+		}
+		AActor* Boat = FindPossessedSailBoat(PlayWorld);
+		APlayerController* PC = PlayWorld->GetFirstPlayerController();
+		if (PC && Boat && PC->GetViewTarget() != Boat)
+		{
+			PC->SetViewTarget(Boat);
+		}
+		if (Boat)
+		{
+			if (USpringArmComponent* Arm = Boat->FindComponentByClass<USpringArmComponent>())
+			{
+				Arm->TickComponent(DeltaSeconds, ELevelTick::LEVELTICK_All, nullptr);
+			}
+			Boat->UpdateComponentTransforms();
+		}
+		if (PC && PC->PlayerCameraManager)
+		{
+			PC->PlayerCameraManager->UpdateCamera(DeltaSeconds);
+		}
 	}
 
 	static void AppendSettleFields(const TSharedRef<FJsonObject>& Obj, UWorld* PlayWorld, float MinWorldSeconds)
@@ -411,62 +468,6 @@ namespace SailSimToolsetPrivate
 		Obj->SetBoolField(TEXT("Settled"), false);
 		Obj->SetNumberField(TEXT("MinWorldSeconds"), MinWorldSeconds);
 		return JsonString(Obj);
-	}
-
-	static void ApplyLitGameShowFlags(FEngineShowFlags& ShowFlags)
-	{
-		ShowFlags = FEngineShowFlags(ESFIM_Game);
-		ApplyViewMode(VMI_Lit, true, ShowFlags);
-		ShowFlags.SetGrid(false);
-		ShowFlags.SetModeWidgets(false);
-		ShowFlags.SetSelection(false);
-		ShowFlags.SetSelectionOutline(false);
-		ShowFlags.SetPostProcessing(true);
-		ShowFlags.SetLighting(true);
-		ShowFlags.SetMaterials(true);
-	}
-
-	struct FRooted
-	{
-		UObject* Object = nullptr;
-
-		explicit FRooted(UObject* InObject)
-			: Object(InObject)
-		{
-			if (Object)
-			{
-				Object->AddToRoot();
-			}
-		}
-
-		~FRooted()
-		{
-			if (Object)
-			{
-				Object->RemoveFromRoot();
-			}
-		}
-	};
-
-	static bool BitmapIsSentinel(const TArray<FColor>& Bitmap)
-	{
-		if (Bitmap.Num() == 0)
-		{
-			return true;
-		}
-		const int32 Step = FMath::Max(1, Bitmap.Num() / 4000);
-		int32 Samples = 0;
-		int32 Hits = 0;
-		for (int32 Index = 0; Index < Bitmap.Num(); Index += Step)
-		{
-			const FColor& Pixel = Bitmap[Index];
-			++Samples;
-			if (Pixel.R > 200 && Pixel.B > 200 && Pixel.G < 48)
-			{
-				++Hits;
-			}
-		}
-		return Samples > 0 && (Hits * 100) / Samples >= 90;
 	}
 
 	static void SplitBatch(const FString& Text, TArray<FString>& OutLines)
@@ -939,11 +940,12 @@ namespace SailSimToolsetPrivate
 			RootPrim->SetPhysicsLinearVelocity(FVector::ZeroVector);
 			RootPrim->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
 		}
-		// Extend spring arm after teleport so ResolveBoomView does not see a collapsed boom.
+		// Extend the chase cam so the possessed view target is off the hull before capture.
 		if (USpringArmComponent* Arm = Boat->FindComponentByClass<USpringArmComponent>())
 		{
 			Arm->TickComponent(0.016f, ELevelTick::LEVELTICK_All, nullptr);
 		}
+		Boat->UpdateComponentTransforms();
 		OutApplied = FString::Printf(
 			TEXT("%s loc=(%.0f,%.0f,%.0f) yaw=%.0f note=%s"),
 			*Preset.Name, NewLoc.X, NewLoc.Y, NewLoc.Z, Preset.YawDeg, *Preset.Note);
@@ -990,9 +992,313 @@ namespace SailSimToolsetPrivate
 		return true;
 	}
 
+	static bool LoadPngBitmap(const FString& AbsPath, TArray<FColor>& OutBitmap, int32& OutWidth, int32& OutHeight, FString& OutError)
+	{
+		TArray<uint8> Compressed;
+		if (!FFileHelper::LoadFileToArray(Compressed, *AbsPath))
+		{
+			OutError = TEXT("png_read_failed");
+			return false;
+		}
+		IImageWrapperModule& ImageWrapperModule =
+			FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+		TSharedPtr<IImageWrapper> Png = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+		TArray64<uint8> Raw;
+		if (!Png.IsValid()
+			|| !Png->SetCompressed(Compressed.GetData(), Compressed.Num())
+			|| !Png->GetRaw(ERGBFormat::BGRA, 8, Raw))
+		{
+			OutError = TEXT("png_decode_failed");
+			return false;
+		}
+		OutWidth = Png->GetWidth();
+		OutHeight = Png->GetHeight();
+		if (OutWidth <= 1 || OutHeight <= 1 || Raw.Num() != static_cast<int64>(OutWidth) * OutHeight * 4)
+		{
+			OutError = TEXT("png_decode_failed");
+			return false;
+		}
+		OutBitmap.SetNumUninitialized(OutWidth * OutHeight);
+		FMemory::Memcpy(OutBitmap.GetData(), Raw.GetData(), Raw.Num());
+		return true;
+	}
+
 	static bool LevelLooksLikeOcean(const FString& PackagePath)
 	{
 		return PackagePath.Contains(TEXT("SailSim_Ocean"), ESearchCase::IgnoreCase);
+	}
+
+	/** Frames of possessed-camera advance + PIE viewport present before a shot. */
+	static constexpr int32 GPlayerViewSettleFrames = 16;
+
+	static bool BitmapMostlyBlack(const TArray<FColor>& Bitmap)
+	{
+		if (Bitmap.Num() == 0)
+		{
+			return true;
+		}
+		const int32 Step = FMath::Max(1, Bitmap.Num() / 2000);
+		int32 Samples = 0;
+		int32 Dark = 0;
+		for (int32 Index = 0; Index < Bitmap.Num(); Index += Step)
+		{
+			const FColor& Pixel = Bitmap[Index];
+			++Samples;
+			if (Pixel.R < 8 && Pixel.G < 8 && Pixel.B < 8)
+			{
+				++Dark;
+			}
+		}
+		return Samples > 0 && (Dark * 100) / Samples >= 95;
+	}
+
+	static bool ViewportHasPixels(const FViewport* Viewport)
+	{
+		return Viewport && Viewport->GetSizeXY().X > 1 && Viewport->GetSizeXY().Y > 1;
+	}
+
+	/**
+	 * Framebuffer Harrison is looking at: the active level viewport while it is presenting PIE,
+	 * otherwise the PIE game viewport (play-in-new-window). Not a second camera.
+	 * Editor-camera distance is ignored — during in-viewport PIE, GetViewLocation can stay on the
+	 * free camera while this framebuffer is the Lit game view.
+	 */
+	static FViewport* FindLitViewportFramebuffer(UWorld* PlayWorld, FString& OutSource)
+	{
+		OutSource.Reset();
+		if (!PlayWorld)
+		{
+			return nullptr;
+		}
+
+		if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+		{
+			FLevelEditorModule& LevelEditorModule =
+				FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+			if (TSharedPtr<IAssetViewport> Active = LevelEditorModule.GetFirstActiveViewport())
+			{
+				// During PIE in this panel, GetActiveViewport is the framebuffer on screen
+				// (the level viewport and the game viewport are swapped).
+				FViewport* Live = Active->GetActiveViewport();
+				if (Active->HasPlayInEditorViewport() && ViewportHasPixels(Live))
+				{
+					OutSource = TEXT("ActiveEditorViewport");
+					return Live;
+				}
+				FEditorViewportClient& Client = Active->GetAssetViewportClient();
+				if (ViewportHasPixels(Client.Viewport) && Client.GetWorld() == PlayWorld)
+				{
+					OutSource = TEXT("ActiveEditorViewport");
+					return Client.Viewport;
+				}
+			}
+		}
+
+		if (GCurrentLevelEditingViewportClient
+			&& ViewportHasPixels(GCurrentLevelEditingViewportClient->Viewport)
+			&& GCurrentLevelEditingViewportClient->GetWorld() == PlayWorld)
+		{
+			OutSource = TEXT("ActiveEditorViewport");
+			return GCurrentLevelEditingViewportClient->Viewport;
+		}
+
+		if (GEngine)
+		{
+			if (UGameViewportClient* GameViewport = GEngine->GameViewportForWorld(PlayWorld))
+			{
+				if (ViewportHasPixels(GameViewport->Viewport))
+				{
+					OutSource = TEXT("PIEGameViewport");
+					return GameViewport->Viewport;
+				}
+			}
+		}
+
+		if (GEditor)
+		{
+			for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
+			{
+				if (!LevelVC || LevelVC->GetWorld() != PlayWorld || !ViewportHasPixels(LevelVC->Viewport))
+				{
+					continue;
+				}
+				OutSource = TEXT("LevelViewportPIE");
+				return LevelVC->Viewport;
+			}
+		}
+		return nullptr;
+	}
+
+	struct FSettledCapture
+	{
+		TArray<FColor> Bitmap;
+		int32 Width = 0;
+		int32 Height = 0;
+		FString CaptureSource;
+		FString Grab;
+		FPlayerView View;
+		int32 ExposureFrames = 0;
+		FString Error;
+		FString ErrorCode;
+	};
+
+	/**
+	 * Ground truth for look gates: the Lit viewport's own screenshot request during its Draw
+	 * (editor HighResShot at 1x, LDR, no resolution multiplier, no second camera).
+	 * Framing only pushes the possessed camera into that viewport. Show flags, exposure, post, and time of day stay on it.
+	 */
+	static bool CaptureSettledPlayerView(UWorld* PlayWorld, FSettledCapture& Out)
+	{
+		Out = FSettledCapture();
+		if (!PlayWorld || PlayWorld->WorldType != EWorldType::PIE)
+		{
+			Out.ErrorCode = TEXT("no_pie");
+			Out.Error = TEXT("PIE is not running");
+			return false;
+		}
+
+		const float DeltaSeconds = 1.f / 30.f;
+		for (int32 Frame = 0; Frame < GPlayerViewSettleFrames; ++Frame)
+		{
+			AdvancePossessedCamera(PlayWorld, DeltaSeconds);
+		}
+
+		if (!ResolvePlayerView(PlayWorld, Out.View, Out.Error))
+		{
+			Out.ErrorCode = TEXT("no_boom");
+			return false;
+		}
+
+		FString ViewportSource;
+		FViewport* Viewport = FindLitViewportFramebuffer(PlayWorld, ViewportSource);
+		if (!Viewport)
+		{
+			Out.ErrorCode = TEXT("no_viewport");
+			Out.Error = TEXT(
+				"active editor/PIE Lit viewport framebuffer was not available. Scene capture is not used.");
+			return false;
+		}
+
+		// Present through the viewport only. Its Draw keeps Lit show flags, exposure, post, and time of day.
+		for (int32 Frame = 0; Frame < GPlayerViewSettleFrames; ++Frame)
+		{
+			PlayWorld->SendAllEndOfFrameUpdates();
+			Viewport->Draw();
+			FlushRenderingCommands();
+			++Out.ExposureFrames;
+		}
+
+		FString ResolveError;
+		FPlayerView Presented;
+		if (ResolvePlayerView(PlayWorld, Presented, ResolveError))
+		{
+			Out.View = Presented;
+		}
+
+		const FIntPoint Size = Viewport->GetSizeXY();
+		if (Size.X <= 1 || Size.Y <= 1)
+		{
+			Out.ErrorCode = TEXT("read_failed");
+			Out.Error = TEXT("Lit viewport has no pixels. Scene capture is not used.");
+			return false;
+		}
+		const FIntRect Rect(0, 0, Size.X, Size.Y);
+
+		bool bGotShot = false;
+		int32 ShotW = 0;
+		int32 ShotH = 0;
+		TArray<FColor> ShotColors;
+		auto AcceptShot = [&bGotShot, &ShotW, &ShotH, &ShotColors](int32 W, int32 H, const TArray<FColor>& Colors)
+		{
+			if (W > 1 && H > 1 && Colors.Num() == W * H)
+			{
+				bGotShot = true;
+				ShotW = W;
+				ShotH = H;
+				ShotColors = Colors;
+			}
+		};
+		// PIE ProcessScreenShots broadcasts the game-viewport delegate and, when that delegate is
+		// bound, does not write the file. Editor clients may broadcast FScreenshotRequest instead.
+		const FDelegateHandle RequestHandle = FScreenshotRequest::OnScreenshotCaptured().AddLambda(AcceptShot);
+		const FDelegateHandle GameHandle = UGameViewportClient::OnScreenshotCaptured().AddLambda(AcceptShot);
+
+		const bool bGameViewport = GEngine
+			&& GEngine->GameViewportForWorld(PlayWorld)
+			&& GEngine->GameViewportForWorld(PlayWorld)->Viewport == Viewport;
+		const FString GrabFile = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+			FPaths::ProjectSavedDir(), TEXT("SailSim"), TEXT("last_lit_viewport_grab.png")));
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(GrabFile), true);
+
+		// Same request the editor uses for HighResShot, forced to 1x LDR of this viewport. No multiplier, no HDR re-render.
+		FScreenshotRequest::RequestScreenshot(
+			GrabFile,
+			/*bInShowUI*/ false,
+			/*bAddFilenameSuffix*/ false,
+			/*bHdrScreenshot*/ false,
+			Rect,
+			/*bInRestrictToGameViewport*/ bGameViewport);
+
+		PlayWorld->SendAllEndOfFrameUpdates();
+		Viewport->Draw();
+		FlushRenderingCommands();
+		++Out.ExposureFrames;
+
+		FScreenshotRequest::OnScreenshotCaptured().Remove(RequestHandle);
+		UGameViewportClient::OnScreenshotCaptured().Remove(GameHandle);
+		const bool bConsumed = !FScreenshotRequest::IsScreenshotRequested();
+		FScreenshotRequest::Reset();
+
+		TArray<FColor> Bitmap;
+		int32 Width = 0;
+		int32 Height = 0;
+		FString Grab = TEXT("HighResShot");
+		if (bGotShot && ShotW > 1 && ShotH > 1 && ShotColors.Num() == ShotW * ShotH && !BitmapMostlyBlack(ShotColors))
+		{
+			Bitmap = MoveTemp(ShotColors);
+			Width = ShotW;
+			Height = ShotH;
+		}
+		else if (bConsumed)
+		{
+			FString LoadError;
+			if (!LoadPngBitmap(GrabFile, Bitmap, Width, Height, LoadError) || BitmapMostlyBlack(Bitmap))
+			{
+				Out.ErrorCode = TEXT("read_failed");
+				Out.Error = LoadError.IsEmpty()
+					? TEXT("HighResShot ran but the Lit viewport pixels were empty. Scene capture is not used.")
+					: LoadError;
+				return false;
+			}
+		}
+		else if (GetViewportScreenShot(Viewport, Bitmap, Rect)
+			&& Bitmap.Num() == Size.X * Size.Y
+			&& !BitmapMostlyBlack(Bitmap))
+		{
+			// Same framebuffer, read after that Draw when the client did not consume the request.
+			Width = Size.X;
+			Height = Size.Y;
+			Grab = TEXT("ViewportFramebuffer");
+		}
+		else
+		{
+			Out.ErrorCode = TEXT("read_failed");
+			Out.Error = TEXT("Lit viewport did not take the screenshot request. Scene capture is not used.");
+			return false;
+		}
+
+		FString SaveError;
+		if (!SaveBitmapPng(Bitmap, Width, Height, GrabFile, SaveError))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CapturePlayerView: Lit viewport grab not written (%s) %s"), *SaveError, *GrabFile);
+		}
+
+		Out.Bitmap = MoveTemp(Bitmap);
+		Out.Width = Width;
+		Out.Height = Height;
+		Out.CaptureSource = ViewportSource;
+		Out.Grab = Grab;
+		return true;
 	}
 
 
@@ -1033,139 +1339,44 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FS
 				"CapturePlayerView code=bad_framing: %s"), *FramingError));
 			return Out;
 		}
-		if (!FramingApplied.IsEmpty())
-		{
-			// One present so streaming / spring arm catch the teleport before capture.
-			SailSimToolsetPrivate::PumpViewportFrames(PlayWorld, 2, 0.5f);
-		}
 	}
 
-	SailSimToolsetPrivate::FBoomView Boom;
-	FString BoomError;
-	if (!SailSimToolsetPrivate::ResolveBoomView(PlayWorld, Boom, BoomError))
+	// Pose from the framing preset, pixels from the active Lit viewport framebuffer.
+	SailSimToolsetPrivate::FSettledCapture Shot;
+	if (!SailSimToolsetPrivate::CaptureSettledPlayerView(PlayWorld, Shot))
 	{
+		const FString Code = Shot.ErrorCode.IsEmpty() ? TEXT("read_failed") : Shot.ErrorCode;
 		UKismetSystemLibrary::RaiseScriptError(FString::Printf(
-			TEXT("CapturePlayerView code=no_boom: %s"), *BoomError));
+			TEXT("CapturePlayerView code=%s: %s"), *Code, *Shot.Error));
 		return Out;
 	}
-
-	if (!PlayWorld->Scene)
-	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT(
-			"CapturePlayerView code=no_pie_scene: PlayWorld has no scene. The editor viewport was not used."));
-		return Out;
-	}
-
-	// Deferred scene captures flush when the editor viewport draws (empty grid).
-	// CaptureScene() below is immediate, and only after GWorld is switched to PIE.
-	const int32 Width = 1920;
-	const int32 Height = 1080;
-
-	UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
-	RT->RenderTargetFormat = RTF_RGBA8;
-	RT->ClearColor = FLinearColor(1.f, 0.f, 1.f, 1.f);
-	RT->bAutoGenerateMips = false;
-	RT->InitAutoFormat(Width, Height);
-	RT->UpdateResourceImmediate(true);
-
-	const SailSimToolsetPrivate::FRooted RootedRT(RT);
-	FString CaptureError;
-	{
-		// GWorld stays on the editor world during MCP calls. Spawn and render while
-		// it is the PIE world so the capture cannot bind to the editor grid.
-		FScopedConditionalWorldSwitcher PlayScope(PlayWorld);
-
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.ObjectFlags |= RF_Transient;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		ASceneCapture2D* CaptureActor = PlayWorld->SpawnActor<ASceneCapture2D>(
-			Boom.Location, Boom.Rotation, SpawnParams);
-		if (!CaptureActor || CaptureActor->GetWorld() != PlayWorld)
-		{
-			if (CaptureActor)
-			{
-				CaptureActor->Destroy();
-			}
-			CaptureError = TEXT(
-				"CapturePlayerView code=wrong_world: scene capture was not spawned in the PIE world.");
-		}
-		else
-		{
-			USceneCaptureComponent2D* Cap = CaptureActor->GetCaptureComponent2D();
-			Cap->TextureTarget = RT;
-			Cap->FOVAngle = Boom.FOV;
-			Cap->bCaptureEveryFrame = false;
-			Cap->bCaptureOnMovement = false;
-			Cap->bAlwaysPersistRenderingState = true;
-			Cap->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-			Cap->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
-			SailSimToolsetPrivate::ApplyLitGameShowFlags(Cap->ShowFlags);
-			Cap->SetWorldLocationAndRotation(Boom.Location, Boom.Rotation);
-			if (!Cap->IsRegistered())
-			{
-				Cap->RegisterComponent();
-			}
-			Cap->MarkRenderStateDirty();
-
-			// CaptureScene() is the immediate capture. It must run while GWorld is the
-			// PIE world: a deferred capture is flushed by the editor viewport (empty grid),
-			// and on 5.7+ FScene::UpdateSceneCaptureContents takes an internal
-			// ISceneRenderBuilder that gameplay code cannot construct.
-			// Two passes so the second Lit frame has a view state (Lumen / exposure).
-			for (int32 Pass = 0; Pass < 2; ++Pass)
-			{
-				PlayWorld->SendAllEndOfFrameUpdates();
-				Cap->CaptureScene();
-				FlushRenderingCommands();
-			}
-			CaptureActor->Destroy();
-		}
-	}
-	if (!CaptureError.IsEmpty())
-	{
-		UKismetSystemLibrary::RaiseScriptError(CaptureError);
-		return Out;
-	}
-
-	FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
-	TArray<FColor> Bitmap;
-	const bool bRead = RTResource && RTResource->ReadPixels(Bitmap) && Bitmap.Num() == Width * Height;
-
-	if (!bRead)
-	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT(
-			"CapturePlayerView code=read_failed: PIE scene capture did not produce pixels."));
-		return Out;
-	}
-	if (SailSimToolsetPrivate::BitmapIsSentinel(Bitmap))
-	{
-		UKismetSystemLibrary::RaiseScriptError(TEXT(
-			"CapturePlayerView code=capture_did_not_write: render target is still the magenta clear. "
-			"The editor viewport was not returned."));
-		return Out;
-	}
-	for (FColor& Pixel : Bitmap)
+	for (FColor& Pixel : Shot.Bitmap)
 	{
 		Pixel.A = 255;
 	}
 
-	if (!Out.SetFromBitmap(Bitmap, FIntPoint(Width, Height)))
+	if (!Out.SetFromBitmap(Shot.Bitmap, FIntPoint(Shot.Width, Shot.Height)))
 	{
 		UKismetSystemLibrary::RaiseScriptError(TEXT("CapturePlayerView code=encode_failed: PNG encode failed."));
 		return Out;
 	}
 
+	const SailSimToolsetPrivate::FPlayerView& View = Shot.View;
 	UE_LOG(LogTemp, Display,
-		TEXT("CapturePlayerView OK world=%s package=%s cam=%s boat=%s loc=(%.0f,%.0f,%.0f) boatLoc=(%.0f,%.0f,%.0f) editorCamDist=%.0f fov=%.1f %dx%d"),
+		TEXT("CapturePlayerView OK world=%s package=%s cam=%s grab=%s view=%s boat=%s loc=(%.0f,%.0f,%.0f) boatLoc=(%.0f,%.0f,%.0f) editorCamDist=%.0f fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
 		SailSimToolsetPrivate::WorldKind(PlayWorld),
 		*PlayWorld->GetOutermost()->GetName(),
-		*Boom.Source,
-		*Boom.BoatName,
-		Boom.Location.X, Boom.Location.Y, Boom.Location.Z,
-		Boom.BoatLocation.X, Boom.BoatLocation.Y, Boom.BoatLocation.Z,
-		Boom.EditorCameraDistance,
-		Boom.FOV, Width, Height);
+		*Shot.CaptureSource,
+		*Shot.Grab,
+		*View.Source,
+		*View.BoatName,
+		View.Location.X, View.Location.Y, View.Location.Z,
+		View.BoatLocation.X, View.BoatLocation.Y, View.BoatLocation.Z,
+		View.EditorCameraDistance,
+		View.FOV,
+		View.PostProcessBlendWeight,
+		Shot.ExposureFrames,
+		Shot.Width, Shot.Height);
 	return Out;
 }
 
@@ -1289,33 +1500,34 @@ FString USailSimToolset::GetPlayerCameraTransform()
 		return SailSimToolsetPrivate::JsonString(Obj);
 	}
 
-	SailSimToolsetPrivate::FBoomView Boom;
-	FString BoomError;
-	if (!SailSimToolsetPrivate::ResolveBoomView(PlayWorld, Boom, BoomError))
+	SailSimToolsetPrivate::FPlayerView View;
+	FString ViewError;
+	if (!SailSimToolsetPrivate::ResolvePlayerView(PlayWorld, View, ViewError))
 	{
 		Obj->SetBoolField(TEXT("ok"), false);
 		Obj->SetStringField(TEXT("code"), TEXT("no_boom"));
-		Obj->SetStringField(TEXT("error"), BoomError);
+		Obj->SetStringField(TEXT("error"), ViewError);
 		UKismetSystemLibrary::RaiseScriptError(FString::Printf(
-			TEXT("GetPlayerCameraTransform code=no_boom: %s"), *BoomError));
+			TEXT("GetPlayerCameraTransform code=no_boom: %s"), *ViewError));
 		return SailSimToolsetPrivate::JsonString(Obj);
 	}
 
 	Obj->SetBoolField(TEXT("ok"), true);
 	Obj->SetStringField(TEXT("error"), TEXT(""));
-	Obj->SetNumberField(TEXT("x"), Boom.Location.X);
-	Obj->SetNumberField(TEXT("y"), Boom.Location.Y);
-	Obj->SetNumberField(TEXT("z"), Boom.Location.Z);
-	Obj->SetNumberField(TEXT("pitch"), Boom.Rotation.Pitch);
-	Obj->SetNumberField(TEXT("yaw"), Boom.Rotation.Yaw);
-	Obj->SetNumberField(TEXT("roll"), Boom.Rotation.Roll);
-	Obj->SetNumberField(TEXT("fov"), Boom.FOV);
-	Obj->SetStringField(TEXT("source"), Boom.Source);
-	Obj->SetStringField(TEXT("boat"), Boom.BoatName);
-	Obj->SetNumberField(TEXT("boatX"), Boom.BoatLocation.X);
-	Obj->SetNumberField(TEXT("boatY"), Boom.BoatLocation.Y);
-	Obj->SetNumberField(TEXT("boatZ"), Boom.BoatLocation.Z);
-	Obj->SetNumberField(TEXT("editorCameraDistance"), Boom.EditorCameraDistance);
+	Obj->SetNumberField(TEXT("x"), View.Location.X);
+	Obj->SetNumberField(TEXT("y"), View.Location.Y);
+	Obj->SetNumberField(TEXT("z"), View.Location.Z);
+	Obj->SetNumberField(TEXT("pitch"), View.Rotation.Pitch);
+	Obj->SetNumberField(TEXT("yaw"), View.Rotation.Yaw);
+	Obj->SetNumberField(TEXT("roll"), View.Rotation.Roll);
+	Obj->SetNumberField(TEXT("fov"), View.FOV);
+	Obj->SetNumberField(TEXT("postProcessBlendWeight"), View.PostProcessBlendWeight);
+	Obj->SetStringField(TEXT("source"), View.Source);
+	Obj->SetStringField(TEXT("boat"), View.BoatName);
+	Obj->SetNumberField(TEXT("boatX"), View.BoatLocation.X);
+	Obj->SetNumberField(TEXT("boatY"), View.BoatLocation.Y);
+	Obj->SetNumberField(TEXT("boatZ"), View.BoatLocation.Z);
+	Obj->SetNumberField(TEXT("editorCameraDistance"), View.EditorCameraDistance);
 	Obj->SetStringField(TEXT("world"), SailSimToolsetPrivate::WorldKind(PlayWorld));
 	return SailSimToolsetPrivate::JsonString(Obj);
 }
@@ -1884,89 +2096,52 @@ FString USailSimToolset::RunPreferOnGate()
 				MinFilled, SceneryBudget, SceneryFloor, SlotCount, HeroesMax, HeroesNearCap, HeroesNear, LastMoored));
 	}
 
-	// 5) Noon CPV — same path as CapturePlayerView (midHarborMoored already applied); save PNG for cpvPath.
+	// 5) Lit viewport grab (midHarborMoored already applied). Same path as CapturePlayerView.
 	{
-		FBoomView Boom;
-		FString BoomError;
-		if (!ResolveBoomView(PlayWorld, Boom, BoomError))
+		FSettledCapture Shot;
+		if (!CaptureSettledPlayerView(PlayWorld, Shot))
 		{
-			return Fail(TEXT("cpv_no_boom"), BoomError);
+			const FString Code = Shot.ErrorCode.IsEmpty() ? TEXT("cpv_failed") : (TEXT("cpv_") + Shot.ErrorCode);
+			return Fail(Code, Shot.Error);
 		}
-		const int32 Width = 1920;
-		const int32 Height = 1080;
-		UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
-		RT->RenderTargetFormat = RTF_RGBA8;
-		RT->ClearColor = FLinearColor(1.f, 0.f, 1.f, 1.f);
-		RT->bAutoGenerateMips = false;
-		RT->InitAutoFormat(Width, Height);
-		RT->UpdateResourceImmediate(true);
-		const FRooted RootedRT(RT);
-		FString CaptureError;
+		for (FColor& Pixel : Shot.Bitmap)
 		{
-			FScopedConditionalWorldSwitcher PlayScope(PlayWorld);
-			FActorSpawnParameters SpawnParams;
-			SpawnParams.ObjectFlags |= RF_Transient;
-			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-			ASceneCapture2D* CaptureActor = PlayWorld->SpawnActor<ASceneCapture2D>(
-				Boom.Location, Boom.Rotation, SpawnParams);
-			if (!CaptureActor || CaptureActor->GetWorld() != PlayWorld)
-			{
-				if (CaptureActor) { CaptureActor->Destroy(); }
-				CaptureError = TEXT("wrong_world");
-			}
-			else
-			{
-				USceneCaptureComponent2D* Cap = CaptureActor->GetCaptureComponent2D();
-				Cap->TextureTarget = RT;
-				Cap->FOVAngle = Boom.FOV;
-				Cap->bCaptureEveryFrame = false;
-				Cap->bCaptureOnMovement = false;
-				Cap->bAlwaysPersistRenderingState = true;
-				Cap->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
-				Cap->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_RenderScenePrimitives;
-				ApplyLitGameShowFlags(Cap->ShowFlags);
-				Cap->SetWorldLocationAndRotation(Boom.Location, Boom.Rotation);
-				if (!Cap->IsRegistered()) { Cap->RegisterComponent(); }
-				Cap->MarkRenderStateDirty();
-				for (int32 Pass = 0; Pass < 2; ++Pass)
-				{
-					PlayWorld->SendAllEndOfFrameUpdates();
-					Cap->CaptureScene();
-					FlushRenderingCommands();
-				}
-				CaptureActor->Destroy();
-			}
+			Pixel.A = 255;
 		}
-		if (!CaptureError.IsEmpty())
-		{
-			return Fail(TEXT("cpv_failed"), CaptureError);
-		}
-		FTextureRenderTargetResource* RTResource = RT->GameThread_GetRenderTargetResource();
-		TArray<FColor> Bitmap;
-		if (!RTResource || !RTResource->ReadPixels(Bitmap) || Bitmap.Num() != Width * Height)
-		{
-			return Fail(TEXT("cpv_read_failed"), TEXT("ReadPixels failed"));
-		}
-		if (BitmapIsSentinel(Bitmap))
-		{
-			return Fail(TEXT("cpv_sentinel"), TEXT("magenta clear — capture did not write"));
-		}
-		for (FColor& Pixel : Bitmap) { Pixel.A = 255; }
 
 		const FString ShotDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Screenshots"), TEXT("SailSim"));
 		IFileManager::Get().MakeDirectory(*ShotDir, true);
 		const FString FileName = FString::Printf(
-			TEXT("ocean-%s-preferON-midHarborMoored-%s.png"),
+			TEXT("ocean-%s-preferON-midHarborMoored-%s-%s.png"),
 			*Sha,
+			*Shot.CaptureSource,
 			*FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S")));
 		const FString AbsPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ShotDir, FileName));
 		FString SaveError;
-		if (!SaveBitmapPng(Bitmap, Width, Height, AbsPath, SaveError))
+		if (!SaveBitmapPng(Shot.Bitmap, Shot.Width, Shot.Height, AbsPath, SaveError))
 		{
 			return Fail(TEXT("cpv_save_failed"), SaveError);
 		}
 		Root->SetStringField(TEXT("cpvPath"), AbsPath);
+		Root->SetStringField(TEXT("captureSource"), Shot.CaptureSource);
+		Root->SetStringField(TEXT("grab"), Shot.Grab);
+		Root->SetStringField(TEXT("viewSource"), Shot.View.Source);
+		Root->SetNumberField(TEXT("exposureFrames"), Shot.ExposureFrames);
+		Root->SetBoolField(TEXT("litOverride"), false);
+		Root->SetNumberField(TEXT("fov"), Shot.View.FOV);
+		Root->SetNumberField(TEXT("postProcessBlendWeight"), Shot.View.PostProcessBlendWeight);
 		CpvPath = AbsPath;
+		UE_LOG(LogTemp, Display,
+			TEXT("CapturePlayerView OK world=PIE cam=%s grab=%s view=%s boat=%s loc=(%.0f,%.0f,%.0f) fov=%.1f ppBlend=%.2f exposureFrames=%d litOverride=0 %dx%d"),
+			*Shot.CaptureSource,
+			*Shot.Grab,
+			*Shot.View.Source,
+			*Shot.View.BoatName,
+			Shot.View.Location.X, Shot.View.Location.Y, Shot.View.Location.Z,
+			Shot.View.FOV,
+			Shot.View.PostProcessBlendWeight,
+			Shot.ExposureFrames,
+			Shot.Width, Shot.Height);
 	}
 
 	Root->SetBoolField(TEXT("ok"), true);
@@ -1975,7 +2150,9 @@ FString USailSimToolset::RunPreferOnGate()
 	const FString Out = JsonString(Root);
 	PersistPreferOnGateJson(Out);
 	UE_LOG(LogTemp, Display,
-		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s"),
-		*Sha, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath);
+		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s capture=%s grab=%s litOverride=0"),
+		*Sha, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath,
+		*Root->GetStringField(TEXT("captureSource")),
+		*Root->GetStringField(TEXT("grab")));
 	return Out;
 }

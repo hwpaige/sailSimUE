@@ -138,8 +138,9 @@ public:
 	 * J/105 hull SM (PMC→SM) plus a spar HISM (mast/boom). Yacht materials
 	 * only — never SM_Buoy. The only density knob (8–400, default 96).
 	 * Independent of MaxBoats / MaxNearFullBoats. Paint is a few shared gelcoat
-	 * MIDs (solid BaseColor: white, navy, pale blue, cream). Not per boat.
-	 * Not HullPaint local-Z bands.
+	 * MIDs on the hull shell only (white, navy, pale blue, cream). Deck and
+	 * cabin stay the authored white topside MIs. Not one solid MID on every
+	 * slot, not per boat, and not HullPaint local-Z bands.
 	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
 	int32 MooringSceneryInstanceCount = 96;
@@ -333,7 +334,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidSparHism = nullptr;
 
-	/** Shared gelcoat MIDs (one solid topside color each). Not per instance. */
+	/** Shared gelcoat MIDs (one hull-accent color each). Deck/cabin stay white. Not per instance. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryHullMids;
 
@@ -424,7 +425,7 @@ private:
 	void EnsureSceneryPaint();
 	/** Noon sun intensity (0 at night). Used to scale the scenery side-fill. */
 	float SampleDirectionalSunIntensity() const;
-	/** Emissive floor so sun-away hull sides stay white gelcoat. Not a Lumen bounce. */
+	/** Small emissive floor on the white bucket only. Accent paints stay at 0 so they do not wash white. */
 	void ApplySceneryShadeFloor();
 	void EnsureMidHism();
 	void ClearMidHism();
