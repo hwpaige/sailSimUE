@@ -12,18 +12,25 @@ Routing:
        else compose EnsurePIE → SetCVars → poll GetPerfSnapshot → CapturePlayerView.
   4) If tools are advertised flat, call them directly (legacy / tool-search off).
 
-Prints JSON: {frameMs_avg,fps,moored,mooringSceneryBudget,mooringSceneryFloor,heroesMaxBoats,heroesNearFullCap,cpvPath,captureSource,litOverride,sha,ok,failCode}
+Prints JSON including gitHead, binaryMtime, tipInBinary, sceneryProof, matsSummary,
+frameMs_avg, fps, moored, cpvPath, sha, ok, failCode.
+
+Fails closed before any HighResShot / CapturePlayerView:
+  stale_binary       — SailSimUE or SailSimToolset binary missing or not newer than its sources
+  tip_not_in_binary  — HEAD unreadable or != --expected-sha, or the session log has scenery
+                       material lines without "hull slot only" and multi-slot mats=
 
 Does NOT raise MaxBoats (hero cap stays 1; MaxNearFullBoats stays 1). Harbor fill is
 MooringSceneryInstanceCount (floor ~64 / soft ~96). ProfileGPUDump stays parked.
-Does NOT kill UnrealEditor.
+Does NOT kill UnrealEditor. CRC on :8765 is still mcp_port_stolen.
 
 Env:
   SAILSIM_MCP_URL          default http://127.0.0.1:8765/mcp
   SAILSIM_TIMEOUT_S        default 120 (gate settle / PIE)
   SAILSIM_TOOLSET_WAIT_S   default 90 (wait for SailSimToolset after editor boot / CRC clear)
   SAILSIM_MCP_PORT         default 8765
-  SAILSIM_REPO             optional path for git sha
+  SAILSIM_REPO             optional path for git sha / binary mtime
+  SAILSIM_EXPECTED_SHA     optional tip SHA; mismatch → tip_not_in_binary, no capture
 """
 
 from __future__ import annotations
@@ -71,6 +78,19 @@ GATE_REPORT_KEYS = (
     "error",
     "note",
     "sha",
+    "gitHead",
+    "binaryMtime",
+    "binaryPath",
+    "newestSourceMtime",
+    "newestSourcePath",
+    "toolsetBinaryMtime",
+    "toolsetBinaryPath",
+    "buildId",
+    "tipInBinary",
+    "sceneryProof",
+    "matsSummary",
+    "ubtHint",
+    "liveCompile",
 )
 META_TOOL_NAMES = frozenset({"list_toolsets", "describe_toolset", "call_tool"})
 SAILSIM_TOOLSET_CANDIDATES = (
@@ -84,24 +104,274 @@ MISSING_TOOLSET_MSG = (
 
 
 def git_sha_short(repo: Optional[str]) -> str:
-    candidates = []
+    full = git_head(resolve_repo(repo))
+    return full[:7] if full else "unknown"
+
+
+def resolve_repo(repo: Optional[str]) -> str:
     if repo:
-        candidates.append(repo)
+        return os.path.abspath(repo)
     here = os.path.dirname(os.path.abspath(__file__))
-    candidates.append(os.path.dirname(here))
-    candidates.append(os.getcwd())
-    for root in candidates:
+    return os.path.abspath(os.path.dirname(here))
+
+
+def git_head(root: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", root, "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        ).strip()
+        return out
+    except Exception:
+        return ""
+
+
+def _iso(ts: float) -> str:
+    if ts < 0:
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def _sha_match(head: str, expected: str) -> bool:
+    want = (expected or "").strip().lower()
+    have = (head or "").strip().lower()
+    if not want:
+        return bool(have)
+    if not have:
+        return False
+    return have.startswith(want) or want.startswith(have)
+
+
+_GAME_BIN_NAMES = frozenset(
+    {
+        "libUnrealEditor-SailSimUE.dylib",
+        "UnrealEditor-SailSimUE.dylib",
+        "libUnrealEditor-SailSimUE.so",
+        "UnrealEditor-SailSimUE.so",
+        "UnrealEditor-SailSimUE.dll",
+        "libUnrealEditor-SailSimUE.dll",
+    }
+)
+_TOOL_BIN_NAMES = frozenset(name.replace("SailSimUE", "SailSimToolset") for name in _GAME_BIN_NAMES)
+
+
+def _platform_dir_token() -> str:
+    if sys.platform == "darwin":
+        return f"{os.sep}Mac{os.sep}"
+    if sys.platform.startswith("linux"):
+        return f"{os.sep}Linux{os.sep}"
+    return f"{os.sep}Win64{os.sep}"
+
+
+def _newest_source(root: str, rel: str) -> Tuple[float, str]:
+    base = os.path.join(root, rel)
+    best_t = -1.0
+    best_p = ""
+    if not os.path.isdir(base):
+        return best_t, best_p
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in ("Intermediate", "Binaries", ".git")]
+        for name in filenames:
+            if os.path.splitext(name)[1].lower() not in (".cpp", ".h", ".inl", ".cs"):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if mtime > best_t:
+                best_t, best_p = mtime, path
+    return best_t, best_p
+
+
+def _find_module_binary(root: str, names: frozenset) -> str:
+    roots = [
+        os.path.join(root, "Binaries"),
+        os.path.join(root, "Plugins", "SailSimToolset", "Binaries"),
+    ]
+    hits: List[str] = []
+    for base in roots:
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if not d.endswith(".dSYM")]
+            for name in filenames:
+                if name in names:
+                    hits.append(os.path.join(dirpath, name))
+    if not hits:
+        return ""
+    token = _platform_dir_token()
+    scoped = [p for p in hits if token in p]
+    pool = scoped or hits
+
+    def _mtime(path: str) -> float:
         try:
-            out = subprocess.check_output(
-                ["git", "-C", root, "rev-parse", "--short", "HEAD"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-            if out:
-                return out
+            return os.path.getmtime(path)
+        except OSError:
+            return -1.0
+
+    return max(pool, key=_mtime)
+
+
+def _read_build_id(binary_path: str) -> str:
+    if not binary_path:
+        return ""
+    folder = os.path.dirname(binary_path)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return ""
+    for name in names:
+        if not name.endswith(".modules"):
+            continue
+        try:
+            with open(os.path.join(folder, name), "r", encoding="utf-8", errors="replace") as handle:
+                obj = json.load(handle)
         except Exception:
             continue
-    return "unknown"
+        bid = obj.get("BuildId") if isinstance(obj, dict) else None
+        if bid:
+            return str(bid)
+    return ""
+
+
+def _ubt_hint(root: str) -> str:
+    proj = os.path.join(root, "SailSimUE.uproject")
+    if sys.platform == "darwin":
+        script = '"$UE_ROOT/Engine/Build/BatchFiles/Mac/Build.sh" SailSimUEEditor Mac Development'
+    elif sys.platform.startswith("linux"):
+        script = '"$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh" SailSimUEEditor Linux Development'
+    else:
+        script = r'"%UE_ROOT%\Engine\Build\BatchFiles\Build.bat" SailSimUEEditor Win64 Development'
+    return (
+        f"Quit UnrealEditor, then {script} -Project=\"{proj}\" -WaitMutex — restart the editor after. "
+        "If CrashReportClient owns :8765, kill CRC only."
+    )
+
+
+def _active_log_text(root: str) -> str:
+    path = os.path.join(root, "Saved", "Logs", "SailSimUE.log")
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return ""
+    try:
+        with open(path, "rb") as handle:
+            if size > 4_000_000:
+                handle.seek(size - 1_500_000)
+            data = handle.read()
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def parse_scenery_proof(text: str) -> Dict[str, Any]:
+    logged = False
+    proof = ""
+    mats = ""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        low = line.lower()
+        if "scenery gelcoat" in low or "scenery bucket" in low or "mat=" in low:
+            logged = True
+        if "hull slot only" in low:
+            proof = line
+        idx = low.rfind("mats=")
+        if idx >= 0 and "|" in line[idx + 5 :]:
+            mats = line[idx + 5 :]
+    return {
+        "logged": logged,
+        "ok": bool(proof) and bool(mats),
+        "sceneryProof": proof,
+        "matsSummary": mats,
+    }
+
+
+def evaluate_module_fresh(root: str, expected_sha: str = "", *, require_logged_proof: bool = True) -> Dict[str, Any]:
+    """Disk + session-log proof. ok means it is safe to capture; tipInBinary mirrors that."""
+    head = git_head(root)
+    game_src_t, game_src_p = _newest_source(root, os.path.join("Source", "SailSimUE"))
+    tool_src_t, tool_src_p = _newest_source(root, os.path.join("Plugins", "SailSimToolset", "Source"))
+    game_bin = _find_module_binary(root, _GAME_BIN_NAMES)
+    tool_bin = _find_module_binary(root, _TOOL_BIN_NAMES)
+
+    def _mt(path: str) -> float:
+        if not path:
+            return -1.0
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return -1.0
+
+    game_bin_t = _mt(game_bin)
+    tool_bin_t = _mt(tool_bin)
+    game_stale = not (game_src_t >= 0 and game_bin_t > game_src_t)
+    tool_stale = not (tool_src_t >= 0 and tool_bin_t > tool_src_t)
+    binary_fresh = not game_stale and not tool_stale
+    src_t, src_p = (game_src_t, game_src_p) if game_stale or game_src_t >= 0 else (tool_src_t, tool_src_p)
+    if game_stale and game_src_t >= 0:
+        src_t, src_p = game_src_t, game_src_p
+    elif tool_stale and tool_src_t >= 0:
+        src_t, src_p = tool_src_t, tool_src_p
+    proof = parse_scenery_proof(_active_log_text(root))
+    sha_ok = _sha_match(head, expected_sha)
+    hint = _ubt_hint(root)
+    out: Dict[str, Any] = {
+        "gitHead": head,
+        "sha": head[:7] if head else "unknown",
+        "binaryPath": game_bin,
+        "binaryMtime": _iso(game_bin_t),
+        "newestSourcePath": src_p,
+        "newestSourceMtime": _iso(src_t),
+        "toolsetBinaryPath": tool_bin,
+        "toolsetBinaryMtime": _iso(tool_bin_t),
+        "buildId": _read_build_id(game_bin) or _read_build_id(tool_bin),
+        "sceneryProof": proof["sceneryProof"],
+        "matsSummary": proof["matsSummary"],
+        "tipInBinary": False,
+        "ubtHint": hint,
+        "ok": False,
+        "failCode": "",
+        "error": "",
+        "cpvPath": "",
+    }
+    if not sha_ok:
+        out["failCode"] = "tip_not_in_binary"
+        out["error"] = (
+            "could not read git HEAD; refusing HighResShot (tip_not_in_binary)."
+            if not head
+            else f"git HEAD {head} does not match expected SHA {expected_sha.strip()} (tip_not_in_binary). Refusing HighResShot."
+        )
+    elif not binary_fresh:
+        out["failCode"] = "stale_binary"
+        out["error"] = (
+            "game or toolset binary is missing or older than sources (stale_binary). "
+            f"binary={game_bin} mtime={out['binaryMtime']} source={src_p} mtime={out['newestSourceMtime']}. "
+            f"Refusing HighResShot. {hint}"
+        )
+    elif require_logged_proof and proof["logged"] and not proof["ok"]:
+        out["failCode"] = "tip_not_in_binary"
+        out["error"] = (
+            "running binary logged scenery materials without \"hull slot only\" and multi-slot mats=. "
+            "Refusing HighResShot (tip_not_in_binary)."
+        )
+    else:
+        out["ok"] = True
+        out["tipInBinary"] = True
+        if not proof["ok"]:
+            out["note"] = (
+                "Binary mtime is newer than sources. Scenery proof is not in SailSimUE.log yet. "
+                "RunPreferOnGate still requires \"hull slot only\" and multi-slot mats= before HighResShot."
+            )
+    return out
+
+
+def toolset_has_tip_gate(router: "ToolRouter") -> bool:
+    if router.has("AssertModuleFresh") or router.has("EnsureTipInBinary"):
+        return True
+    return tool_has_arg(schema_tools(router), "RunPreferOnGate", "ExpectedSha")
 
 
 def _run_capture(cmd: List[str]) -> str:
@@ -792,12 +1062,15 @@ def capture_player_view(router: ToolRouter) -> Tuple[str, str, bool]:
 
 
 
-def run_via_run_prefer_on_gate(router: ToolRouter) -> Optional[Dict[str, Any]]:
+def run_via_run_prefer_on_gate(router: ToolRouter, expected_sha: str = "") -> Optional[Dict[str, Any]]:
     """If describe shows RunPreferOnGate, call it and map JSON. None = not available."""
     if not router.has("RunPreferOnGate"):
         return None
+    args: Dict[str, Any] = {}
+    if expected_sha:
+        args["ExpectedSha"] = expected_sha
     try:
-        raw = extract_text_payload(router.invoke("RunPreferOnGate", {}))
+        raw = extract_text_payload(router.invoke("RunPreferOnGate", args))
     except Exception:
         return None
     obj = parse_jsonish(raw)
@@ -809,7 +1082,7 @@ def run_via_run_prefer_on_gate(router: ToolRouter) -> Optional[Dict[str, Any]]:
     return obj
 
 
-def compose_gate(router: ToolRouter, timeout_s: float) -> Dict[str, Any]:
+def compose_gate(router: ToolRouter, timeout_s: float, repo: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "frameMs_avg": 0.0,
         "fps": 0.0,
@@ -868,6 +1141,23 @@ def compose_gate(router: ToolRouter, timeout_s: float) -> Dict[str, Any]:
         )
         return out
 
+    proof = parse_scenery_proof(_active_log_text(repo))
+    out["sceneryProof"] = proof["sceneryProof"]
+    out["matsSummary"] = proof["matsSummary"]
+    if not proof["ok"]:
+        out["tipInBinary"] = False
+        out["failCode"] = "tip_not_in_binary"
+        out["cpvPath"] = ""
+        out["error"] = (
+            "scenery proof missing after settle: need \"hull slot only\" and multi-slot mats= "
+            "in Saved/Logs/SailSimUE.log. Refusing CapturePlayerView."
+            if not proof["logged"]
+            else "running binary logged scenery materials without \"hull slot only\" and multi-slot mats=. "
+            "Refusing CapturePlayerView (tip_not_in_binary)."
+        )
+        return out
+    out["tipInBinary"] = True
+
     cpv_path, fail, ok = capture_player_view(router)
     out["cpvPath"] = cpv_path
     if not ok:
@@ -894,10 +1184,22 @@ def main() -> int:
     )
     ap.add_argument("--port", type=int, default=int(os.environ.get("SAILSIM_MCP_PORT", str(DEFAULT_PORT))))
     ap.add_argument("--repo", default=os.environ.get("SAILSIM_REPO") or "")
+    ap.add_argument("--expected-sha", default=os.environ.get("SAILSIM_EXPECTED_SHA") or "")
+    ap.add_argument(
+        "--live-compile",
+        action="store_true",
+        help="if the binary is stale, call AssertModuleFresh bLiveCompile and do not capture",
+    )
+    ap.add_argument("--self-check", action="store_true", help="run the tip-in-binary checks and exit")
     ap.add_argument("--skip-port-check", action="store_true", help="skip TCP listener guard (debug only)")
     args = ap.parse_args()
 
-    sha = git_sha_short(args.repo or None)
+    if args.self_check:
+        return _self_check()
+
+    repo = resolve_repo(args.repo or None)
+    fresh = evaluate_module_fresh(repo, args.expected_sha, require_logged_proof=True)
+    sha = fresh.get("sha") or "unknown"
     out: Dict[str, Any] = {
         "frameMs_avg": 0.0,
         "fps": 0.0,
@@ -906,7 +1208,37 @@ def main() -> int:
         "sha": sha,
         "ok": False,
         "failCode": "",
+        "cpvPath": "",
+        "tipInBinary": False,
     }
+    for key in (
+        "gitHead",
+        "binaryMtime",
+        "binaryPath",
+        "newestSourceMtime",
+        "newestSourcePath",
+        "toolsetBinaryMtime",
+        "toolsetBinaryPath",
+        "buildId",
+        "sceneryProof",
+        "matsSummary",
+        "ubtHint",
+        "note",
+    ):
+        if fresh.get(key):
+            out[key] = fresh[key]
+
+    if not fresh.get("ok"):
+        # Stale dylib must not reach HighResShot. Live compile is opt-in and still does not capture.
+        if args.live_compile and fresh.get("failCode") == "stale_binary":
+            out["liveCompile"] = "pending_mcp"
+        else:
+            out["failCode"] = fresh.get("failCode") or "stale_binary"
+            out["error"] = fresh.get("error") or "tip not in binary"
+            out["tipInBinary"] = False
+            out["cpvPath"] = ""
+            print(json.dumps(out, indent=2))
+            return 1
 
     if not args.skip_port_check:
         fail, detail = check_mcp_port(args.port)
@@ -937,25 +1269,161 @@ def main() -> int:
     if router.toolset_name:
         out["toolset"] = router.toolset_name
 
-    # Prefer one-shot RunPreferOnGate when describe / catalog shows it
-    one = run_via_run_prefer_on_gate(router)
+    if out.get("liveCompile") == "pending_mcp":
+        tool = "AssertModuleFresh" if router.has("AssertModuleFresh") else (
+            "EnsureTipInBinary" if router.has("EnsureTipInBinary") else ""
+        )
+        if not tool:
+            out["ok"] = False
+            out["failCode"] = "live_compile_failed"
+            out["cpvPath"] = ""
+            out["error"] = (
+                "Binary is stale and AssertModuleFresh is not in the live schema. "
+                + str(out.get("ubtHint") or "")
+            )
+            print(json.dumps(out, indent=2))
+            return 1
+        lc_args: Dict[str, Any] = {"bLiveCompile": True}
+        if args.expected_sha:
+            lc_args["ExpectedSha"] = args.expected_sha
+        try:
+            lc = parse_jsonish(extract_text_payload(router.invoke(tool, lc_args)))
+        except Exception as exc:
+            lc = {"ok": False, "failCode": "live_compile_failed", "error": str(exc)}
+        for key in GATE_REPORT_KEYS:
+            if key in lc and lc[key] is not None:
+                out[key] = lc[key]
+        out["via"] = tool
+        out["ok"] = False
+        out["cpvPath"] = ""
+        out["tipInBinary"] = False
+        out["failCode"] = str(lc.get("failCode") or lc.get("code") or "live_compile_requested")
+        out["error"] = lc.get("error") or out.get("error") or "LiveCoding.Compile queued; not capturing."
+        print(json.dumps(out, indent=2, default=str))
+        return 1
+
+    # One-shot only when the live schema has the tip gate. An older RunPreferOnGate
+    # captures before any proof check, so the compose path owns that case.
+    one = None
+    if toolset_has_tip_gate(router):
+        one = run_via_run_prefer_on_gate(router, args.expected_sha)
+    elif not out.get("note"):
+        out["note"] = (
+            "RunPreferOnGate schema has no tip-in-binary gate; "
+            "composing and checking the log before CapturePlayerView."
+        )
     if one is not None:
         for k in GATE_REPORT_KEYS:
             if k in one and one[k] is not None:
                 out[k] = one[k]
         out["sha"] = out.get("sha") or sha
         out["via"] = "RunPreferOnGate"
+        if out.get("ok") and out.get("tipInBinary") is not True:
+            out["ok"] = False
+            out["failCode"] = out.get("failCode") or "tip_not_in_binary"
+            out["error"] = out.get("error") or "RunPreferOnGate returned without tipInBinary; do not score cpvPath."
+        if not out.get("ok"):
+            out["tipInBinary"] = False
         print(json.dumps(out, indent=2, default=str))
         return 0 if out.get("ok") else 1
 
-    composed = compose_gate(router, args.timeout)
+    composed = compose_gate(router, args.timeout, repo)
     out.update(composed)
-    out["sha"] = sha
+    out["sha"] = out.get("sha") or sha
+    out["gitHead"] = out.get("gitHead") or fresh.get("gitHead") or ""
     out["via"] = "compose"
     print(json.dumps(out, indent=2, default=str))
     if out.get("failCode") == "missing_tools":
         return 2
     return 0 if out.get("ok") else 1
+
+
+def _touch(path: str, when: float) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("// tip\n")
+    os.utime(path, (when, when))
+
+
+def _self_check() -> int:
+    """Temp-repo checks for stale_binary / tip proof. No editor, no capture."""
+    import tempfile
+
+    failures: List[str] = []
+
+    def check(name: str, cond: bool, detail: str = "") -> None:
+        if not cond:
+            failures.append(f"{name}: {detail}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.check_call(["git", "init"], cwd=tmp, stdout=subprocess.DEVNULL)
+        subprocess.check_call(["git", "-C", tmp, "config", "user.email", "ops@example.com"])
+        subprocess.check_call(["git", "-C", tmp, "config", "user.name", "ops"])
+        now = time.time()
+        src = os.path.join(tmp, "Source", "SailSimUE", "Tip.cpp")
+        tool_src = os.path.join(tmp, "Plugins", "SailSimToolset", "Source", "Tip.cpp")
+        _touch(src, now - 100)
+        _touch(tool_src, now - 100)
+        subprocess.check_call(["git", "-C", tmp, "add", "."], stdout=subprocess.DEVNULL)
+        subprocess.check_call(["git", "-C", tmp, "commit", "-m", "tip"], stdout=subprocess.DEVNULL)
+        head = git_head(tmp)
+        if sys.platform == "darwin":
+            plat, ext, prefix = "Mac", ".dylib", "lib"
+        elif sys.platform.startswith("linux"):
+            plat, ext, prefix = "Linux", ".so", "lib"
+        else:
+            plat, ext, prefix = "Win64", ".dll", ""
+        game_bin = os.path.join(tmp, "Binaries", plat, f"{prefix}UnrealEditor-SailSimUE{ext}")
+        tool_bin = os.path.join(
+            tmp, "Plugins", "SailSimToolset", "Binaries", plat, f"{prefix}UnrealEditor-SailSimToolset{ext}"
+        )
+        _touch(game_bin, now - 200)
+        _touch(tool_bin, now - 50)
+        stale = evaluate_module_fresh(tmp)
+        check("stale_binary", stale.get("failCode") == "stale_binary" and stale.get("cpvPath") == "", str(stale.get("failCode")))
+
+        _touch(game_bin, now + 50)
+        _touch(tool_bin, now + 50)
+        fresh = evaluate_module_fresh(tmp)
+        check(
+            "fresh_no_log",
+            fresh.get("ok") is True and fresh.get("tipInBinary") is True and fresh.get("gitHead") == head,
+            str(fresh.get("failCode") or fresh.get("error")),
+        )
+        bad = evaluate_module_fresh(tmp, expected_sha="deadbeef")
+        check("sha_mismatch", bad.get("failCode") == "tip_not_in_binary", str(bad.get("failCode")))
+
+        log_path = os.path.join(tmp, "Saved", "Logs", "SailSimUE.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write("MooredBoats: scenery gelcoat mat=MID_White_only\n")
+        old = evaluate_module_fresh(tmp)
+        check("old_paint_log", old.get("failCode") == "tip_not_in_binary" and old.get("ok") is False, str(old.get("failCode")))
+
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "MooredBoats: scenery gelcoat mids=4 (hull slot only, deck/cabin authored white)\n"
+                "MooredBoats: scenery bucket 0 inst=24 mats=MID_A|MID_Deck|MID_Cabin\n"
+            )
+        proved = evaluate_module_fresh(tmp)
+        check(
+            "proof",
+            proved.get("ok") is True
+            and proved.get("tipInBinary") is True
+            and "hull slot only" in str(proved.get("sceneryProof"))
+            and "|" in str(proved.get("matsSummary")),
+            str(proved.get("error")),
+        )
+        short_ok = evaluate_module_fresh(tmp, expected_sha=head[:7])
+        check("short_sha", short_ok.get("ok") is True, str(short_ok.get("error")))
+
+    if failures:
+        print("SELF-CHECK FAIL")
+        for item in failures:
+            print(" -", item)
+        return 1
+    print("SELF-CHECK OK")
+    return 0
 
 
 if __name__ == "__main__":

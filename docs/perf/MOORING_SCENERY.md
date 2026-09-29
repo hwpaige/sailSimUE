@@ -20,9 +20,11 @@ The HISM actor is anchored at the harbor basin (same placement rule as EncAid IS
 
 ## Ops Prefer-ON gate
 
-`RunPreferOnGate` / `ops_run_prefer_on_gate.py` frame `midHarborMoored` and pass on **scenery count** (floor ~64, soft target ~96 = `MooringSceneryInstanceCount`). JSON and status lines also report **heroes** (`MaxBoats`, `MaxNearFullBoats`, live NearFull count; defaults 1). The pass bar is not a hero cap.
+`RunPreferOnGate` / `ops_run_prefer_on_gate.py` frame `midHarborMoored` and pass on **scenery count** (floor ~64, soft target ~96 = `MooringSceneryInstanceCount`) only after the tip is proven in the running binary. JSON must include `gitHead`, `binaryMtime`, `tipInBinary: true`, `sceneryProof` (contains `hull slot only`), and `matsSummary` (contains `|`). `failCode` `stale_binary` or `tip_not_in_binary` means no HighResShot — do not score a PNG. Heroes (`MaxBoats`, `MaxNearFullBoats`, live NearFull count; defaults 1) are reported and are not the pass bar.
 
-The CPV PNG is a 1x HighResShot of the active editor/PIE Lit viewport during its Draw (`grab=HighResShot`, or `ViewportFramebuffer` if that client did not consume the request; `litOverride=false`), under `Saved/Screenshots/SailSim/` and `Saved/SailSim/last_lit_viewport_grab.png`. Re-run after this toolset is Live Compiled: `SailSim.RunPreferOnGate` or `python3 Scripts/ops_run_prefer_on_gate.py`. Gelcoat close-up: `CapturePlayerView` with `FramingPreset=gelcoatHull` (same grab). Do not score hull color from a scene-capture PNG. See `Plugins/SailSimToolset/README.md` (How Ops captures for look gates).
+Before the gate, `AssertModuleFresh` / `EnsureTipInBinary` (console: `SailSim.AssertModuleFresh`, optional SHA, optional `LiveCompile`) checks module mtimes. If Live Coding fails, quit the editor and run the `ubtHint` editor-target build, then restart. Kill CrashReportClient only when it owns `:8765`.
+
+The CPV PNG is a 1x HighResShot of the active editor/PIE Lit viewport during its Draw (`grab=HighResShot`, or `ViewportFramebuffer` if that client did not consume the request; `litOverride=false`), under `Saved/Screenshots/SailSim/` and `Saved/SailSim/last_lit_viewport_grab.png`. Re-run after this toolset is Live Compiled or UBT-rebuilt: `SailSim.RunPreferOnGate` or `python3 Scripts/ops_run_prefer_on_gate.py`. Gelcoat close-up: `CapturePlayerView` with `FramingPreset=gelcoatHull` (same grab). Do not score hull color from a scene-capture PNG. See `Plugins/SailSimToolset/README.md` (How Ops captures for look gates).
 
 ## World follow-up
 

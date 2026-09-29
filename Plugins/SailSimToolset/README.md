@@ -6,7 +6,20 @@ Editor MCP tools for Prefer-ON, PIE, and Design gates. They register on the exis
 
 ## Mac Live Coding
 
-Rebuild **SailSimUE** and **SailSimToolset** together (`SailSimGetPerf` is in `SailSimUE.cpp`). `GetPerfSnapshot` calls that export so the plugin reads the same `FSailSimPerf` counters as the HUD. An inline `FSailSimPerf::Get()` inside the plugin DLL would be a different, empty copy. If Live Coding does not relink the game module, do one editor-target build.
+Rebuild **SailSimUE** and **SailSimToolset** together (`SailSimGetPerf` is in `SailSimUE.cpp`). `GetPerfSnapshot` calls that export so the plugin reads the same `FSailSimPerf` counters as the HUD. An inline `FSailSimPerf::Get()` inside the plugin DLL would be a different, empty copy.
+
+After a tip pull, call `AssertModuleFresh` (or `EnsureTipInBinary`) before Prefer-ON. It compares git HEAD to the loaded module file mtime. `RunPreferOnGate` refuses HighResShot when that check fails.
+
+If Live Coding does not relink the game module, do **not** keep retrying it. Quit the editor and build the editor target (the `ubtHint` field is the command):
+
+```
+# Mac — quit UnrealEditor first so the dylib is not locked
+"$UE_ROOT/Engine/Build/BatchFiles/Mac/Build.sh" SailSimUEEditor Mac Development -Project="<SailSimUE.uproject>" -WaitMutex
+```
+
+Linux and Windows use `Build.sh` / `Build.bat` with `SailSimUEEditor` for that host. Restart the editor after UBT. If CrashReportClient owns `:8765`, kill CRC only, then let UnrealEditor bind MCP again.
+
+`SailSim.AssertModuleFresh LiveCompile` (or MCP `bLiveCompile=true`) queues `LiveCoding.Compile` and returns immediately so the game thread is not blocked. Poll `AssertModuleFresh` again after the editor ticks. `live_compile_failed` means the command did not start — use UBT. A successful LC that leaves the dylib older than `Source/SailSimUE` is still `stale_binary`.
 
 After Live Coding, the log line for a good capture is:
 
@@ -72,10 +85,32 @@ Returns JSON (also written to `Saved/SailSim/last_prefer_on_gate.json`):
   "captureSource": "ActiveEditorViewport", "grab": "HighResShot",
   "viewSource": "PlayerCameraManager",
   "exposureFrames": 16, "litOverride": false,
-  "sha": "018b9ab", "failCode": "", "error": "" }
+  "sha": "018b9ab", "gitHead": "<full sha>",
+  "binaryMtime": "<ISO-8601>", "tipInBinary": true,
+  "sceneryProof": "MooredBoats: scenery gelcoat ... (hull slot only, deck/cabin authored white, ...)",
+  "matsSummary": "MID_...|MID_...|...",
+  "failCode": "", "error": "" }
 ```
 
-`failCode` values: `wrong_map`, `pie_not_running`, `moored_count` (scenery below floor ~64 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. Does not change hero caps (`MaxBoats` / `MaxNearFullBoats` default 1), scenery budget, moored strip, or forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
+Assert before treating a PNG as the tip:
+
+| field | pass |
+| --- | --- |
+| `ok` | `true` |
+| `failCode` | empty |
+| `tipInBinary` | `true` |
+| `gitHead` | the SHA you pulled (or `sha` is its 7-char prefix) |
+| `binaryMtime` | newer than `Source/SailSimUE` (and the toolset binary newer than its sources) |
+| `sceneryProof` | contains `hull slot only` |
+| `matsSummary` | contains `\|` (multi-slot, not a single `mat=MID_…`) |
+| `grab` | `HighResShot` (or `ViewportFramebuffer` if that client did not consume the request) |
+| `cpvPath` | non-empty only when the rows above passed |
+
+`failCode` values: `stale_binary` (module file missing or older than sources — **no PNG**), `tip_not_in_binary` (HEAD mismatch, or log missing `hull slot only` / multi-slot `mats=` — **no PNG**), `wrong_map`, `pie_not_running`, `moored_count` (scenery below floor ~64 — does **not** claim success), `bad_framing`, `cpv_*`, `no_editor`. `stale_binary` / `tip_not_in_binary` leave `cpvPath` empty. Do not score an older screenshot. Does not change hero caps (`MaxBoats` / `MaxNearFullBoats` default 1), scenery budget, moored strip, or forced LOD. `ProfileGPUDump` remains available but is not part of this gate (parked for parse cost).
+
+Optional `ExpectedSha` (console arg or MCP) must match HEAD. Empty means "HEAD must be readable."
+
+`SailSim.AssertModuleFresh` / `EnsureTipInBinary` is the preflight. Same JSON fields, no capture. `python3 Scripts/ops_run_prefer_on_gate.py --self-check` exercises the disk rules without an editor.
 
 ### Console fallback (no MCP schema refresh)
 
@@ -168,7 +203,11 @@ r.Lumen.Reflections.Allow=1
 
 ## ProfileGPUDump
 
-Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, presents one viewport frame, and writes `Saved/Profiling/SailSimProfileGPU-*.txt`.
+Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and **waits until a new file under `Saved/Profiling` parses as a GPU hierarchy** (up to 8s). The returned `dumpPath` is that file (`profileSource=dump_file`).
+
+If the wait ends with no parseable file, the captured log is scraped once (`profileSource=log_scrape`) and written to `Saved/Profiling/SailSimProfileGPU-*.txt`. That scrape does not run before the wait.
+
+If both fail, `ok` is false and `code` is `profile_timeout` (not an early `profile_not_emitted`). `error` includes `timeoutSec`, `expectedDumpDir`, and `dumpPath`. No empty profile file is written.
 
 Returned `bucketsMs`: `SingleLayerWater`, `LumenGI`, `LumenReflections`, `Lumen` (GI + reflections), `Shadows`, `Nanite`, `Other`.
 
@@ -176,7 +215,6 @@ Returned `bucketsMs`: `SingleLayerWater`, `LumenGI`, `LumenReflections`, `Lumen`
 - A parent whose children fall in different buckets is skipped so those children are counted on their own.
 - `Other` is `totalGpuMs` minus the specific buckets. Overlap between buckets can shrink `Other`.
 - `topEvents` lists the largest parsed lines so a missed marker name is still visible.
-- `code: "profile_not_emitted"` means the frame did not log a parseable hierarchy. The dump file still has whatever was captured.
 
 `profiledWorld` / `viewport` say which world was executed and which viewport was presented. Prefer a settled PIE session so the split is the game view.
 
@@ -211,7 +249,7 @@ Score gelcoat / mid-harbor only from a new direct Lit viewport grab. Older PNGs 
 
 1. TCP 8765 must be UnrealEditor. If CrashReportClient owns it, kill CrashReportClient only.
 2. PIE `SailSim_Ocean` (or let the gate call EnsurePIE). Possessed boat, game viewport visible.
-3. Live Coding must have relinked `SailSimToolset` (this capture path). If the MCP schema is stale, use the console command.
+3. After a tip pull, `SailSim.AssertModuleFresh` (or `EnsureTipInBinary`) must be ok. If Live Coding fails, quit the editor and run the `ubtHint` UBT line, then restart. Do not capture on a stale dylib.
 4. Run one of:
 
 ```
@@ -230,6 +268,12 @@ SailSimToolset.CapturePlayerView  MinWorldSeconds=0.5  FramingPreset=gelcoatHull
 
 Pass checks in the log / `Saved/SailSim/last_prefer_on_gate.json`:
 
+- `ok` is true and `failCode` is empty. `stale_binary` or `tip_not_in_binary` means stop: `cpvPath` is empty and there is no new PNG to score.
+- `tipInBinary` is true
+- `gitHead` is the SHA that was pulled (`sha` is the 7-char prefix)
+- `binaryMtime` is set (game-module file is newer than `Source/SailSimUE`)
+- `sceneryProof` contains `hull slot only`
+- `matsSummary` contains `|` (multi-slot materials, not a single `mat=MID_…`)
 - `grab` is `HighResShot` (the viewport consumed the 1x screenshot request during `Draw`). `ViewportFramebuffer` is also a pass: same viewport, read because that client did not consume the request.
 - `captureSource` is `ActiveEditorViewport` (PIE in the selected viewport), or `PIEGameViewport` / `LevelViewportPIE` when that panel is the PIE surface
 - `litOverride` is false

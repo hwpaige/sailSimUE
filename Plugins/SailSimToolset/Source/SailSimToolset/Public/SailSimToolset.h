@@ -44,15 +44,36 @@ public:
 	 * 4) Assert mid-harbor moored >= scenery floor (~64; soft target = MooringSceneryInstanceCount, default 96);
 	 *    else failCode=moored_count. Reports scenery count + heroes (MaxBoats / MaxNearFullBoats, default 1).
 	 *    Harbor fill is scenery count only.
-	 * 5) CapturePlayerView FramingPreset=midHarborMoored (1x Lit viewport grab under Saved/Screenshots)
-	 * 6) JSON: {frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
+	 * 5) Assert the running binary logged "hull slot only" and a multi-slot mats= line.
+	 *    Missing proof or a binary older than Source/SailSimUE → failCode stale_binary or
+	 *    tip_not_in_binary and no HighResShot.
+	 * 6) CapturePlayerView FramingPreset=midHarborMoored (1x Lit viewport grab under Saved/Screenshots)
+	 * 7) JSON includes gitHead, binaryMtime, tipInBinary, sceneryProof, matsSummary,
+	 *    frameMs_avg, fps, moored, mooringSceneryBudget, mooringSceneryFloor,
 	 *    heroesMaxBoats, heroesNearFullCap, heroesNear, cpvPath, captureSource, grab,
-	 *    viewSource, exposureFrames, litOverride, sha, ok, failCode?}
+	 *    viewSource, exposureFrames, litOverride, sha, ok, failCode.
+	 * ExpectedSha: optional full or short git SHA. Empty uses HEAD. Mismatch fails closed.
 	 * Does not raise MaxBoats (heroes stay 1). Scenery is additive HISM. Prefer-ON / DSF2 unchanged.
-	 * ProfileGPUDump stays parked.
+	 * ProfileGPUDump stays parked. Does not run Live Coding; call AssertModuleFresh for that.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
-	static FString RunPreferOnGate();
+	static FString RunPreferOnGate(const FString& ExpectedSha = TEXT(""));
+
+	/**
+	 * Fail-closed check that the loaded SailSimUE / SailSimToolset binaries are newer than
+	 * their sources and that git HEAD matches ExpectedSha (empty = current HEAD must be readable).
+	 * If SailSimUE.log already has a scenery material line, it must include "hull slot only"
+	 * and multi-slot mats=. Does not capture.
+	 * bLiveCompile: queue LiveCoding.Compile and return immediately (does not block the game thread).
+	 * If that command is missing, code=live_compile_failed and ubtHint is the editor-target UBT line.
+	 * Writes Saved/SailSim/last_module_fresh.json.
+	 */
+	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
+	static FString AssertModuleFresh(const FString& ExpectedSha = TEXT(""), bool bLiveCompile = false);
+
+	/** Same as AssertModuleFresh. Ops can call this before RunPreferOnGate. */
+	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
+	static FString EnsureTipInBinary(const FString& ExpectedSha = TEXT(""), bool bLiveCompile = false);
 
 	/**
 	 * Find actors by case-insensitive substring on name, label, or class
@@ -115,7 +136,9 @@ public:
 	static FString ExecuteConsole(const FString& Commands);
 
 	/**
-	 * Trigger ProfileGPU (UI suppressed), present one frame, and return a structured split:
+	 * Trigger ProfileGPU (UI suppressed) and wait until a new dump file under Saved/Profiling parses.
+	 * Returns profile_timeout with expectedDumpDir, dumpPath, and timeoutSec when the file never
+	 * arrives. Hierarchy scrape of the captured log is used only after that wait.
 	 * SingleLayerWater, LumenGI, LumenReflections, Shadows, Nanite, Other, plus the dump path.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
