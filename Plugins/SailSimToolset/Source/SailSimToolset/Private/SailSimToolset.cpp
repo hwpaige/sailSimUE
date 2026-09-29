@@ -745,6 +745,89 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
+	static bool IsGpuFrameEvent(const FProfileEvent& Event)
+	{
+		const FString& Name = Event.Name;
+		return Name.Equals(TEXT("<root>"), ESearchCase::IgnoreCase)
+			|| Name.Equals(TEXT("Frame"), ESearchCase::IgnoreCase)
+			|| Name.StartsWith(TEXT("GPU Frame"), ESearchCase::IgnoreCase)
+			|| Name.StartsWith(TEXT("Frame "), ESearchCase::IgnoreCase)
+			|| Name.Contains(TEXT("Frame Time"), ESearchCase::IgnoreCase)
+			|| Name.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase);
+	}
+
+	struct FProfileShape
+	{
+		float GpuFrameMs = -1.f;
+		FString GpuFrameName;
+		int32 GpuFrameDepth = 0;
+		TArray<int32> TopLevel;
+		float TopLevelSumMs = 0.f;
+		bool bComplete = false;
+	};
+
+	/** Top-level rows are the frame's children (inclusive). A flat dump uses the shallowest non-frame rows. */
+	static FProfileShape ShapeProfile(const TArray<FProfileEvent>& Events)
+	{
+		FProfileShape Shape;
+		int32 FrameIdx = INDEX_NONE;
+		int32 MinDepth = MAX_int32;
+		for (int32 Index = 0; Index < Events.Num(); ++Index)
+		{
+			MinDepth = FMath::Min(MinDepth, Events[Index].Depth);
+			if (FrameIdx == INDEX_NONE && IsGpuFrameEvent(Events[Index]))
+			{
+				FrameIdx = Index;
+				Shape.GpuFrameMs = Events[Index].Ms;
+				Shape.GpuFrameName = Events[Index].Name;
+				Shape.GpuFrameDepth = Events[Index].Depth;
+			}
+		}
+		if (Events.Num() == 0)
+		{
+			return Shape;
+		}
+
+		auto AddAtDepth = [&](int32 Depth)
+		{
+			for (int32 Index = 0; Index < Events.Num(); ++Index)
+			{
+				if (Events[Index].Depth == Depth)
+				{
+					Shape.TopLevel.Add(Index);
+					Shape.TopLevelSumMs += Events[Index].Ms;
+				}
+			}
+		};
+
+		// Shallowest rows are the top of the tree (graphics and async-compute roots).
+		// A dump whose only root is the frame itself expands to that frame's children.
+		AddAtDepth(MinDepth);
+		if (FrameIdx != INDEX_NONE && Shape.TopLevel.Num() == 1 && Shape.TopLevel[0] == FrameIdx)
+		{
+			Shape.TopLevel.Reset();
+			Shape.TopLevelSumMs = 0.f;
+			AddAtDepth(Events[FrameIdx].Depth + 1);
+		}
+		Shape.bComplete = Shape.GpuFrameMs >= 0.f && Shape.TopLevel.Num() > 0 && Events.Num() >= 2;
+		return Shape;
+	}
+
+	static void AddProfileGaps(const TSharedRef<FJsonObject>& Root)
+	{
+		TArray<TSharedPtr<FJsonValue>> Gaps;
+		auto Add = [&Gaps](const TCHAR* Text)
+		{
+			Gaps.Add(MakeShared<FJsonValueString>(Text));
+		};
+		Add(TEXT("CPU Game thread and Render thread are not in this GPU dump. Cross-check GetPerfSnapshot.frameMs, hud.gameThreadMs, hud.renderThreadMs, and RunPreferOnGate.frameMs_avg (GAverageMS)."));
+		Add(TEXT("SceneUpdate is CPU/game-thread work. It will not show up as GPU time."));
+		Add(TEXT("Nanite cost often sits under a parent marker. bucketsMs.Nanite only sums rows whose names contain Nanite."));
+		Add(TEXT("Async compute is a separate queue on UE 5.6+ ProfileGPU tables. A graphics-only total can miss it, and topLevelSumMs can exceed gpuFrameMs when queues overlap."));
+		Add(TEXT("VSM Log Stats rows can report exclusive equal to inclusive (excl=incl). Treat that as stats noise, not a real pass cost."));
+		Root->SetArrayField(TEXT("gaps"), Gaps);
+	}
+
 	class FProfileLogCapture : public FOutputDevice
 	{
 	public:
@@ -1864,7 +1947,7 @@ namespace SailSimToolsetPrivate
 		TArray<FProfileEvent> Events;
 	};
 
-	/** A dump counts only when the file parses as a GPU hierarchy. Partial writes do not. */
+	/** True when the file has bytes. Events may still be empty — caller marks that incomplete. */
 	static bool TryReadGpuDump(const FString& Path, FGpuDumpHit& Out)
 	{
 		FString Text;
@@ -1875,10 +1958,6 @@ namespace SailSimToolsetPrivate
 		float Total = -1.f;
 		TArray<FProfileEvent> Events;
 		ParseProfileGPU(Text, Total, Events);
-		if (Events.Num() <= 0)
-		{
-			return false;
-		}
 		Out.Path = Path;
 		Out.Text = MoveTemp(Text);
 		Out.TotalMs = Total;
@@ -2348,13 +2427,17 @@ FString USailSimToolset::ProfileGPUDump()
 	float TotalMs = -1.f;
 	TArray<SailSimToolsetPrivate::FProfileEvent> Events;
 	FString UnparsedNewDump;
+	int32 BestEventCount = -1;
+	bool bDumpComplete = false;
 
-	auto AcceptDump = [&](const SailSimToolsetPrivate::FGpuDumpHit& Hit, const TCHAR* Source)
+	auto AcceptDump = [&](const SailSimToolsetPrivate::FGpuDumpHit& Hit, bool bComplete)
 	{
-		ProfileSource = Source;
+		ProfileSource = TEXT("dump_file");
 		DumpPath = Hit.Path;
 		TotalMs = Hit.TotalMs;
 		Events = Hit.Events;
+		bDumpComplete = bComplete;
+		BestEventCount = Hit.Events.Num();
 	};
 
 	auto ConsiderDumpMap = [&](const TMap<FString, int64>& Now, bool bRequireStable) -> bool
@@ -2376,17 +2459,28 @@ FString USailSimToolset::ProfileGPUDump()
 				continue;
 			}
 			SailSimToolsetPrivate::FGpuDumpHit Hit;
-			if (SailSimToolsetPrivate::TryReadGpuDump(Pair.Key, Hit))
+			if (!SailSimToolsetPrivate::TryReadGpuDump(Pair.Key, Hit))
 			{
-				AcceptDump(Hit, TEXT("dump_file"));
+				UnparsedNewDump = Pair.Key;
+				continue;
+			}
+			const SailSimToolsetPrivate::FProfileShape Shape = SailSimToolsetPrivate::ShapeProfile(Hit.Events);
+			if (Shape.bComplete)
+			{
+				AcceptDump(Hit, true);
 				return true;
+			}
+			// Stable but short of a GPU frame + top-level rows. Keep the richer partial and keep waiting.
+			if (Hit.Events.Num() > BestEventCount || ProfileSource.IsEmpty())
+			{
+				AcceptDump(Hit, false);
 			}
 			UnparsedNewDump = Pair.Key;
 		}
 		return false;
 	};
 
-	while (FPlatformTime::Seconds() < Deadline && ProfileSource.IsEmpty())
+	while (FPlatformTime::Seconds() < Deadline && !bDumpComplete)
 	{
 		Viewport->Draw();
 		FlushRenderingCommands();
@@ -2405,7 +2499,7 @@ FString USailSimToolset::ProfileGPUDump()
 	}
 
 	// One assert after the wait: a file that landed on the last sample still counts.
-	if (ProfileSource.IsEmpty())
+	if (!bDumpComplete)
 	{
 		Viewport->Draw();
 		FlushRenderingCommands();
@@ -2431,19 +2525,31 @@ FString USailSimToolset::ProfileGPUDump()
 		ShowUI->Set(PreviousShowUI, ECVF_SetByCode);
 	}
 
-	// Hierarchy scrape is only the fallback once the dump file did not parse.
-	if (ProfileSource.IsEmpty())
+	// No dump file: keep the log capture as "whatever was captured". It does not count as a complete emit.
+	FString CapturedPath;
+	if (ProfileSource.IsEmpty() && Capture.Text.Len() > 0)
 	{
 		SailSimToolsetPrivate::ParseProfileGPU(Capture.Text, TotalMs, Events);
-		if (Events.Num() > 0)
-		{
-			ProfileSource = TEXT("log_scrape");
-			DumpPath = FPaths::Combine(
-				DumpDir,
-				FString::Printf(TEXT("SailSimProfileGPU-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
-			FFileHelper::SaveStringToFile(Capture.Text, *DumpPath);
-		}
+		CapturedPath = FPaths::Combine(
+			DumpDir,
+			FString::Printf(TEXT("SailSimProfileGPU-capture-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
+		FFileHelper::SaveStringToFile(Capture.Text, *CapturedPath);
+		ProfileSource = TEXT("log_capture");
 	}
+	else if (!bDumpComplete && Capture.Text.Len() > 0)
+	{
+		CapturedPath = FPaths::Combine(
+			DumpDir,
+			FString::Printf(TEXT("SailSimProfileGPU-capture-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
+		FFileHelper::SaveStringToFile(Capture.Text, *CapturedPath);
+	}
+
+	const SailSimToolsetPrivate::FProfileShape Shape = SailSimToolsetPrivate::ShapeProfile(Events);
+	if (Shape.GpuFrameMs >= 0.f)
+	{
+		TotalMs = Shape.GpuFrameMs;
+	}
+	bDumpComplete = ProfileSource == TEXT("dump_file") && Shape.bComplete;
 
 	TMap<FString, float> Sums;
 	SailSimToolsetPrivate::SumBuckets(Events, Sums);
@@ -2476,22 +2582,85 @@ FString USailSimToolset::ProfileGPUDump()
 		Buckets->SetNumberField(TEXT("Other"), Other);
 	}
 
-	Events.Sort([](const SailSimToolsetPrivate::FProfileEvent& A, const SailSimToolsetPrivate::FProfileEvent& B)
-	{
-		return A.Ms > B.Ms;
-	});
-	TArray<TSharedPtr<FJsonValue>> Top;
-	const int32 TopCount = FMath::Min(12, Events.Num());
-	for (int32 Index = 0; Index < TopCount; ++Index)
+	constexpr int32 HierarchyLimit = 2000;
+	const bool bHierarchyTruncated = Events.Num() > HierarchyLimit;
+	TArray<TSharedPtr<FJsonValue>> Hierarchy;
+	const int32 HierCount = FMath::Min(Events.Num(), HierarchyLimit);
+	for (int32 Index = 0; Index < HierCount; ++Index)
 	{
 		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
 		One->SetStringField(TEXT("name"), Events[Index].Name);
 		One->SetNumberField(TEXT("ms"), Events[Index].Ms);
+		One->SetNumberField(TEXT("depth"), Events[Index].Depth);
 		One->SetStringField(TEXT("bucket"), Events[Index].Bucket);
+		Hierarchy.Add(MakeShared<FJsonValueObject>(One));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> TopLevel;
+	for (int32 Index : Shape.TopLevel)
+	{
+		if (!Events.IsValidIndex(Index))
+		{
+			continue;
+		}
+		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
+		One->SetStringField(TEXT("name"), Events[Index].Name);
+		One->SetNumberField(TEXT("ms"), Events[Index].Ms);
+		One->SetNumberField(TEXT("depth"), Events[Index].Depth);
+		One->SetStringField(TEXT("bucket"), Events[Index].Bucket);
+		TopLevel.Add(MakeShared<FJsonValueObject>(One));
+	}
+
+	TArray<SailSimToolsetPrivate::FProfileEvent> ByMs = Events;
+	ByMs.Sort([](const SailSimToolsetPrivate::FProfileEvent& A, const SailSimToolsetPrivate::FProfileEvent& B)
+	{
+		return A.Ms > B.Ms;
+	});
+	TArray<TSharedPtr<FJsonValue>> Top;
+	const int32 TopCount = FMath::Min(12, ByMs.Num());
+	for (int32 Index = 0; Index < TopCount; ++Index)
+	{
+		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
+		One->SetStringField(TEXT("name"), ByMs[Index].Name);
+		One->SetNumberField(TEXT("ms"), ByMs[Index].Ms);
+		One->SetNumberField(TEXT("depth"), ByMs[Index].Depth);
+		One->SetStringField(TEXT("bucket"), ByMs[Index].Bucket);
 		Top.Add(MakeShared<FJsonValueObject>(One));
 	}
 
-	Root->SetBoolField(TEXT("ok"), bParsed);
+	const bool bFileEmitted = ProfileSource == TEXT("dump_file");
+	const bool bIncomplete = !bDumpComplete;
+	FString Code;
+	FString Error;
+	if (bDumpComplete)
+	{
+		Code = TEXT("ok");
+	}
+	else if (bFileEmitted)
+	{
+		Code = TEXT("profile_incomplete");
+		Error = FString::Printf(
+			TEXT("ProfileGPU dump file is missing a GPU frame row plus top-level passes after %.1fs. incomplete=true. dumpPath=%s. Scrape Saved/Logs/SailSimUE.log for the rest."),
+			TimeoutSec, *ReportedDump);
+	}
+	else
+	{
+		Code = TEXT("profile_timeout");
+		Error = FString::Printf(
+			TEXT("ProfileGPU dump file was not emitted within %.1fs. expectedDir=%s dumpPath=%s. incomplete=true. Captured rows are in hierarchy; scrape Saved/Logs/SailSimUE.log."),
+			TimeoutSec, *DumpDir, *ReportedDump);
+	}
+
+	const FString ScrapeLog = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log"));
+	const TSharedRef<FJsonObject> FrameCompare = MakeShared<FJsonObject>();
+	FrameCompare->SetStringField(TEXT("cpuFrameField"), TEXT("GetPerfSnapshot.frameMs and RunPreferOnGate.frameMs_avg (GAverageMS, CPU frame)"));
+	FrameCompare->SetStringField(TEXT("gpuTimerField"), TEXT("GetPerfSnapshot.gpuMs (RHIGetGPUFrameCycles) and hud.gpuMs"));
+	FrameCompare->SetStringField(
+		TEXT("note"),
+		TEXT("gpuFrameMs is the ProfileGPU frame row (inclusive). frameMs_avg is the CPU frame. Compare them; they are not the same clock."));
+
+	Root->SetBoolField(TEXT("ok"), bDumpComplete);
+	Root->SetBoolField(TEXT("incomplete"), bIncomplete);
 	Root->SetBoolField(TEXT("triggered"), bTriggered);
 	Root->SetNumberField(TEXT("framesPumped"), FramesPumped);
 	Root->SetNumberField(TEXT("waitedSec"), WaitedSec);
@@ -2499,25 +2668,40 @@ FString USailSimToolset::ProfileGPUDump()
 	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len());
 	Root->SetBoolField(TEXT("parsed"), bParsed);
 	Root->SetStringField(TEXT("profileSource"), ProfileSource);
-	Root->SetStringField(TEXT("code"), bParsed ? TEXT("ok") : TEXT("profile_timeout"));
-	Root->SetStringField(TEXT("error"), bParsed
-		? TEXT("")
-		: FString::Printf(
-			TEXT("ProfileGPU dump was not emitted within %.1fs. expectedDir=%s dumpPath=%s. Hierarchy scrape of the captured log also failed."),
-			TimeoutSec, *DumpDir, *ReportedDump));
+	Root->SetStringField(TEXT("code"), Code);
+	Root->SetStringField(TEXT("error"), Error);
 	Root->SetStringField(TEXT("dumpPath"), ReportedDump);
 	Root->SetStringField(TEXT("expectedDumpDir"), DumpDir);
+	Root->SetStringField(TEXT("scrapeLog"), ScrapeLog);
+	if (!CapturedPath.IsEmpty())
+	{
+		Root->SetStringField(TEXT("capturedPath"), CapturedPath);
+	}
 	Root->SetStringField(TEXT("profiledWorld"), SailSimToolsetPrivate::WorldKind(World));
 	Root->SetStringField(TEXT("viewport"), ViewportSource);
-	if (TotalMs >= 0.f)
+	if (Shape.GpuFrameMs >= 0.f)
+	{
+		Root->SetNumberField(TEXT("gpuFrameMs"), Shape.GpuFrameMs);
+		Root->SetNumberField(TEXT("totalGpuMs"), Shape.GpuFrameMs);
+		Root->SetStringField(TEXT("gpuFrameName"), Shape.GpuFrameName);
+		FrameCompare->SetNumberField(TEXT("gpuFrameMs"), Shape.GpuFrameMs);
+	}
+	else if (TotalMs >= 0.f)
 	{
 		Root->SetNumberField(TEXT("totalGpuMs"), TotalMs);
 	}
+	Root->SetNumberField(TEXT("topLevelSumMs"), Shape.TopLevelSumMs);
+	Root->SetNumberField(TEXT("hierarchyCount"), Events.Num());
+	Root->SetBoolField(TEXT("hierarchyTruncated"), bHierarchyTruncated);
+	Root->SetObjectField(TEXT("frameCompare"), FrameCompare);
 	Root->SetObjectField(TEXT("bucketsMs"), Buckets);
+	Root->SetArrayField(TEXT("topLevel"), TopLevel);
+	Root->SetArrayField(TEXT("hierarchy"), Hierarchy);
 	Root->SetArrayField(TEXT("topEvents"), Top);
+	SailSimToolsetPrivate::AddProfileGaps(Root);
 	Root->SetStringField(
 		TEXT("note"),
-		TEXT("Bucket ms sum the shallowest matching pass (children of the same bucket are not added again). Other = totalGpuMs minus those buckets, so overlap across buckets can shrink Other."));
+		TEXT("hierarchy is dump order (inclusive ms). topLevel is the shallowest rows (a lone frame root expands to its children). topLevelSumMs adds those inclusive times and can exceed gpuFrameMs when queues overlap. Bucket ms sum the shallowest matching pass. gaps are costs this dump does not prove — cross-check frameMs_avg and scrape SailSimUE.log when incomplete is true."));
 	return SailSimToolsetPrivate::JsonString(Root);
 }
 

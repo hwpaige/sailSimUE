@@ -22,7 +22,7 @@ Log rows for PIE A/B against the plan in [`AAA_STACK_IMPLEMENTATION_PLAN.md`](./
 |--------|----------------|
 | **`stat unit`** | Console → Game / Draw / GPU / Frame (ms). Map to columns: `GT_ms`, `RT_ms`, `GPU_ms`, `frame_ms`. FPS ≈ 1000 / frame_ms (or use `stat fps`). |
 | **FSailSimPerf chrome** | Settings → **PERFORMANCE** (or on-screen chrome). Wall / GT / RT / GPU EMAs, bottleneck label, structure tile/vert counts when streaming. Cross-check unit times. |
-| **`ProfileGPU`** | Console → hierarchical GPU ms (Lumen, reflections, water, shadows). Optional; paste peak categories into **notes**. |
+| **`ProfileGPU` / `ProfileGPUDump`** | GPU hierarchy. Use `gpuFrameMs` next to `frame_ms` / `GetPerfSnapshot.frameMs` (CPU frame, different clock) and `topLevelSumMs`. `incomplete: true` means scrape `Saved/Logs/SailSimUE.log`. Dump does not prove Game/Render thread, SceneUpdate, Nanite-under-parent, async compute, or VSM rows where excl=incl. |
 | **Scene knobs** | Local tess diameter (cm); `r.Lumen.ScreenProbeGather.DownsampleFactor`; `r.RayTracing`; resident structure tiles / verts from chrome or subsystem log. |
 
 **Tips**

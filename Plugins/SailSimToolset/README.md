@@ -203,18 +203,35 @@ r.Lumen.Reflections.Allow=1
 
 ## ProfileGPUDump
 
-Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and **waits until a new file under `Saved/Profiling` parses as a GPU hierarchy** (up to 8s). The returned `dumpPath` is that file (`profileSource=dump_file`).
+Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and waits until a **new file under `Saved/Profiling`** has a GPU frame row and top-level passes (up to 8s). `ok: true` only then (`profileSource=dump_file`, `incomplete: false`).
 
-If the wait ends with no parseable file, the captured log is scraped once (`profileSource=log_scrape`) and written to `Saved/Profiling/SailSimProfileGPU-*.txt`. That scrape does not run before the wait.
+Compare fields (different clocks):
 
-If both fail, `ok` is false and `code` is `profile_timeout` (not an early `profile_not_emitted`). `error` includes `timeoutSec`, `expectedDumpDir`, and `dumpPath`. No empty profile file is written.
+| field | meaning |
+| --- | --- |
+| `gpuFrameMs` | Inclusive ProfileGPU frame row. Same number as `totalGpuMs` when the frame row parsed. |
+| `topLevel` | Shallowest rows in the dump (name, ms, depth, bucket). If the only root is the frame, these are that frame's children. |
+| `topLevelSumMs` | Sum of those inclusive times. Can exceed `gpuFrameMs` when graphics and async compute overlap. |
+| `hierarchy` | Full dump-order rows (capped at 2000; `hierarchyTruncated` and `dumpPath` hold the rest). |
+| `frameCompare` | Says to set `gpuFrameMs` next to `GetPerfSnapshot.frameMs` and `RunPreferOnGate.frameMs_avg` (`GAverageMS`, CPU frame) and `GetPerfSnapshot.gpuMs`. |
 
-Returned `bucketsMs`: `SingleLayerWater`, `LumenGI`, `LumenReflections`, `Lumen` (GI + reflections), `Shadows`, `Nanite`, `Other`.
+`bucketsMs`: `SingleLayerWater`, `LumenGI`, `LumenReflections`, `Lumen` (GI + reflections), `Shadows`, `Nanite`, `Other`. Bucket milliseconds sum the shallowest matching pass. Children of that same bucket are not added again. A parent whose children fall in different buckets is skipped. `Other` is `gpuFrameMs` minus those buckets. `topEvents` is the 12 largest rows and is not the hierarchy.
 
-- Bucket milliseconds sum the shallowest matching pass. Children of that same bucket are not added again.
-- A parent whose children fall in different buckets is skipped so those children are counted on their own.
-- `Other` is `totalGpuMs` minus the specific buckets. Overlap between buckets can shrink `Other`.
-- `topEvents` lists the largest parsed lines so a missed marker name is still visible.
+### Incomplete or missing
+
+- No new dump file after the wait: `ok: false`, `code: profile_timeout`, `incomplete: true`, `expectedDumpDir`, `dumpPath`, `timeoutSec`. Any log lines captured during the wait are in `hierarchy` and `capturedPath`. This is not `profile_not_emitted`.
+- File exists but has no GPU frame row plus top-level passes: `code: profile_incomplete`, `incomplete: true`, and the rows that did parse.
+- `scrapeLog` is `Saved/Logs/SailSimUE.log`. When `incomplete` is true, scrape that log. The tool still returns whatever it captured.
+
+### Gaps the dump does not prove
+
+`gaps` is on every response. Cross-check these outside ProfileGPUDump:
+
+- CPU **Game** thread and **Render** thread (`GetPerfSnapshot.frameMs`, `hud.gameThreadMs`, `hud.renderThreadMs`, Prefer-ON `frameMs_avg`).
+- **SceneUpdate** (CPU). It is not GPU time.
+- **Nanite** time that lives under a parent marker. `bucketsMs.Nanite` only sums rows named Nanite.
+- **Async compute** (separate queue on UE 5.6+ tables). A graphics-only total misses it.
+- **VSM Log Stats** rows where exclusive equals inclusive (`excl=incl`). That is stats noise, not a pass cost.
 
 `profiledWorld` / `viewport` say which world was executed and which viewport was presented. Prefer a settled PIE session so the split is the game view.
 

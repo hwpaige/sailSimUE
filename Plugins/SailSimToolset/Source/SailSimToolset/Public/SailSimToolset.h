@@ -136,10 +136,14 @@ public:
 	static FString ExecuteConsole(const FString& Commands);
 
 	/**
-	 * Trigger ProfileGPU (UI suppressed) and wait until a new dump file under Saved/Profiling parses.
-	 * Returns profile_timeout with expectedDumpDir, dumpPath, and timeoutSec when the file never
-	 * arrives. Hierarchy scrape of the captured log is used only after that wait.
-	 * SingleLayerWater, LumenGI, LumenReflections, Shadows, Nanite, Other, plus the dump path.
+	 * Trigger ProfileGPU (UI suppressed) and wait until a new dump file under Saved/Profiling
+	 * contains a GPU frame row and top-level passes (up to 8s).
+	 * Success JSON: gpuFrameMs (compare to GetPerfSnapshot.frameMs / frameMs_avg — CPU frame, different clock),
+	 * topLevel, topLevelSumMs, hierarchy (dump order), bucketsMs.
+	 * No file after the wait: code profile_timeout, incomplete=true, path + timeout, plus any captured rows.
+	 * File without a frame + top-level: code profile_incomplete, incomplete=true, whatever parsed.
+	 * gaps lists CPU Game/Render, SceneUpdate, Nanite parents, async compute, and VSM excl=incl noise.
+	 * scrapeLog is Saved/Logs/SailSimUE.log. Does not return profile_not_emitted.
 	 */
 	UFUNCTION(meta = (AICallable), Category = "SailSimToolset")
 	static FString ProfileGPUDump();
