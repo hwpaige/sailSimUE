@@ -47,6 +47,14 @@ namespace MooredBoatPrivate
 			/ static_cast<float>(0xFFFFFFu);
 	}
 
+	/** World-space instance already matches the slot. Tolerances are cm / quat / scale. */
+	static bool SceneryInstanceXfMatches(const FTransform& Current, const FTransform& Desired)
+	{
+		return Current.GetLocation().Equals(Desired.GetLocation(), 0.5f)
+			&& Current.GetRotation().Equals(Desired.GetRotation(), 1.e-4f)
+			&& Current.GetScale3D().Equals(Desired.GetScale3D(), 1.e-3f);
+	}
+
 	/**
 	 * Without InstancedStaticMeshes usage, HISM draws nothing on a cold PIE
 	 * start (EncAid buoys already force this; yacht MIs did not).
@@ -2492,8 +2500,9 @@ void UMooredBoatSubsystem::ConfigureSceneryHism(UHierarchicalInstancedStaticMesh
 	H->SetHiddenInGame(false);
 	H->SetReceivesDecals(false);
 	H->SetCanEverAffectNavigation(false);
-	// Batch instance adds, then one synchronous tree build in FlushSceneryHismRender.
-	// An unbuilt HISM cluster tree reports a CPU instance count and draws nothing.
+	// Batch instance adds. FlushSceneryHismRender builds the tree only when it is
+	// outdated (ForceUpdate false). An unbuilt cluster tree reports a CPU count
+	// and draws nothing; an unchanged field must not rebuild every stream tick.
 	H->bAutoRebuildTreeOnInstanceChanges = false;
 	StripMooredReflectionCost(H);
 	// Readable mid-harbor hulls. Do not SetForcedLodModel / MinLOD (that crushed them to dots).
@@ -2692,23 +2701,40 @@ void UMooredBoatSubsystem::AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoat
 
 	if (FMooredSceneryRef* Existing = MidHismSlotToInstance.Find(SlotIndex))
 	{
-		if (MidHullHisms.IsValidIndex(Existing->Bucket) && MidHullHisms[Existing->Bucket]
-			&& Existing->HullInstance != INDEX_NONE)
+		// Stream ticks revisit every WantMid slot. Skip the write when the
+		// stored world transform already matches — UpdateInstanceTransform
+		// dirties the cluster tree even if the numbers did not change.
+		bool bMoved = false;
+		auto WriteIfMoved = [&bMoved](UHierarchicalInstancedStaticMeshComponent* H, int32 Idx, const FTransform& Xf)
 		{
-			MidHullHisms[Existing->Bucket]->UpdateInstanceTransform(Existing->HullInstance, BoatXf, true, true, true);
+			if (!H || Idx == INDEX_NONE) return;
+			FTransform Current;
+			if (!H->GetInstanceTransform(Idx, Current, /*bWorldSpace*/ true)
+				|| !MooredBoatPrivate::SceneryInstanceXfMatches(Current, Xf))
+			{
+				H->UpdateInstanceTransform(Idx, Xf, /*bWorldSpace*/ true, /*bMarkRenderStateDirty*/ true, /*bTeleport*/ true);
+				bMoved = true;
+			}
+		};
+		if (MidHullHisms.IsValidIndex(Existing->Bucket))
+		{
+			WriteIfMoved(MidHullHisms[Existing->Bucket].Get(), Existing->HullInstance, BoatXf);
 		}
 		if (MidSparHism)
 		{
-			if (bMast && Existing->MastInstance != INDEX_NONE)
+			if (bMast)
 			{
-				MidSparHism->UpdateInstanceTransform(Existing->MastInstance, MastXf, true, true, true);
+				WriteIfMoved(MidSparHism.Get(), Existing->MastInstance, MastXf);
 			}
-			if (bBoom && Existing->BoomInstance != INDEX_NONE)
+			if (bBoom)
 			{
-				MidSparHism->UpdateInstanceTransform(Existing->BoomInstance, BoomXf, true, true, true);
+				WriteIfMoved(MidSparHism.Get(), Existing->BoomInstance, BoomXf);
 			}
 		}
-		bSceneryHismDirty = true;
+		if (bMoved)
+		{
+			bSceneryHismDirty = true;
+		}
 		return;
 	}
 
@@ -2819,7 +2845,11 @@ void UMooredBoatSubsystem::FlushSceneryHismRender()
 	{
 		if (!H || !IsValid(H)) return;
 		if (H->GetInstanceCount() <= 0) return;
-		H->BuildTreeIfOutdated(/*Async*/ false, /*ForceUpdate*/ true);
+		// Foliage uses Async + ForceUpdate false. Stay synchronous here so the
+		// gelcoat rebind below runs after the build (an async build can copy the
+		// mesh's white HullPaint back onto the component). ForceUpdate false:
+		// an up-to-date tree is a no-op.
+		H->BuildTreeIfOutdated(/*Async*/ false, /*ForceUpdate*/ false);
 		H->UpdateBounds();
 		H->MarkRenderStateDirty();
 	};
@@ -2913,11 +2943,21 @@ void UMooredBoatSubsystem::Tick(float DeltaTime)
 	if (Accum < UpdateIntervalSec) return;
 	Accum = 0.f;
 
-	// Keep the HISM proxy dirty for a few stream ticks so ISM shaders that
-	// finish compiling after the first place still bind (cold PIE draws nothing otherwise).
-	if (SceneryDrawRefreshLeft > 0 && MidHullHisms.Num() > 0)
+	// Late ISM shaders: refresh the proxy a few stream ticks after the first
+	// place. Do not set bSceneryHismDirty — that would rebuild the cluster tree
+	// when no instance transform changed.
+	if (SceneryDrawRefreshLeft > 0 && MidHullHisms.Num() > 0 && !bSceneryHismDirty)
 	{
-		bSceneryHismDirty = true;
+		auto TouchProxy = [](UHierarchicalInstancedStaticMeshComponent* H)
+		{
+			if (!H || !IsValid(H) || H->GetInstanceCount() <= 0) return;
+			H->MarkRenderStateDirty();
+		};
+		for (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>& H : MidHullHisms)
+		{
+			TouchProxy(H.Get());
+		}
+		TouchProxy(MidSparHism.Get());
 	}
 
 	const FVector Focus = GetFocusLocation();
