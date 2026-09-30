@@ -111,8 +111,11 @@ void FSailSimToolsetModule::StartupModule()
 	}
 }
 
+extern void SailSimStopEditorLogDismiss();
+
 void FSailSimToolsetModule::ShutdownModule()
 {
+	SailSimStopEditorLogDismiss();
 	if (GSailSimEnsureTipInBinaryCmd)
 	{
 		IConsoleManager::Get().UnregisterConsoleObject(GSailSimEnsureTipInBinaryCmd, false);

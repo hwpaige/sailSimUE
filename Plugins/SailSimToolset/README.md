@@ -203,6 +203,8 @@ r.Lumen.Reflections.Allow=1
 
 ## ProfileGPUDump
 
+SailSim MCP tools dismiss the Message Log tab and the Output Log drawer when they return, then put the level editor viewport back in front. ProfileGPU and HighResShot open that drawer; editor warnings and `RaiseScriptError` open the Message Log. The log file is unchanged, so `ProfileGPUDump` can still scrape `SailSimUE.log`.
+
 Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and presents render frames for up to 20s. `ok: true` when the log table or a new `Saved/Profiling` file parses a GPU frame row plus top-level passes (`profileSource` is `log_capture`, `log_file`, or `dump_file`). UE 5.8 usually logs the table and does not write a dump file.
 
 Compare fields (different clocks):

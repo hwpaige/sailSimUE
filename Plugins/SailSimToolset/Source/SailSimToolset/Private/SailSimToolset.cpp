@@ -27,6 +27,12 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "LevelEditor.h"
 #include "LevelEditorViewport.h"
+#include "SLevelViewport.h"
+#include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Docking/TabManager.h"
+#include "StatusBarSubsystem.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/Paths.h"
@@ -2091,10 +2097,118 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
+	static FTSTicker::FDelegateHandle GDismissLogTicker;
+	static int32 GDismissLogTicksLeft = 0;
+
+	static void CloseLiveLogTab(FTabManager& Manager, const FName TabId)
+	{
+		if (TSharedPtr<SDockTab> Tab = Manager.FindExistingLiveTab(FTabId(TabId)))
+		{
+			Tab->RequestCloseTab();
+		}
+	}
+
+	/** Close Message Log / Output Log UI only. Does not touch GLog or SailSimUE.log. */
+	static void DismissEditorLogPanels()
+	{
+		if (GEditor)
+		{
+			if (UStatusBarSubsystem* StatusBar = GEditor->GetEditorSubsystem<UStatusBarSubsystem>())
+			{
+				StatusBar->ForceDismissDrawer();
+			}
+		}
+
+		static const FName LogTabs[] = { TEXT("OutputLog"), TEXT("MessageLog") };
+		for (const FName TabId : LogTabs)
+		{
+			CloseLiveLogTab(*FGlobalTabmanager::Get(), TabId);
+		}
+		if (!FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+		{
+			return;
+		}
+		FLevelEditorModule& LevelEditor = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+		TSharedPtr<FTabManager> LevelTabs = LevelEditor.GetLevelEditorTabManager();
+		if (LevelTabs.IsValid())
+		{
+			for (const FName TabId : LogTabs)
+			{
+				CloseLiveLogTab(*LevelTabs, TabId);
+			}
+		}
+		if (!FSlateApplication::IsInitialized())
+		{
+			return;
+		}
+		if (TSharedPtr<SDockTab> LevelTab = FGlobalTabmanager::Get()->FindExistingLiveTab(FTabId(TEXT("LevelEditor"))))
+		{
+			LevelTab->DrawAttention();
+		}
+		if (TSharedPtr<IAssetViewport> Active = LevelEditor.GetFirstActiveViewport())
+		{
+			TSharedPtr<SLevelViewport> LevelViewport = StaticCastSharedPtr<SLevelViewport>(Active);
+			if (LevelViewport.IsValid())
+			{
+				FSlateApplication::Get().SetAllUserFocus(LevelViewport.ToSharedRef(), EFocusCause::SetDirectly);
+			}
+		}
+	}
+
+	static void StopDismissEditorLogs()
+	{
+		if (GDismissLogTicker.IsValid())
+		{
+			FTSTicker::GetCoreTicker().RemoveTicker(GDismissLogTicker);
+			GDismissLogTicker.Reset();
+		}
+		GDismissLogTicksLeft = 0;
+	}
+
+	/**
+	 * ProfileGPU and HighResShot open the output-log drawer. Editor warnings and
+	 * RaiseScriptError open the Message Log via FMessageLog::Open. Both steal the
+	 * PIE viewport. Dismiss now and for a few ticks after this tool returns.
+	 */
+	static void ScheduleDismissEditorLogs()
+	{
+		DismissEditorLogPanels();
+		GDismissLogTicksLeft = 12;
+		if (GDismissLogTicker.IsValid())
+		{
+			return;
+		}
+		GDismissLogTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float DeltaSeconds)
+		{
+			(void)DeltaSeconds;
+			DismissEditorLogPanels();
+			if (--GDismissLogTicksLeft > 0)
+			{
+				return true;
+			}
+			GDismissLogTicker.Reset();
+			return false;
+		}));
+	}
+
+	struct FRestoreEditorFocus
+	{
+		~FRestoreEditorFocus()
+		{
+			ScheduleDismissEditorLogs();
+		}
+	};
+
+}
+
+void SailSimStopEditorLogDismiss()
+{
+	SailSimToolsetPrivate::StopDismissEditorLogs();
 }
 
 FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FString& FramingPreset)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	FToolsetImage Out;
 
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
@@ -2171,6 +2285,7 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FS
 
 FString USailSimToolset::FindActorsByName(const FString& Query, int32 MaxResults)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	UWorld* World = SailSimToolsetPrivate::GetSearchWorld();
 	if (!World)
 	{
@@ -2236,16 +2351,19 @@ FString USailSimToolset::FindActorsByName(const FString& Query, int32 MaxResults
 
 FString USailSimToolset::EnsurePIE(float MinWorldSeconds)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	return SailSimToolsetPrivate::RequestOrDescribePIE(MinWorldSeconds);
 }
 
 FString USailSimToolset::StartPIE(float MinWorldSeconds)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	return SailSimToolsetPrivate::RequestOrDescribePIE(MinWorldSeconds);
 }
 
 FString USailSimToolset::GetLevelPath()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	FString EditorLevel;
 	FString PIELevel;
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
@@ -2278,6 +2396,7 @@ FString USailSimToolset::GetLevelPath()
 
 FString USailSimToolset::GetPlayerCameraTransform()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
 	if (!PlayWorld)
@@ -2323,6 +2442,7 @@ FString USailSimToolset::GetPlayerCameraTransform()
 
 FString USailSimToolset::GetPerfSnapshot()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const FSailSimPerf& Perf = SailSimGetPerf();
 	const float FrameMs = GAverageMS;
 	const float Fps = GAverageFPS > 0.f
@@ -2383,6 +2503,7 @@ FString USailSimToolset::GetPerfSnapshot()
 
 FString USailSimToolset::SetCVars(const FString& Assignments)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	TArray<FString> Lines;
 	SailSimToolsetPrivate::SplitBatch(Assignments, Lines);
 
@@ -2452,6 +2573,7 @@ FString USailSimToolset::SetCVars(const FString& Assignments)
 
 FString USailSimToolset::ExecuteConsole(const FString& Commands)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	TArray<FString> Lines;
 	SailSimToolsetPrivate::SplitBatch(Commands, Lines);
 
@@ -2500,6 +2622,7 @@ FString USailSimToolset::ExecuteConsole(const FString& Commands)
 
 FString USailSimToolset::ProfileGPUDump()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	UWorld* World = SailSimToolsetPrivate::GetExecWorld();
 	if (!GEngine || !World)
@@ -2898,6 +3021,7 @@ FString USailSimToolset::ProfileGPUDump()
 
 FString USailSimToolset::LoadMap(const FString& MapPath)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
 	if (!GEditor)
 	{
@@ -2969,6 +3093,7 @@ FString USailSimToolset::LoadMap(const FString& MapPath)
 
 FString USailSimToolset::RunPreferOnGate(const FString& ExpectedSha)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	using namespace SailSimToolsetPrivate;
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	const FModuleFreshness Fresh = EvaluateModuleFresh(ExpectedSha, false, false);
@@ -3241,6 +3366,7 @@ static void PersistModuleFreshJson(const FString& Json)
 
 FString USailSimToolset::AssertModuleFresh(const FString& ExpectedSha, bool bLiveCompile)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	using namespace SailSimToolsetPrivate;
 	const FModuleFreshness Fresh = EvaluateModuleFresh(ExpectedSha, bLiveCompile, true);
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
@@ -3266,5 +3392,6 @@ FString USailSimToolset::AssertModuleFresh(const FString& ExpectedSha, bool bLiv
 
 FString USailSimToolset::EnsureTipInBinary(const FString& ExpectedSha, bool bLiveCompile)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	return AssertModuleFresh(ExpectedSha, bLiveCompile);
 }
