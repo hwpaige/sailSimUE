@@ -65,8 +65,12 @@ struct FSailSimStyle
 	/** Inner chart well radius matches outer card (full-bleed + clip). */
 	static constexpr float RadiusMapInner = 16.f;
 	static constexpr float RadiusGauge = 999.f; // fully round
-	static constexpr float GaugeSize = 128.f; // web --gauge-size
-	static constexpr float GaugeGap = 8.f;
+	static constexpr float GaugeSize = 132.f; // instrument face (slightly larger for rim)
+	static constexpr float GaugeGap = 10.f;
+	/** Large grabber for all instrument sliders (px). */
+	static constexpr float SliderThumbPx = 22.f;
+	static constexpr float SliderBarPx = 7.f;
+	static constexpr float SliderRowH = 28.f;
 
 	static FSlateFontInfo FontBrand()
 	{
@@ -209,24 +213,47 @@ struct FSailSimStyle
 	}
 
 	/**
-	 * Same glass as metrics card / chart chrome (CardBrush fill + border),
-	 * circular for instruments.
+	 * Modern instrument stack (outer → inner):
+	 *   shadow → bezel rim → deep glass face → inset well
 	 */
-	static const FSlateBrush* GaugeFaceBrush()
-	{
-		static const FSlateRoundedBoxBrush Brush(
-			Panel,       // same as CardBrush / metrics panel
-			RadiusGauge,
-			Border,      // same 1px rim as cards & map
-			1.0f);
-		return &Brush;
-	}
-
 	static const FSlateBrush* GaugeShadowBrush()
 	{
 		static const FSlateRoundedBoxBrush Brush(
-			Shadow,
+			FLinearColor(0.f, 0.f, 0.f, 0.55f),
 			RadiusGauge);
+		return &Brush;
+	}
+
+	/** Outer metallic / glass bezel (slightly brighter rim). */
+	static const FSlateBrush* GaugeBezelBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.14f, 0.15f, 0.17f, 0.98f),
+			RadiusGauge,
+			FLinearColor(1.f, 1.f, 1.f, 0.18f),
+			1.5f);
+		return &Brush;
+	}
+
+	/** Main gauge glass face. */
+	static const FSlateBrush* GaugeFaceBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.09f, 0.10f, 0.12f, 0.96f),
+			RadiusGauge,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.22f),
+			1.25f);
+		return &Brush;
+	}
+
+	/** Darker inset well under ticks / needles. */
+	static const FSlateBrush* GaugeWellBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.04f, 0.045f, 0.055f, 0.92f),
+			RadiusGauge,
+			FLinearColor(1.f, 1.f, 1.f, 0.06f),
+			1.0f);
 		return &Brush;
 	}
 
@@ -236,6 +263,109 @@ struct FSailSimStyle
 			Accent,
 			RadiusGauge);
 		return &Brush;
+	}
+
+	static const FSlateBrush* GaugeHubOuterBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.06f, 0.07f, 0.08f, 1.f),
+			RadiusGauge,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.55f),
+			1.5f);
+		return &Brush;
+	}
+
+	/** Nested section card inside settings / sail trim wells. */
+	static const FSlateBrush* SectionCardBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.07f, 0.075f, 0.085f, 0.92f),
+			12.f,
+			FLinearColor(1.f, 1.f, 1.f, 0.08f),
+			1.0f);
+		return &Brush;
+	}
+
+	/** Soft header chip behind section titles. */
+	static const FSlateBrush* SectionHeaderChip()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.10f),
+			6.f,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.28f),
+			1.0f);
+		return &Brush;
+	}
+
+	/** Top-bar environment instrument (time / season). */
+	static const FSlateBrush* EnvPanelBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.08f, 0.085f, 0.10f, 0.92f),
+			14.f,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.28f),
+			1.25f);
+		return &Brush;
+	}
+
+	static const FSlateBrush* ValueChipBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(
+			FLinearColor(0.f, 0.f, 0.f, 0.45f),
+			8.f,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.30f),
+			1.0f);
+		return &Brush;
+	}
+
+	/** Shared large-thumb instrument slider (all panels). */
+	static const FSliderStyle& SliderStyle()
+	{
+		static bool bInit = false;
+		static FSliderStyle Style;
+		if (!bInit)
+		{
+			bInit = true;
+			// Track (bar)
+			static FSlateRoundedBoxBrush TrackN(
+				FLinearColor(1.f, 1.f, 1.f, 0.10f), SliderBarPx * 0.5f,
+				FLinearColor(1.f, 1.f, 1.f, 0.06f), 1.f);
+			TrackN.ImageSize = FVector2D(SliderBarPx, SliderBarPx);
+			static FSlateRoundedBoxBrush TrackH(
+				FLinearColor(Accent.R, Accent.G, Accent.B, 0.18f), SliderBarPx * 0.5f,
+				FLinearColor(Accent.R, Accent.G, Accent.B, 0.35f), 1.f);
+			TrackH.ImageSize = FVector2D(SliderBarPx, SliderBarPx);
+			static FSlateRoundedBoxBrush TrackD(
+				FLinearColor(1.f, 1.f, 1.f, 0.05f), SliderBarPx * 0.5f);
+			TrackD.ImageSize = FVector2D(SliderBarPx, SliderBarPx);
+
+			// Circular grabber — large, high-contrast
+			static FSlateRoundedBoxBrush ThumbN(
+				FLinearColor(0.92f, 0.95f, 0.98f, 1.f),
+				SliderThumbPx * 0.5f,
+				FLinearColor(Accent.R, Accent.G, Accent.B, 0.85f),
+				2.0f);
+			ThumbN.ImageSize = FVector2D(SliderThumbPx, SliderThumbPx);
+			static FSlateRoundedBoxBrush ThumbH(
+				Accent,
+				SliderThumbPx * 0.5f,
+				FLinearColor(1.f, 1.f, 1.f, 0.90f),
+				2.0f);
+			ThumbH.ImageSize = FVector2D(SliderThumbPx, SliderThumbPx);
+			static FSlateRoundedBoxBrush ThumbD(
+				FLinearColor(0.45f, 0.48f, 0.52f, 0.8f),
+				SliderThumbPx * 0.5f);
+			ThumbD.ImageSize = FVector2D(SliderThumbPx, SliderThumbPx);
+
+			Style.SetNormalBarImage(TrackN);
+			Style.SetHoveredBarImage(TrackH);
+			Style.SetDisabledBarImage(TrackD);
+			Style.SetNormalThumbImage(ThumbN);
+			Style.SetHoveredThumbImage(ThumbH);
+			Style.SetDisabledThumbImage(ThumbD);
+			Style.BarThickness = SliderBarPx;
+		}
+		return Style;
 	}
 
 	static const FSlateBrush* HelmTrackPort()
@@ -345,22 +475,22 @@ struct FSailSimStyle
 	static const FSlateBrush* DrawerBrush()
 	{
 		static const FSlateRoundedBoxBrush Brush(
-			FLinearColor(0.09f, 0.09f, 0.10f, 0.94f),
-			FVector4(16.f, 0.f, 0.f, 16.f), // left corners only when docked right — full round ok
-			FLinearColor(Accent.R, Accent.G, Accent.B, 0.35f),
-			1.25f);
+			FLinearColor(0.07f, 0.075f, 0.09f, 0.96f),
+			16.f,
+			FLinearColor(Accent.R, Accent.G, Accent.B, 0.40f),
+			1.5f);
 		return &Brush;
 	}
 
 	static const FSlateBrush* SliderFill()
 	{
-		static const FSlateRoundedBoxBrush Brush(Accent, 3.f);
+		static const FSlateRoundedBoxBrush Brush(Accent, SliderBarPx * 0.5f);
 		return &Brush;
 	}
 
 	static const FSlateBrush* SliderTrack()
 	{
-		static const FSlateRoundedBoxBrush Brush(FLinearColor(1.f, 1.f, 1.f, 0.08f), 3.f);
+		static const FSlateRoundedBoxBrush Brush(FLinearColor(1.f, 1.f, 1.f, 0.10f), SliderBarPx * 0.5f);
 		return &Brush;
 	}
 

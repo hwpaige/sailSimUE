@@ -67,6 +67,7 @@ void FSailSimUserPrefs::Load()
 	File.GetFloat(Sec, TEXT("Cloud01"), Cloud01);
 	File.GetFloat(Sec, TEXT("Fog01"), Fog01);
 	File.GetFloat(Sec, TEXT("TimeOfDayHours"), TimeOfDayHours);
+	File.GetFloat(Sec, TEXT("Season01"), Season01);
 	File.GetFloat(Sec, TEXT("MapPanelW"), MapPanelW);
 	File.GetFloat(Sec, TEXT("MapPanelH"), MapPanelH);
 	File.GetInt(Sec, TEXT("EnvPreset"), EnvPreset);
@@ -82,6 +83,7 @@ void FSailSimUserPrefs::Load()
 	Cloud01 = FMath::Clamp(Cloud01, 0.f, 1.f);
 	Fog01 = FMath::Clamp(Fog01, 0.f, 1.f);
 	TimeOfDayHours = FMath::Fmod(FMath::Max(0.f, TimeOfDayHours), 24.f);
+	Season01 = FMath::Clamp(Season01, 0.f, 1.f);
 	MapPanelW = FMath::Clamp(MapPanelW, 220.f, 720.f);
 	MapPanelH = FMath::Clamp(MapPanelH, 160.f, 560.f);
 	EnvPreset = FMath::Clamp(EnvPreset, 0, 6);
@@ -131,6 +133,7 @@ void FSailSimUserPrefs::Save() const
 	SetF(TEXT("Cloud01"), Cloud01);
 	SetF(TEXT("Fog01"), Fog01);
 	SetF(TEXT("TimeOfDayHours"), TimeOfDayHours);
+	SetF(TEXT("Season01"), Season01);
 	SetF(TEXT("MapPanelW"), MapPanelW);
 	SetF(TEXT("MapPanelH"), MapPanelH);
 	SetI(TEXT("EnvPreset"), EnvPreset);
@@ -191,6 +194,7 @@ void FSailSimUserPrefs::Apply(ASailBoatPawn* Boat, UWorld* World) const
 		// Explicit fog/cloud sliders always win over any preset defaults.
 		Ocean->SetVolumetricCloudIntensity(Cloud01);
 		Ocean->SetFogIntensity(Fog01);
+		Ocean->SetSeason01(Season01);
 	}
 	if (Boat)
 	{

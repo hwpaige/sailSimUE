@@ -28,6 +28,8 @@ struct FSailSimUserPrefs
 	float Fog01 = 1.f;
 	/** Local solar hours 0..24; 12 = Fair Day (captured map look). */
 	float TimeOfDayHours = 12.f;
+	/** Calendar season 0..1 (0 winter, 0.25 spring, 0.5 summer, 0.75 autumn). */
+	float Season01 = 0.5f;
 	float MapPanelW = 424.f;
 	float MapPanelH = 241.f;
 	int32 EnvPreset = 0;

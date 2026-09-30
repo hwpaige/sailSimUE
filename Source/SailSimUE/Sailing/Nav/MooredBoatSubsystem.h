@@ -11,6 +11,7 @@ class UStaticMeshComponent;
 class UStaticMesh;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UHierarchicalInstancedStaticMeshComponent;
 
 /** One selected mooring that will host a parked J/105. */
 USTRUCT()
@@ -58,6 +59,19 @@ struct FMooredBoatSway
 	bool bInitialized = false;
 	/** Multi-segment pennant (bow → ring). Transform-only updates each frame. */
 	TArray<TWeakObjectPtr<UStaticMeshComponent>, TInlineAllocator<4>> PennantSegs;
+};
+
+/**
+ * One harbor-fill boat in the static scenery HISM (not a NearFull hero).
+ * HullInstance indexes that paint bucket's hull HISM. Mast/Boom index the
+ * shared spar HISM (engine cylinder + MI_Yacht_Spar).
+ */
+struct FMooredSceneryRef
+{
+	int32 Bucket = 0;
+	int32 HullInstance = INDEX_NONE;
+	int32 MastInstance = INDEX_NONE;
+	int32 BoomInstance = INDEX_NONE;
 };
 
 /** Material role for a cached moored-boat mesh section. */
@@ -111,15 +125,31 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	bool bEnabled = true;
 
-	/** Cap on selected moorings that get a boat. */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "4", ClampMax = "120"))
-	int32 MaxBoats = 48;
+	/**
+	 * Hero / full-system boats only (player path). Default 1; a few extras
+	 * are allowed. Not harbor fill or density — that budget is
+	 * MooringSceneryInstanceCount. Live NearFull heroes = MaxNearFullBoats.
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 MaxBoats = 1;
 
-	/** Fraction of floating moorings that get a boat (before MaxBoats). */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "0.8"))
-	float OccupancyFraction = 0.28f;
+	/**
+	 * Harbor fill: Static HISM scenery budget. Instances the shared baked
+	 * J/105 hull SM (PMC→SM) plus a spar HISM (mast/boom). Yacht materials
+	 * only — never SM_Buoy. The only density knob (8–400, default 96).
+	 * Independent of MaxBoats / MaxNearFullBoats. Paint is a few shared gelcoat
+	 * MIDs on the hull shell only (white, navy, pale blue, cream). Deck and
+	 * cabin stay the authored white topside MIs. Not one solid MID on every
+	 * slot, not per boat, and not HullPaint local-Z bands.
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Scenery", meta = (ClampMin = "8", ClampMax = "400"))
+	int32 MooringSceneryInstanceCount = 96;
 
-	/** Min spacing between moored boat origins (cm). ~18 m keeps a dense field. */
+	/** Soft occupancy hint vs floating mooring count; hard fill cap = MooringSceneryInstanceCount. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+	float OccupancyFraction = 0.40f;
+
+	/** Min spacing between moored boat origins (cm). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	float MinBoatSpacingCm = 1800.f;
 
@@ -127,12 +157,28 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	float PreferNearHarborCm = 90000.f;
 
-	/** Stream in boats within this radius of focus (cm). */
+	/** Stream mid HISM hulls within this radius of focus (cm). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
-	float LoadRadiusCm = 140000.f;
+	float LoadRadiusCm = 90000.f;
 
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
-	float UnloadRadiusCm = 180000.f;
+	float UnloadRadiusCm = 120000.f;
+
+	/**
+	 * Full actor (hull+mast+pennant) within this radius (cm). Field boats are
+	 * Static HISM. Default ~25 m + MaxNearFullBoats → ~0–1 hero (not a ring of
+	 * full actors). ClampMin 0 allows HISM-only.
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0.0"))
+	float NearFullRadiusCm = 2500.f;
+
+	/** Live NearFull heroes (closest to focus). Aligned with MaxBoats; typically 1. Field = Static HISM. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "0", ClampMax = "8"))
+	int32 MaxNearFullBoats = 1;
+
+	/** HISM hull-only band: NearFull .. MidHism (cm). ~250 m. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Tiers", meta = (ClampMin = "5000.0"))
+	float MidHismRadiusCm = 25000.f;
 
 	/**
 	 * True wind FROM direction (deg, 0 = north). Boats hang downwind of their
@@ -157,21 +203,32 @@ public:
 	UPROPERTY(EditAnywhere, Category = "MooredBoats")
 	float StreamDebounceSec = 1.25f;
 
-	/** Enable wind-driven pendulum sway on residents. */
+	/**
+	 * Wind-driven pendulum sway on NearFull residents. Default OFF — field boats
+	 * are static harbor props. Optional ON for ≤1 hero close-up.
+	 */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Sway")
-	bool bEnableSway = true;
+	bool bEnableSway = false;
 
 	/** Masthead all-round white anchor light on every resident (COLREGS at anchor). */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights")
 	bool bShowAnchorLights = true;
 
-	/** Peak candelas at full night (scaled down in daylight). */
-	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights", meta = (ClampMin = "5", ClampMax = "200"))
-	float AnchorLightCandelas = 85.f;
+	/**
+	 * Real UPointLightComponent on moored boats. Default OFF: emissive globe/halo
+	 * already sells the lantern; N dynamic point lights (was 48 × 50 m) thrash
+	 * deferred lighting on Mac. Enable only for hero close-ups / night photography.
+	 */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights")
+	bool bAnchorPointLights = false;
 
-	/** Point-light attenuation radius (cm). */
+	/** Peak candelas at full night (scaled down in daylight). Only if bAnchorPointLights. */
+	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights", meta = (ClampMin = "5", ClampMax = "200"))
+	float AnchorLightCandelas = 40.f;
+
+	/** Point-light attenuation radius (cm). Keep small — not a stadium flood. */
 	UPROPERTY(EditAnywhere, Category = "MooredBoats|Lights", meta = (ClampMin = "500", ClampMax = "10000"))
-	float AnchorLightAttenuationCm = 5000.f;
+	float AnchorLightAttenuationCm = 1800.f;
 
 	/**
 	 * Fraction of moored boats with cabin lights on (warm glow through glass).
@@ -237,7 +294,16 @@ public:
 	int32 GetSlotCount() const { return Slots.Num(); }
 
 	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
-	int32 GetResidentCount() const { return Resident.Num(); }
+	int32 GetResidentCount() const { return Resident.Num() + MidHismSlotToInstance.Num(); }
+
+	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
+	int32 GetNearFullCount() const { return Resident.Num(); }
+
+	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
+	int32 GetMidHismCount() const { return MidHismSlotToInstance.Num(); }
+
+	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
+	int32 GetMooringSceneryBudget() const { return MooringSceneryInstanceCount; }
 
 	UFUNCTION(BlueprintCallable, Category = "MooredBoats")
 	FString GetStatusLine() const;
@@ -249,11 +315,42 @@ private:
 	float StreamDebounceLeft = 0.f;
 	FVector LastFocus = FVector::ZeroVector;
 
-	/** Slot index → spawned actor. */
+	/** Slot index → near-band full multi-component actor. */
 	UPROPERTY()
 	TMap<int32, TObjectPtr<AActor>> Resident;
 
-	/** Slot index → sway runtime. */
+	/** Slot index → scenery HISM instance (hull bucket + spar). */
+	TMap<int32, FMooredSceneryRef> MidHismSlotToInstance;
+
+	/** Holder actor for harbor-fill HISM (anchored in the basin, not world origin). */
+	UPROPERTY()
+	TObjectPtr<AActor> MidHismOwner = nullptr;
+
+	/** Hull HISMs (one per shared gelcoat MID). All use HullNaniteMesh. */
+	UPROPERTY()
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> MidHullHisms;
+
+	/** Mast + boom instances (engine cylinder, MI_Yacht_Spar). Not buoys. */
+	UPROPERTY()
+	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> MidSparHism = nullptr;
+
+	/** Shared gelcoat MIDs (one hull-accent color each). Deck/cabin stay white. Not per instance. */
+	UPROPERTY()
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> SceneryHullMids;
+
+	/** Dielectric aluminum for scenery masts/booms (metallic spar MI reads black without IBL). */
+	UPROPERTY()
+	TObjectPtr<UMaterialInstanceDynamic> ScenerySparMid = nullptr;
+
+	bool bSceneryPaintReady = false;
+	/** Last EmissiveBoost applied to scenery gelcoat. -1 = not yet. */
+	float SceneryShadeFloorApplied = -1.f;
+	bool bSceneryHismDirty = false;
+	bool bLoggedSceneryDraw = false;
+	/** Mark HISM render state a few stream ticks so late ISM shaders bind. Not a tree rebuild. */
+	int32 SceneryDrawRefreshLeft = 0;
+
+	/** Slot index → sway runtime (near full only). */
 	TMap<int32, FMooredBoatSway> SwayState;
 
 	/** Hull sections baked once from j105_boat3d.json (no sails, no keel/rudder). */
@@ -321,8 +418,26 @@ private:
 	/** Per-boat hull/stripe palette + white deck (MID overrides on the mesh). */
 	void ApplyBoatPaintScheme(UMeshComponent* HullMesh, int32 SlotIndex) const;
 	static void DisableAllCastShadows(UPrimitiveComponent* Prim);
+	/** Drop Lumen/reflection/DF contribution only — keep full mesh LODs readable mid-harbor. */
+	static void StripMooredReflectionCost(UPrimitiveComponent* Prim);
 	void ClearAll();
 	void RebuildAround(const FVector& Focus);
+	void EnsureSceneryPaint();
+	/** Noon sun intensity (0 at night). Used to scale the scenery side-fill. */
+	float SampleDirectionalSunIntensity() const;
+	/** Small emissive floor on the white bucket only. Accent paints stay at 0 so they do not wash white. */
+	void ApplySceneryShadeFloor();
+	void EnsureMidHism();
+	void ClearMidHism();
+	void AddOrUpdateMidHism(int32 SlotIndex, const FMooredBoatSlot& Slot);
+	void RemoveMidHism(int32 SlotIndex);
+	void FlushSceneryHismRender();
+	int32 SceneryBucketForSlot(int32 SlotIndex) const;
+	void ApplySceneryBucketMaterials(UHierarchicalInstancedStaticMeshComponent* Hism, int32 Bucket) const;
+	void ConfigureSceneryHism(UHierarchicalInstancedStaticMeshComponent* Hism, bool bDisallowNanite) const;
+	FTransform MakeMooredHullTransform(const FMooredBoatSlot& Slot) const;
+	/** Boat-local cylinder (engine BasicShapes/Cylinder) composed onto the boat world transform. */
+	FTransform MakeSparWorldTransform(const FTransform& BoatWorld, const FVector& LocalA, const FVector& LocalB, float RadiusScale) const;
 	AActor* SpawnMooredBoat(const FMooredBoatSlot& Slot, int32 SlotIndex);
 	void InitSwayState(int32 SlotIndex, TArrayView<UStaticMeshComponent* const> PennantSegs);
 	void UpdateAllSway(float DeltaTime);

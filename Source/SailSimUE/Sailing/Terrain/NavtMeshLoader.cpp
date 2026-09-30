@@ -61,15 +61,25 @@ bool FNavtMeshLoader::LoadFile(const FString& AbsPath, FNavtMeshData& Out)
 		Out.Normals[int32(I)] = FVector::UpVector;
 	}
 
+	// 8-bit bake is sRGB (aerial / palette). UE Base Color is linear — convert so
+	// DefaultLit doesn't underexpose midtones under outdoor sun + Lumen.
+	auto SrgbToLinear = [](float S) -> float
+	{
+		S = FMath::Clamp(S, 0.f, 1.f);
+		return (S <= 0.04045f) ? (S / 12.92f) : FMath::Pow((S + 0.055f) / 1.055f, 2.4f);
+	};
+
 	const uint8* Col = D + 16 + PosBytes;
 	for (uint32 I = 0; I < NV; ++I)
 	{
 		const uint8* C = Col + I * 3;
+		// Alpha = elev metres * 0.025 (season/beach materials may use it).
+		const float ElevM = PosF[I * 3 + 1];
 		Out.Colors[int32(I)] = FLinearColor(
-			float(C[0]) / 255.f,
-			float(C[1]) / 255.f,
-			float(C[2]) / 255.f,
-			1.f);
+			SrgbToLinear(float(C[0]) / 255.f),
+			SrgbToLinear(float(C[1]) / 255.f),
+			SrgbToLinear(float(C[2]) / 255.f),
+			FMath::Clamp(ElevM * 0.025f, 0.f, 2.f));
 	}
 
 	const uint32* Idx = reinterpret_cast<const uint32*>(D + 16 + PosBytes + ColBytes + ColPad);
@@ -79,22 +89,69 @@ bool FNavtMeshLoader::LoadFile(const FString& AbsPath, FNavtMeshData& Out)
 		Out.Indices[int32(I)] = int32(Idx[I]);
 	}
 
-	// Face normals averaged
-	for (int32 T = 0; T + 2 < Out.Indices.Num(); T += 3)
+	// Bake is RH (X north, Y elev, Z east); UE is LH (X north, Y east, Z up).
+	// Axis remap flips handedness so bake winding produces *downward* face
+	// normals on terrain sheets. Fix by reversing triangle winding (so front
+	// faces + normals agree) — flipping normals alone leaves winding wrong and
+	// causes light/dark flicker with CSM / two-sided-ish lighting.
+	// Structures (mixed face dirs) average ~0 and must not be reversed.
+	auto AccumulateFaceNormals = [&Out]()
 	{
-		const int32 Ia = Out.Indices[T], Ib = Out.Indices[T + 1], Ic = Out.Indices[T + 2];
-		if (!Out.Positions.IsValidIndex(Ia) || !Out.Positions.IsValidIndex(Ib)
-			|| !Out.Positions.IsValidIndex(Ic))
+		for (FVector& N : Out.Normals)
+		{
+			N = FVector::ZeroVector;
+		}
+		for (int32 T = 0; T + 2 < Out.Indices.Num(); T += 3)
+		{
+			const int32 Ia = Out.Indices[T];
+			const int32 Ib = Out.Indices[T + 1];
+			const int32 Ic = Out.Indices[T + 2];
+			if (!Out.Positions.IsValidIndex(Ia) || !Out.Positions.IsValidIndex(Ib)
+				|| !Out.Positions.IsValidIndex(Ic))
+			{
+				continue;
+			}
+			// Area-weighted: do not normalize per face before accumulate.
+			const FVector N = FVector::CrossProduct(
+				Out.Positions[Ib] - Out.Positions[Ia],
+				Out.Positions[Ic] - Out.Positions[Ia]);
+			Out.Normals[Ia] += N;
+			Out.Normals[Ib] += N;
+			Out.Normals[Ic] += N;
+		}
+	};
+
+	AccumulateFaceNormals();
+
+	// Mean of *unnormalized* face contributions' Z via vertex sum is noisy;
+	// use average unit normal Z after a first pass.
+	double MeanZ = 0.0;
+	int32 NormalCount = 0;
+	for (const FVector& N0 : Out.Normals)
+	{
+		FVector N = N0;
+		if (!N.Normalize())
 		{
 			continue;
 		}
-		const FVector N = FVector::CrossProduct(
-			Out.Positions[Ib] - Out.Positions[Ia],
-			Out.Positions[Ic] - Out.Positions[Ia]);
-		Out.Normals[Ia] += N;
-		Out.Normals[Ib] += N;
-		Out.Normals[Ic] += N;
+		MeanZ += N.Z;
+		++NormalCount;
 	}
+	if (NormalCount > 0)
+	{
+		MeanZ /= double(NormalCount);
+	}
+
+	// Terrain sheets: avgNz ≈ −1. Buildings/veg: ≈ 0.
+	if (MeanZ < -0.25)
+	{
+		for (int32 T = 0; T + 2 < Out.Indices.Num(); T += 3)
+		{
+			Swap(Out.Indices[T + 1], Out.Indices[T + 2]);
+		}
+		AccumulateFaceNormals();
+	}
+
 	for (FVector& N : Out.Normals)
 	{
 		if (!N.Normalize())

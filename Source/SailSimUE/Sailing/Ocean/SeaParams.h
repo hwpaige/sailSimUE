@@ -13,13 +13,13 @@ struct FSeaParams
 	/** Meteorological: direction wind blows FROM (deg). */
 	float WindDirDeg = 225.f;
 	/**
-	 * Wave height scale (cm). Kept for API compatibility; flat-ocean MVP ignores this
-	 * (Gerstner / procedural swell disabled).
+	 * Wave height scale (cm). Reserved for procedural blend; primary displacement is
+	 * Water Body Gerstner (EnsureGerstnerWaterWaves).
 	 */
 	float AmplitudeCm = 0.f;
-	/** 0 = long swell, 1 = short chop (unused while flat). */
+	/** 0 = long swell, 1 = short chop (material chop path). */
 	float Choppiness = 0.f;
-	/** Dominant wave direction (unused while flat). */
+	/** Dominant wave direction (met FROM); wind angle fed into Gerstner when retuned. */
 	float WaveDirDeg = 45.f;
 	/** Seconds; reserved for future spectra. */
 	float TimeSec = 0.f;
@@ -30,7 +30,7 @@ struct FSeaParams
 		P.WindSpeedKn = 16.f;
 		P.WindDirDeg = 225.f;
 		P.WaveDirDeg = 45.f;
-		P.AmplitudeCm = 0.f; // flat plane
+		P.AmplitudeCm = 0.f; // visual Gerstner from WaterWaves asset
 		P.Choppiness = 0.f;
 		return P;
 	}

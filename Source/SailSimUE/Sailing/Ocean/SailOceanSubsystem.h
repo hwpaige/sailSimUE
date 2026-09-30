@@ -28,7 +28,7 @@ struct FOceanSampleBP
 
 /**
  * World subsystem for ocean height + open-ocean visual setup.
- * One flat UE Water plane (no Gerstner, no second fill-plane layer).
+ * Continuous UE Water ocean: Gerstner WaterWaves to the horizon + soft material falloff.
  * The Open World template carves a central island hole via the Water Body Ocean
  * spline — we collapse that spline so stock water fills the full zone.
  *
@@ -84,7 +84,7 @@ public:
 
 	/**
 	 * Short high-frequency surface chop via water material normal strength (0..1).
-	 * Used by wind puffs — not full Gerstner displacement (water stays a flat body).
+	 * Used by wind puffs on top of Gerstner displacement (continuous ocean).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
 	void SetSurfaceChopIntensity(float Intensity01);
@@ -131,8 +131,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
 	float GetNightAmount() const;
 
+	/**
+	 * Calendar season 0..1 over the year:
+	 * 0 = Winter, 0.25 = Spring, 0.5 = Summer, 0.75 = Autumn.
+	 * Drives foliage/terrain green → autumn → winter tint via MPC_Season + MIDs.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	void SetSeason01(float Season01);
+
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	float GetSeason01() const { return Season01; }
+
+	/** e.g. "Summer" / "Early Autumn". */
+	UFUNCTION(BlueprintCallable, Category = "SailSim|Ocean")
+	FString GetSeasonLabel() const;
+
 	/** Capture sun/sky/fog baseline once (current map look = Fair Day). */
 	void CaptureEnvBaselineIfNeeded();
+
+	/**
+	 * Queue a SkyLight cubemap recapture (not real-time every frame).
+	 * Coalesced by MinSkyCaptureIntervalSec; used on env/TOD/long move.
+	 */
+	void RequestSkyLightRecapture(const TCHAR* Reason);
 
 private:
 	struct FEnvBaseline
@@ -166,6 +187,11 @@ private:
 	bool bTimeOfDayDriven = true;
 	/** Local solar time hours; 12 = Fair Day baseline. */
 	float TimeOfDayHours = 12.f;
+	/** Calendar season 0..1 (0 winter … 0.5 summer … 1 winter). Default summer. */
+	float Season01 = 0.5f;
+
+	/** Push Season01 to MPC_Season and structure/terrain materials. */
+	void ApplySeasonToWorld();
 
 	void ApplySunAndSky(const FSailEnvPresetDesc& Desc);
 	void ApplyFogLook(const FSailEnvPresetDesc& Desc);
@@ -191,15 +217,35 @@ private:
 	TWeakObjectPtr<UMaterialInstanceDynamic> NightMoonDiscMid;
 	bool bNightSkyActive = false;
 
+	/** Last sun/sky apply — skip sky recapture when unchanged (prevents lighting flash). */
+	float LastAppliedSunInt = -1.f;
+	float LastAppliedSkyInt = -1.f;
+	FRotator LastAppliedSunRot = FRotator::ZeroRotator;
+	FLinearColor LastAppliedSunCol = FLinearColor::Black;
+	FLinearColor LastAppliedSkyCol = FLinearColor::Black;
+	bool bLastAppliedNight = false;
+
+	/** SkyLight: never force real-time capture; recapture on demand only. */
+	float MinSkyCaptureIntervalSec = 0.75f;
+	float LastSkyCaptureWorldTime = -1000.f;
+	bool bSkyCapturePending = false;
+	FVector LastSkyCaptureBoatXY = FVector::ZeroVector;
+
 	TUniquePtr<IOceanHeightSampler> Sampler;
 	bool bOpenOceanPrepared = false;
 	bool bWaterZonesConfigured = false;
 	bool bTerrainHidden = false;
 	bool bIslandHoleCollapsed = false;
-	bool bFlatWavesCleared = false;
+	bool bGerstnerWavesEnsured = false;
+	/** False until RefreshWaterWaveRenderData runs this session (WaterInfo after Gerstner). */
+	bool bWaveRenderDataRefreshed = false;
+	/** Re-polish MIDs for N ticks after WaterInfo rebuild (rebuild recreates MIDs). */
+	int32 PolishFramesRemaining = 0;
 	bool bMaterialsPolished = false;
 	bool bSkySeamsFixed = false;
 	bool bLegacySkyDomeHidden = false;
+	bool bNantucketWaterExclusionReady = false;
+	TWeakObjectPtr<class AWaterBodyExclusionVolume> NantucketWaterExclusion;
 	float FollowAccum = 0.f;
 	float TerrainHideAccum = 0.f;
 	FVector LastZoneBoatXY = FVector::ZeroVector;
@@ -228,6 +274,12 @@ private:
 	/** Collapse Water Body Ocean spline island hole so water fills the zone solidly. */
 	void CollapseOceanIslandHole();
 	/**
+	 * AAA water/land: keep a WaterBodyExclusionVolume over Nantucket so the
+	 * infinite ocean does not draw through dry DEM land (houses-in-water).
+	 * Only destroy *template* exclusions near map origin — never this volume.
+	 */
+	void EnsureNantucketWaterExclusion();
+	/**
 	 * Full water setup (extent, local tess, materials). Only MarkForRebuild when
 	 * extents/tess actually change or on first configure — not on every boat move.
 	 */
@@ -246,8 +298,10 @@ private:
 	void FixSkyAndAtmosphereSeams(const FVector& BoatWorldPos);
 	void ApplyVolumetricCloudIntensity();
 	void ApplyFogIntensity();
-	/** Strip Gerstner / any WaterWaves asset so the body is a flat plane. */
-	void ClearWaterWaves();
+	/** Keep or assign Gerstner WaterWaves (stock ocean asset or runtime fallback). */
+	void EnsureGerstnerWaterWaves();
+	/** After Gerstner assign: GPU wave buffers + WaterInfo/mesh rebuild (kills black void). */
+	void RefreshWaterWaveRenderData();
 	void PolishWaterMaterials();
 	void SoftenHorizonFog();
 };

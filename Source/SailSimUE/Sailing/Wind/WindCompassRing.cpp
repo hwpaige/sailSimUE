@@ -20,51 +20,44 @@
 namespace WindCompassLocal
 {
 	static constexpr float FtToCm = 30.48f;
+	/** Shared local Z for ring + wings (flat instrument plane). */
+	static constexpr float PlaneZ = 10.f;
 
-	// Ring: white day + night. Day = lit white only (no emissive). Night = white + glow.
 	static const FLinearColor RingWhite(0.92f, 0.93f, 0.95f, 1.f);
-	static const FLinearColor LubberGoldDay(0.85f, 0.70f, 0.22f, 1.f);
-	static const FLinearColor LubberGoldNight(0.85f, 0.70f, 0.22f, 1.f);
-	// Wind/north arrows: saturated albedos (slightly dimmer at night via emissive path).
-	static const FLinearColor TrueCyan(0.12f, 0.55f, 0.62f, 1.f);
-	static const FLinearColor TrueCyanNight(0.08f, 0.38f, 0.44f, 1.f);
-	static const FLinearColor AppAmber(0.72f, 0.38f, 0.10f, 1.f);
-	static const FLinearColor AppAmberNight(0.48f, 0.26f, 0.07f, 1.f);
-	static const FLinearColor NorthRed(0.72f, 0.14f, 0.10f, 1.f);
-	static const FLinearColor NorthRedNight(0.48f, 0.10f, 0.07f, 1.f);
-	// Letter strokes — black ink on colored triangles (no self-light needed).
-	static const FLinearColor MarkBlack(0.02f, 0.02f, 0.025f, 1.f);
+	static const FLinearColor LubberGold(0.90f, 0.74f, 0.22f, 1.f);
+	static const FLinearColor TrueCyan(0.15f, 0.72f, 0.80f, 1.f);
+	static const FLinearColor AppAmber(0.95f, 0.55f, 0.14f, 1.f);
+	static const FLinearColor NorthRed(0.88f, 0.18f, 0.14f, 1.f);
+	/** Dark ink for P/A/N — not pure black so unlit still reads. */
+	static const FLinearColor MarkInk(0.12f, 0.12f, 0.14f, 1.f);
 	static const FLinearColor VtxWhite = FLinearColor::White;
 
-	// Degree labels: full alpha, vivid cyan / amber (TextRender color is sRGB 0–255).
 	static const FColor LabelTrue(55, 200, 215, 255);
 	static const FColor LabelApp(255, 150, 55, 255);
 
+	/** Flat triangle, winding forced so front faces +Z (camera above). Two-sided mat covers underside. */
 	static void AppendTri(
 		TArray<FVector>& Verts, TArray<int32>& Tris, TArray<FVector>& Norms,
 		TArray<FVector2D>& UVs, TArray<FLinearColor>& Colors,
 		const FVector& A, const FVector& B, const FVector& C,
 		const FLinearColor& Col)
 	{
-		const int32 Base = Verts.Num();
-		FVector N = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
+		FVector Pa = A, Pb = B, Pc = C;
+		FVector N = FVector::CrossProduct(Pb - Pa, Pc - Pa).GetSafeNormal();
 		if (N.IsNearlyZero()) N = FVector::UpVector;
-		if (N.Z < 0.f) N = -N;
-		Verts.Add(A); Verts.Add(B); Verts.Add(C);
+		if (N.Z < 0.f)
+		{
+			Swap(Pb, Pc);
+			N = -N;
+		}
+		const int32 Base = Verts.Num();
+		Verts.Add(Pa); Verts.Add(Pb); Verts.Add(Pc);
 		Norms.Add(N); Norms.Add(N); Norms.Add(N);
 		UVs.Add(FVector2D(0.f, 0.f)); UVs.Add(FVector2D(1.f, 0.f)); UVs.Add(FVector2D(0.5f, 1.f));
 		Colors.Add(Col); Colors.Add(Col); Colors.Add(Col);
 		Tris.Add(Base); Tris.Add(Base + 1); Tris.Add(Base + 2);
-		// Backface
-		const int32 Base2 = Verts.Num();
-		Verts.Add(A); Verts.Add(C); Verts.Add(B);
-		Norms.Add(-N); Norms.Add(-N); Norms.Add(-N);
-		UVs.Add(FVector2D(0.f, 0.f)); UVs.Add(FVector2D(0.5f, 1.f)); UVs.Add(FVector2D(1.f, 0.f));
-		Colors.Add(Col); Colors.Add(Col); Colors.Add(Col);
-		Tris.Add(Base2); Tris.Add(Base2 + 1); Tris.Add(Base2 + 2);
 	}
 
-	/** Axis-aligned quad in the horizontal plane (Z = PlaneZ). */
 	static void AppendQuad(
 		TArray<FVector>& Verts, TArray<int32>& Tris, TArray<FVector>& Norms,
 		TArray<FVector2D>& UVs, TArray<FLinearColor>& Colors,
@@ -75,7 +68,6 @@ namespace WindCompassLocal
 		AppendTri(Verts, Tris, Norms, UVs, Colors, P0, P2, P3, Col);
 	}
 
-	/** Thick stroke from A→B in the XY plane. */
 	static void AppendStroke(
 		TArray<FVector>& Verts, TArray<int32>& Tris, TArray<FVector>& Norms,
 		TArray<FVector2D>& UVs, TArray<FLinearColor>& Colors,
@@ -86,38 +78,46 @@ namespace WindCompassLocal
 		if (D.SizeSquared() < 1.e-4f) return;
 		D.Normalize();
 		const FVector Side(-D.Y * HalfW, D.X * HalfW, 0.f);
-		const FVector P0 = A + Side;
-		const FVector P1 = A - Side;
-		const FVector P2 = B - Side;
-		const FVector P3 = B + Side;
-		AppendQuad(Verts, Tris, Norms, UVs, Colors, P0, P1, P2, P3, Col);
+		AppendQuad(Verts, Tris, Norms, UVs, Colors, A + Side, A - Side, B - Side, B + Side, Col);
 	}
 
 	static void AppendTick(
 		TArray<FVector>& Verts, TArray<int32>& Tris, TArray<FVector>& Norms,
 		TArray<FVector2D>& UVs, TArray<FLinearColor>& Colors,
-		float Rad, float R0, float R1, float HalfThick, float PlaneZ, const FLinearColor& Col)
+		float Rad, float R0, float R1, float HalfThick, float Z, const FLinearColor& Col)
 	{
 		const float Cx = FMath::Cos(Rad);
 		const float Cy = FMath::Sin(Rad);
 		const float Tx = -Cy;
 		const float Ty = Cx;
-		const FVector P0((R0 * Cx) + Tx * HalfThick, (R0 * Cy) + Ty * HalfThick, PlaneZ);
-		const FVector P1((R0 * Cx) - Tx * HalfThick, (R0 * Cy) - Ty * HalfThick, PlaneZ);
-		const FVector P2((R1 * Cx) - Tx * HalfThick, (R1 * Cy) - Ty * HalfThick, PlaneZ);
-		const FVector P3((R1 * Cx) + Tx * HalfThick, (R1 * Cy) + Ty * HalfThick, PlaneZ);
+		const FVector P0((R0 * Cx) + Tx * HalfThick, (R0 * Cy) + Ty * HalfThick, Z);
+		const FVector P1((R0 * Cx) - Tx * HalfThick, (R0 * Cy) - Ty * HalfThick, Z);
+		const FVector P2((R1 * Cx) - Tx * HalfThick, (R1 * Cy) - Ty * HalfThick, Z);
+		const FVector P3((R1 * Cx) + Tx * HalfThick, (R1 * Cy) + Ty * HalfThick, Z);
 		AppendQuad(Verts, Tris, Norms, UVs, Colors, P0, P1, P2, P3, Col);
 	}
 
-	/** Map unit letter coords (u across, v along radial out) into world boat-frame. */
-	static FVector LetterPt(float SeatRad, float MidR, float PlaneZ, float U, float V, float Scale)
+	static FVector LetterPt(float SeatRad, float MidR, float Z, float U, float V, float Scale)
 	{
 		const float Cx = FMath::Cos(SeatRad);
 		const float Cy = FMath::Sin(SeatRad);
-		// Radial out = seat dir; tangent CW
 		const FVector RadDir(Cx, Cy, 0.f);
 		const FVector TanDir(-Cy, Cx, 0.f);
-		return FVector(MidR * Cx, MidR * Cy, PlaneZ) + TanDir * (U * Scale) + RadDir * (V * Scale);
+		return FVector(MidR * Cx, MidR * Cy, Z) + TanDir * (U * Scale) + RadDir * (V * Scale);
+	}
+
+	static void CommitSection(
+		UProceduralMeshComponent* Mesh, int32 Section,
+		TArray<FVector>& Verts, TArray<int32>& Tris, TArray<FVector>& Norms,
+		TArray<FVector2D>& UVs, TArray<FLinearColor>& Colors)
+	{
+		if (!Mesh) return;
+		TArray<FProcMeshTangent> Tangents;
+		if (Mesh->GetNumSections() > Section)
+		{
+			Mesh->ClearMeshSection(Section);
+		}
+		Mesh->CreateMeshSection_LinearColor(Section, Verts, Tris, Norms, UVs, Colors, Tangents, false);
 	}
 }
 
@@ -165,98 +165,100 @@ void FWindCompassRing::Clear()
 	BuiltMatRecipe = 0;
 	RingNightBoost = TrueNightBoost = AppNightBoost = NorthNightBoost = LubberNightBoost = 0.f;
 	CachedNightGlow01 = -1.f;
+	bDispInit = false;
+	DispTrueWindFromDeg = 0.f;
+	BuiltTrueToRad = BuiltAppToRad = BuiltNorthRad = 1.e9f;
+	BuiltTrueLenCm = BuiltAppLenCm = -1.f;
 }
 
-UMaterialInstanceDynamic* FWindCompassRing::MakeIndicatorMat(const FLinearColor& Color, float /*unusedFill*/)
+UMaterialInstanceDynamic* FWindCompassRing::MakeIndicatorMat(const FLinearColor& Color)
 {
-	// Prefer unlit translucent overlay so water SSR never samples us.
-	// (SSR reads opaque SceneColor and ignores bVisibleInReflections.)
-	// Graph: Emissive = BaseColor * (1 + EmissiveBoost * 12)  — see create_wind_compass_material.py
-	UMaterialInterface* Base = LoadObject<UMaterialInterface>(
-		nullptr, TEXT("/Game/Materials/Yacht/M_WindCompass_Overlay.M_WindCompass_Overlay"));
-	if (!Base)
+	// Prefer dedicated unlit instrument mat (self-lit BaseColor). Never yacht PBR —
+	// that was the black fill + white glitch. NavtVertexColor is a temporary fallback
+	// (vertex color white × Tint) until create_wind_compass_material.py is run.
+	static const TCHAR* Paths[] = {
+		TEXT("/Game/Materials/Yacht/M_WindCompass_Unlit.M_WindCompass_Unlit"),
+		TEXT("/Game/Materials/Yacht/M_WindCompass_Overlay.M_WindCompass_Overlay"),
+		TEXT("/Game/Materials/Navt/M_NavtVertexColor.M_NavtVertexColor"),
+	};
+	UMaterialInterface* Base = nullptr;
+	bool bUnlit = false;
+	bool bNavt = false;
+	for (const TCHAR* P : Paths)
 	{
-		// Engine debug unlit translucent — still skips opaque SSR source.
-		Base = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Engine/EngineDebugMaterials/M_SimpleUnlitTranslucent.M_SimpleUnlitTranslucent"));
+		Base = LoadObject<UMaterialInterface>(nullptr, P);
+		if (!Base) continue;
+		const FString S(P);
+		bUnlit = S.Contains(TEXT("WindCompass"));
+		bNavt = S.Contains(TEXT("NavtVertexColor"));
+		break;
 	}
 	if (!Base)
 	{
+		UE_LOG(LogSailSim, Error,
+			TEXT("WindCompass: missing M_WindCompass_Unlit — run Scripts/create_wind_compass_material.py"));
 		Base = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Engine/EngineMaterials/DefaultTextMaterialTranslucent.DefaultTextMaterialTranslucent"));
-	}
-	// Last resort: opaque yacht PBR (will still mirror on water via SSR).
-	if (!Base)
-	{
-		Base = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Game/Materials/Yacht/M_Yacht_PBR_TwoSided.M_Yacht_PBR_TwoSided"));
-	}
-	if (!Base)
-	{
-		Base = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+			nullptr, TEXT("/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"));
 	}
 	if (!Base) return nullptr;
+
+	if (!bUnlit)
+	{
+		static bool bWarned = false;
+		if (!bWarned)
+		{
+			bWarned = true;
+			UE_LOG(LogSailSim, Warning,
+				TEXT("WindCompass: using fallback mat (close editor + create_wind_compass_material.py for solid unlit look)"));
+		}
+	}
 
 	UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Base, GetTransientPackage());
 	if (!Mid) return nullptr;
 
 	FLinearColor C = Color;
 	C.A = 1.f;
-
 	Mid->SetVectorParameterValue(TEXT("BaseColor"), C);
-	Mid->SetVectorParameterValue(TEXT("Color"), C); // M_SimpleUnlitTranslucent / some engine mats
-	// Day default: no extra glow. Night boost applied in ApplyNightEmissive.
 	Mid->SetScalarParameterValue(TEXT("EmissiveBoost"), 0.f);
-	Mid->SetScalarParameterValue(TEXT("Opacity"), 1.f);
-	// Harmless if the overlay has no PBR pins; helps opaque fallback stay matte.
-	Mid->SetVectorParameterValue(TEXT("SpecularTint"), FLinearColor::White);
-	Mid->SetScalarParameterValue(TEXT("Roughness"), 0.95f);
-	Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-	Mid->SetScalarParameterValue(TEXT("Specular"), 0.02f);
-	Mid->SetScalarParameterValue(TEXT("ClearCoatBoost"), 0.f);
+	if (bNavt)
+	{
+		// BaseColor = VertexColor(white) * Tint * ColorBoost
+		Mid->SetVectorParameterValue(TEXT("Tint"), C);
+		Mid->SetScalarParameterValue(TEXT("ColorBoost"), 1.6f);
+		Mid->SetScalarParameterValue(TEXT("Roughness"), 0.95f);
+		Mid->SetScalarParameterValue(TEXT("Night01"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("WindowEmissive"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("LampEmissive"), 0.f);
+		Mid->SetScalarParameterValue(TEXT("DayGlassGlint"), 0.f);
+	}
 	return Mid;
 }
 
 float FWindCompassRing::SampleNightGlow01(const UWorld* World)
 {
-	// Env preset first (authoritative), then sun intensity. Fair Day is always 0.
 	if (!World) return 0.f;
-
 	if (const USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
 	{
 		const uint8 Preset = Ocean->GetActiveEnvPreset();
-		// ESailEnvPreset: FairDay=0, Golden=1, Dusk=2, Night=3, Overcast=4, Storm=5, Fog=6
 		switch (Preset)
 		{
-		case 0: // FairDay
-			return 0.f;
-		case 1: // GoldenHour
-			return 0.35f;
-		case 2: // Dusk
-			return 0.85f;
-		case 3: // Night
-			return 1.f;
-		default:
-			break; // Overcast / Storm / Fog → sun heuristic
+		case 0: return 0.f;      // FairDay
+		case 1: return 0.35f;    // GoldenHour
+		case 2: return 0.85f;    // Dusk
+		case 3: return 1.f;      // Night
+		default: break;
 		}
 	}
-
 	float BestSun = 0.f;
 	for (TActorIterator<ADirectionalLight> It(const_cast<UWorld*>(World)); It; ++It)
 	{
 		ADirectionalLight* L = *It;
-		if (!IsValid(L)) continue;
-		if (L->GetActorNameOrLabel().Contains(TEXT("SailSim_Moon"))) continue;
+		if (!IsValid(L) || L->GetActorNameOrLabel().Contains(TEXT("SailSim_Moon"))) continue;
 		if (UDirectionalLightComponent* C = Cast<UDirectionalLightComponent>(L->GetLightComponent()))
 		{
-			if (C->IsVisible())
-			{
-				BestSun = FMath::Max(BestSun, C->Intensity);
-			}
+			if (C->IsVisible()) BestSun = FMath::Max(BestSun, C->Intensity);
 		}
 	}
-	// Bright sun → 0; dim sun → 1. Collapse residual daytime to 0.
 	const float Night01 = FMath::GetMappedRangeValueClamped(
 		FVector2D(0.5f, 7.f), FVector2D(1.f, 0.f), BestSun);
 	return FMath::GetMappedRangeValueClamped(FVector2D(0.3f, 0.85f), FVector2D(0.f, 1.f), Night01);
@@ -267,49 +269,37 @@ void FWindCompassRing::ApplyNightEmissive(float NightGlow01)
 	using namespace WindCompassLocal;
 	const float G = FMath::Clamp(NightGlow01, 0.f, 1.f);
 
-	auto SetLook = [G](UMaterialInstanceDynamic* Mid, const FLinearColor& DayCol,
-		const FLinearColor& NightCol, float PeakBoost)
+	auto SetLook = [G](UMaterialInstanceDynamic* Mid, const FLinearColor& DayCol, float PeakBoost)
 	{
 		if (!Mid) return;
+		// Day: full chroma, boost 0. Night: slightly deeper + soft boost.
+		const FLinearColor NightCol = DayCol * 0.72f;
 		const FLinearColor Base = FMath::Lerp(DayCol, NightCol, G);
-		// Night needs a real boost — mid-gray albedo alone washes white under night exposure.
-		// Cap ~0.14 so it glows softly without neon bloom.
-		// Overlay graph: Emissive = BaseColor * (1 + EmissiveBoost * 12).
 		const float Boost = FMath::Clamp(PeakBoost * G, 0.f, 0.14f);
 		Mid->SetVectorParameterValue(TEXT("BaseColor"), Base);
-		Mid->SetVectorParameterValue(TEXT("Color"), Base);
 		Mid->SetScalarParameterValue(TEXT("EmissiveBoost"), Boost);
-		Mid->SetScalarParameterValue(TEXT("Opacity"), 1.f);
 	};
 
-	// Ring: same white BaseColor day/night; only EmissiveBoost turns on at night.
-	SetLook(RingMatW.Get(), RingWhite, RingWhite, RingNightBoost);
-	SetLook(LubberMatW.Get(), LubberGoldDay, LubberGoldNight, LubberNightBoost);
-	// Arrows: same idea, keep chroma
-	SetLook(TrueMatW.Get(), TrueCyan, TrueCyanNight, TrueNightBoost);
-	SetLook(AppMatW.Get(), AppAmber, AppAmberNight, AppNightBoost);
-	SetLook(NorthMatW.Get(), NorthRed, NorthRedNight, NorthNightBoost);
-	// Letters stay black ink, never glow
+	SetLook(RingMatW.Get(), RingWhite, RingNightBoost);
+	SetLook(LubberMatW.Get(), LubberGold, LubberNightBoost);
+	SetLook(TrueMatW.Get(), TrueCyan, TrueNightBoost);
+	SetLook(AppMatW.Get(), AppAmber, AppNightBoost);
+	SetLook(NorthMatW.Get(), NorthRed, NorthNightBoost);
 	if (UMaterialInstanceDynamic* M = MarkMatW.Get())
 	{
-		M->SetVectorParameterValue(TEXT("BaseColor"), MarkBlack);
-		M->SetVectorParameterValue(TEXT("Color"), MarkBlack);
+		M->SetVectorParameterValue(TEXT("BaseColor"), MarkInk);
 		M->SetScalarParameterValue(TEXT("EmissiveBoost"), 0.f);
-		M->SetScalarParameterValue(TEXT("Opacity"), 1.f);
 	}
 	CachedNightGlow01 = G;
 }
 
-/** Overlay chrome: skip Lumen/RT/captures. SSR is handled by translucent unlit mats. */
 static void ExcludeFromReflections(UPrimitiveComponent* Prim)
 {
 	if (!Prim) return;
-	// UE 5.8: these are bitfields (no setters for all of them).
 	Prim->bVisibleInReflectionCaptures = false;
 	Prim->bVisibleInRealTimeSkyCaptures = false;
 	Prim->bVisibleInReflections = false;
 	Prim->SetVisibleInRayTracing(false);
-	// Planar-reflection / water scene-captures (not main view).
 	Prim->SetHiddenInSceneCapture(true);
 	Prim->bAffectDynamicIndirectLighting = false;
 	Prim->bAffectDistanceFieldLighting = false;
@@ -340,10 +330,9 @@ UProceduralMeshComponent* FWindCompassRing::MakeMesh(
 	M->SetCullDistance(0.f);
 	M->SetBoundsScale(12.f);
 	M->bUseAsyncCooking = false;
-	// Draw with other translucent overlays (after opaque SceneColor SSR samples for water).
-	M->SetTranslucentSortPriority(50);
+	M->SetCastShadow(false);
 	M->RegisterComponent();
-	ExcludeFromReflections(M); // re-apply + MarkRenderStateDirty after register
+	ExcludeFromReflections(M);
 	Boat->AddInstanceComponent(M);
 	return M;
 }
@@ -361,21 +350,13 @@ UTextRenderComponent* FWindCompassRing::MakeLabel(
 	T->SetHorizontalAlignment(EHTA_Center);
 	T->SetVerticalAlignment(EVRTA_TextCenter);
 	T->SetWorldSize(58.f);
-	// Translucent text so degree labels also stay out of opaque SSR / water mirrors.
-	UMaterialInterface* TextMat = LoadObject<UMaterialInterface>(
-		nullptr, TEXT("/Engine/EngineMaterials/DefaultTextMaterialTranslucent.DefaultTextMaterialTranslucent"));
-	if (!TextMat)
-	{
-		TextMat = LoadObject<UMaterialInterface>(
-			nullptr, TEXT("/Engine/EngineMaterials/DefaultTextMaterialOpaque.DefaultTextMaterialOpaque"));
-	}
-	if (TextMat)
+	if (UMaterialInterface* TextMat = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Engine/EngineMaterials/DefaultTextMaterialOpaque.DefaultTextMaterialOpaque")))
 	{
 		T->SetTextMaterial(TextMat);
 	}
 	T->SetTextRenderColor(Color);
 	T->SetText(FText::GetEmpty());
-	// Prefer reliable engine distance-field font over project face assets.
 	if (UFont* Font = LoadObject<UFont>(nullptr, TEXT("/Engine/EngineFonts/RobotoDistanceField.RobotoDistanceField")))
 	{
 		T->SetFont(Font);
@@ -392,18 +373,18 @@ void FWindCompassRing::BuildStaticGeometry(UProceduralMeshComponent* Mesh)
 	if (!Mesh) return;
 
 	const float R = RadiusCm;
-	const float PlaneZ = 6.f; // clear water surface a bit more
-	const float Tube = 0.22f * FtToCm; // thicker so it reads from chase cam
-	const int32 Segs = 96;
+	const float Z = PlaneZ;
+	const float Tube = 0.40f * FtToCm; // readable band width
+	const int32 Segs = 72;
 
 	TArray<FVector> RingVerts, LubVerts;
 	TArray<int32> RingTris, LubTris;
 	TArray<FVector> RingNorms, LubNorms;
 	TArray<FVector2D> RingUVs, LubUVs;
 	TArray<FLinearColor> RingCols, LubCols;
-	RingVerts.Reserve(Segs * 24 + 400);
+	RingVerts.Reserve(Segs * 6 + 200);
 
-	// Annular ring (top face) — white verts; color from material + soft fill
+	// Flat annulus (single layer, two-sided mat).
 	for (int32 I = 0; I < Segs; ++I)
 	{
 		const float A0 = (float(I) / Segs) * 2.f * PI;
@@ -412,43 +393,40 @@ void FWindCompassRing::BuildStaticGeometry(UProceduralMeshComponent* Mesh)
 		const float C1 = FMath::Cos(A1), S1 = FMath::Sin(A1);
 		const float Ri = R - Tube;
 		const float Ro = R + Tube;
-		const FVector I0(Ri * C0, Ri * S0, PlaneZ);
-		const FVector I1(Ri * C1, Ri * S1, PlaneZ);
-		const FVector O0(Ro * C0, Ro * S0, PlaneZ);
-		const FVector O1(Ro * C1, Ro * S1, PlaneZ);
-		AppendTri(RingVerts, RingTris, RingNorms, RingUVs, RingCols, I0, O0, O1, VtxWhite);
-		AppendTri(RingVerts, RingTris, RingNorms, RingUVs, RingCols, I0, O1, I1, VtxWhite);
+		const FVector I0(Ri * C0, Ri * S0, Z);
+		const FVector I1(Ri * C1, Ri * S1, Z);
+		const FVector O0(Ro * C0, Ro * S0, Z);
+		const FVector O1(Ro * C1, Ro * S1, Z);
+		AppendQuad(RingVerts, RingTris, RingNorms, RingUVs, RingCols, I0, O0, O1, I1, VtxWhite);
 	}
 
+	// Degree ticks slightly above the ring (no z-fight).
+	const float TickZ = Z + 2.f;
 	for (int32 Deg = 0; Deg < 360; Deg += 15)
 	{
 		const bool bMajor = (Deg % 90 == 0);
 		const bool bMid = (Deg % 45 == 0);
 		const float Rad = FMath::DegreesToRadians(float(Deg));
 		const float Inset = (bMajor ? 2.2f : (bMid ? 1.5f : 0.95f)) * FtToCm;
-		const float R0 = R - Inset;
 		const float HalfT = (bMajor ? 0.28f : (bMid ? 0.20f : 0.14f)) * FtToCm * 0.5f;
-		AppendTick(RingVerts, RingTris, RingNorms, RingUVs, RingCols, Rad, R0, R, HalfT, PlaneZ + 0.5f, VtxWhite);
+		AppendTick(RingVerts, RingTris, RingNorms, RingUVs, RingCols,
+			Rad, R - Inset, R + Tube * 0.2f, HalfT, TickZ, VtxWhite);
 	}
 
-	// Bow lubber
+	// Bow lubber (gold section) — flat tri slightly above ring.
 	{
-		const float Y = PlaneZ + 1.f;
-		const FVector Tip(R + 2.4f * FtToCm, 0.f, Y);
-		const FVector A(R + 0.4f * FtToCm, -1.3f * FtToCm, Y);
-		const FVector B(R + 0.4f * FtToCm, 1.3f * FtToCm, Y);
+		const float Y = Z + 2.5f;
+		const FVector Tip(R + 2.6f * FtToCm, 0.f, Y);
+		const FVector A(R + 0.3f * FtToCm, -1.4f * FtToCm, Y);
+		const FVector B(R + 0.3f * FtToCm, 1.4f * FtToCm, Y);
 		AppendTri(LubVerts, LubTris, LubNorms, LubUVs, LubCols, Tip, A, B, VtxWhite);
-		const FVector Tip2(R + 2.7f * FtToCm, 0.f, Y);
-		const FVector A2(R + 0.2f * FtToCm, -1.5f * FtToCm, Y);
-		const FVector B2(R + 0.2f * FtToCm, 1.5f * FtToCm, Y);
-		AppendTri(LubVerts, LubTris, LubNorms, LubUVs, LubCols, Tip2, A2, Tip, VtxWhite);
-		AppendTri(LubVerts, LubTris, LubNorms, LubUVs, LubCols, Tip2, Tip, B2, VtxWhite);
 	}
 
-	TArray<FProcMeshTangent> Tangents;
-	Mesh->CreateMeshSection_LinearColor(0, RingVerts, RingTris, RingNorms, RingUVs, RingCols, Tangents, false);
-	Mesh->CreateMeshSection_LinearColor(1, LubVerts, LubTris, LubNorms, LubUVs, LubCols, Tangents, false);
-	Mesh->SetCastShadow(false);
+	Mesh->ClearAllMeshSections();
+	CommitSection(Mesh, 0, RingVerts, RingTris, RingNorms, RingUVs, RingCols);
+	CommitSection(Mesh, 1, LubVerts, LubTris, LubNorms, LubUVs, LubCols);
+	Mesh->SetVisibility(true);
+	Mesh->SetHiddenInGame(false);
 	if (RingMatW.IsValid()) Mesh->SetMaterial(0, RingMatW.Get());
 	if (LubberMatW.IsValid()) Mesh->SetMaterial(1, LubberMatW.Get());
 }
@@ -469,9 +447,9 @@ void FWindCompassRing::BuildFaceLetter(
 	TArray<FVector> Norms;
 	TArray<FVector2D> UVs;
 	TArray<FLinearColor> Colors;
-	const float Z = PlaneZCm + 4.f; // sit slightly above the triangle face
-	const float W = 0.11f; // stroke half-width in letter units
-	const float HalfW = W * ScaleCm;
+
+	const float Z = PlaneZCm + 2.f;
+	const float HalfW = 0.10f * ScaleCm;
 
 	auto Pt = [&](float U, float V) -> FVector
 	{
@@ -482,11 +460,9 @@ void FWindCompassRing::BuildFaceLetter(
 		AppendStroke(Verts, Tris, Norms, UVs, Colors, Pt(U0, V0), Pt(U1, V1), HalfW, VtxWhite);
 	};
 
-	// Unit box roughly −0.5..0.5 in U (tangent) and V (radial out).
 	switch (Letter)
 	{
 	case EFaceLetter::P:
-		// Vertical stem + top/right bowl
 		Stroke(-0.28f, -0.48f, -0.28f, 0.48f);
 		Stroke(-0.28f, 0.48f, 0.22f, 0.48f);
 		Stroke(0.22f, 0.48f, 0.22f, 0.05f);
@@ -504,16 +480,7 @@ void FWindCompassRing::BuildFaceLetter(
 		break;
 	}
 
-	TArray<FProcMeshTangent> Tangents;
-	if (Mesh->GetNumSections() > 1)
-	{
-		Mesh->UpdateMeshSection_LinearColor(1, Verts, Norms, UVs, Colors, Tangents);
-	}
-	else
-	{
-		// Ensure section 0 exists first (caller builds triangle on 0).
-		Mesh->CreateMeshSection_LinearColor(1, Verts, Tris, Norms, UVs, Colors, Tangents, false);
-	}
+	CommitSection(Mesh, 1, Verts, Tris, Norms, UVs, Colors);
 	if (MarkMatW.IsValid())
 	{
 		Mesh->SetMaterial(1, MarkMatW.Get());
@@ -547,6 +514,7 @@ void FWindCompassRing::PlaceWindArrow(
 	OutAltCm = Alt;
 	const float Hs = Side * 0.5f;
 
+	// Flat single triangle (tip on rim, base outboard).
 	const FVector Tip(R * Cx, R * Cy, PlaneZCm);
 	const FVector Bc((R + Alt) * Cx, (R + Alt) * Cy, PlaneZCm);
 	const FVector P1 = Bc + FVector(Hs * Tx, Hs * Ty, 0.f);
@@ -558,20 +526,11 @@ void FWindCompassRing::PlaceWindArrow(
 	TArray<FVector2D> UVs;
 	TArray<FLinearColor> Colors;
 	AppendTri(Verts, Tris, Norms, UVs, Colors, Tip, P1, P2, VtxWhite);
+	CommitSection(Mesh, 0, Verts, Tris, Norms, UVs, Colors);
 
-	TArray<FProcMeshTangent> Tangents;
-	if (Mesh->GetNumSections() > 0)
-	{
-		Mesh->UpdateMeshSection_LinearColor(0, Verts, Norms, UVs, Colors, Tangents);
-	}
-	else
-	{
-		Mesh->CreateMeshSection_LinearColor(0, Verts, Tris, Norms, UVs, Colors, Tangents, false);
-	}
-
-	// Centroid of tip + base ≈ R + (2/3) Alt for outboard base
 	const float MidR = R + Alt * (2.f / 3.f);
-	const float LetterScale = FMath::Clamp(Side * 0.42f, 35.f, 90.f);
+	// Small letter — was up to 90cm and covered the whole wing in black.
+	const float LetterScale = FMath::Clamp(Side * 0.22f, 18.f, 42.f);
 	BuildFaceLetter(Mesh, Letter, SeatRad, MidR, PlaneZCm, LetterScale);
 }
 
@@ -608,20 +567,10 @@ void FWindCompassRing::PlaceNorthArrow(
 	TArray<FVector2D> UVs;
 	TArray<FLinearColor> Colors;
 	AppendTri(Verts, Tris, Norms, UVs, Colors, Tip, P1, P2, VtxWhite);
+	CommitSection(Mesh, 0, Verts, Tris, Norms, UVs, Colors);
 
-	TArray<FProcMeshTangent> Tangents;
-	if (Mesh->GetNumSections() > 0)
-	{
-		Mesh->UpdateMeshSection_LinearColor(0, Verts, Norms, UVs, Colors, Tangents);
-	}
-	else
-	{
-		Mesh->CreateMeshSection_LinearColor(0, Verts, Tris, Norms, UVs, Colors, Tangents, false);
-	}
-
-	// Centroid for tip-outboard triangle ≈ R + Alt/3
 	const float MidR = R + Alt * (1.f / 3.f);
-	const float LetterScale = FMath::Clamp(Side * 0.42f, 35.f, 90.f);
+	const float LetterScale = FMath::Clamp(Side * 0.22f, 18.f, 42.f);
 	BuildFaceLetter(Mesh, EFaceLetter::N, NorthRad, MidR, PlaneZCm, LetterScale);
 }
 
@@ -651,17 +600,10 @@ void FWindCompassRing::SetLabelVisible(UTextRenderComponent* Lab, bool bVis)
 
 void FWindCompassRing::EnsureBuilt(ASailBoatPawn* Boat)
 {
-	// Rebuild if marks missing or material recipe changed (hot-reload can leave bright MIDs).
 	const bool bOk = bBuilt && RootW.IsValid() && TrueArrowW.IsValid() && NorthArrowW.IsValid()
 		&& MarkMatW.IsValid() && BuiltMatRecipe == MatRecipeVersion;
-	if (bOk)
-	{
-		return;
-	}
-	if (bBuilt)
-	{
-		Clear();
-	}
+	if (bOk) return;
+	if (bBuilt) Clear();
 	if (!Boat || !Boat->GetRootComponent()) return;
 
 	USceneComponent* Root = NewObject<USceneComponent>(Boat, TEXT("WindCompassRoot"));
@@ -674,21 +616,19 @@ void FWindCompassRing::EnsureBuilt(ASailBoatPawn* Boat)
 	Boat->AddInstanceComponent(Root);
 	RootW = Root;
 
-	// Peak night boosts. Ring needs enough to read as a soft white instrument light.
 	RingNightBoost = FMath::Max(SoftFill * 2.2f, 0.12f);
 	TrueNightBoost = FMath::Max(SoftFill * 1.4f, 0.08f);
 	AppNightBoost = FMath::Max(SoftFill * 1.4f, 0.08f);
 	NorthNightBoost = FMath::Max(SoftFill * 1.5f, 0.09f);
 	LubberNightBoost = FMath::Max(SoftFill * 1.8f, 0.10f);
 
-	// Start with day BaseColors; ApplyNightEmissive sets day/night blend immediately after.
-	RingMatW = MakeIndicatorMat(WindCompassLocal::RingWhite);
-	TrueMatW = MakeIndicatorMat(WindCompassLocal::TrueCyan);
-	AppMatW = MakeIndicatorMat(WindCompassLocal::AppAmber);
-	NorthMatW = MakeIndicatorMat(WindCompassLocal::NorthRed);
-	LubberMatW = MakeIndicatorMat(WindCompassLocal::LubberGoldDay);
-	// Letters: black BaseColor, never emissive.
-	MarkMatW = MakeIndicatorMat(WindCompassLocal::MarkBlack);
+	using namespace WindCompassLocal;
+	RingMatW = MakeIndicatorMat(RingWhite);
+	TrueMatW = MakeIndicatorMat(TrueCyan);
+	AppMatW = MakeIndicatorMat(AppAmber);
+	NorthMatW = MakeIndicatorMat(NorthRed);
+	LubberMatW = MakeIndicatorMat(LubberGold);
+	MarkMatW = MakeIndicatorMat(MarkInk);
 
 	UProceduralMeshComponent* StaticM = MakeMesh(Boat, Root, TEXT("WindCompassStatic"));
 	StaticMeshW = StaticM;
@@ -709,23 +649,23 @@ void FWindCompassRing::EnsureBuilt(ASailBoatPawn* Boat)
 	if (NorthMatW.IsValid()) NorthM->SetMaterial(0, NorthMatW.Get());
 	if (MarkMatW.IsValid()) NorthM->SetMaterial(1, MarkMatW.Get());
 
-	TrueLabelW = MakeLabel(Boat, Root, TEXT("WindTrueLabel"), WindCompassLocal::LabelTrue);
-	AppLabelW = MakeLabel(Boat, Root, TEXT("WindAppLabel"), WindCompassLocal::LabelApp);
+	TrueLabelW = MakeLabel(Boat, Root, TEXT("WindTrueLabel"), LabelTrue);
+	AppLabelW = MakeLabel(Boat, Root, TEXT("WindAppLabel"), LabelApp);
 
 	bBuilt = true;
 	BuiltMatRecipe = MatRecipeVersion;
 	CachedNightGlow01 = -1.f;
 	ApplyNightEmissive(SampleNightGlow01(Boat->GetWorld()));
-	UE_LOG(LogSailSim, Log, TEXT("WindCompass: built ring + P/A/N (night soft fill=%.3f recipe=%d)"),
-		SoftFill, MatRecipeVersion);
+	UE_LOG(LogSailSim, Log, TEXT("WindCompass: flat unlit rose ready (recipe=%d)"), MatRecipeVersion);
 }
 
 void FWindCompassRing::Update(ASailBoatPawn* Boat, float DeltaSeconds)
 {
-	(void)DeltaSeconds;
+	const float Dt = FMath::Clamp(DeltaSeconds, 0.f, 1.f / 20.f);
 	if (!bEnabled || !Boat)
 	{
 		if (RootW.IsValid()) RootW->SetVisibility(false, true);
+		bDispInit = false;
 		return;
 	}
 
@@ -733,6 +673,7 @@ void FWindCompassRing::Update(ASailBoatPawn* Boat, float DeltaSeconds)
 	if (Tws < MinTwsKn)
 	{
 		if (RootW.IsValid()) RootW->SetVisibility(false, true);
+		bDispInit = false;
 		return;
 	}
 
@@ -741,7 +682,6 @@ void FWindCompassRing::Update(ASailBoatPawn* Boat, float DeltaSeconds)
 	if (!Root) return;
 	Root->SetVisibility(true, true);
 
-	// Day: EmissiveBoost=0. Night/dusk: soft BaseColor×boost (same yacht PBR path).
 	const float NightGlow = SampleNightGlow01(Boat->GetWorld());
 	if (!FMath::IsNearlyEqual(NightGlow, CachedNightGlow01, 0.02f))
 	{
@@ -749,52 +689,142 @@ void FWindCompassRing::Update(ASailBoatPawn* Boat, float DeltaSeconds)
 	}
 
 	const FVector BoatLoc = Boat->GetActorLocation();
-	const float Hdg = Boat->GetHeadingDeg();
-	Root->SetWorldLocation(FVector(BoatLoc.X, BoatLoc.Y, BoatLoc.Z + LiftCm));
-	Root->SetWorldRotation(FRotator(0.f, Hdg, 0.f));
+	const float RawHdg = Boat->GetHeadingDeg();
+	// True wind is a WORLD "from" direction. Apparent is boat-relative (AWA).
+	const float RawTrueFromDeg = Boat->GetTrueWindDirDeg();
+	const float RawAppTo = FMath::DegreesToRadians(Boat->GetApparentWindAngleDeg()) + PI;
+	const float Aws = Boat->GetApparentWindSpeedKn();
+	const float RawTrueLen = (3.2f + Tws * 0.20f) * WindCompassLocal::FtToCm;
+	const float RawAppLen = (3.2f + Aws * 0.20f) * WindCompassLocal::FtToCm;
+
+	auto SmoothAngleDeg = [](float Current, float Target, float Alpha) -> float
+	{
+		return FMath::UnwindDegrees(Current + FMath::FindDeltaAngleDegrees(Current, Target) * Alpha);
+	};
+	auto SmoothAngleRad = [](float Current, float Target, float Alpha) -> float
+	{
+		float D = Target - Current;
+		while (D > PI) D -= 2.f * PI;
+		while (D < -PI) D += 2.f * PI;
+		return Current + D * Alpha;
+	};
+	auto AngDiff = [](float A, float B) -> float
+	{
+		float D = B - A;
+		while (D > PI) D -= 2.f * PI;
+		while (D < -PI) D += 2.f * PI;
+		return FMath::Abs(D);
+	};
+
+	const float Alpha = 1.f - FMath::Exp(-12.f * Dt);
+	if (!bDispInit)
+	{
+		DispHdgDeg = RawHdg;
+		DispTrueWindFromDeg = RawTrueFromDeg;
+		DispAppToRad = RawAppTo;
+		DispTrueLenCm = RawTrueLen;
+		DispAppLenCm = RawAppLen;
+		bDispInit = true;
+	}
+	else
+	{
+		DispHdgDeg = SmoothAngleDeg(DispHdgDeg, RawHdg, Alpha);
+		// Smooth true wind in WORLD space only — never as (TWD − heading).
+		DispTrueWindFromDeg = SmoothAngleDeg(DispTrueWindFromDeg, RawTrueFromDeg, Alpha);
+		// AWA is boat-relative; fine to smooth in local frame.
+		DispAppToRad = SmoothAngleRad(DispAppToRad, RawAppTo, Alpha);
+		DispTrueLenCm = FMath::Lerp(DispTrueLenCm, RawTrueLen, Alpha);
+		DispAppLenCm = FMath::Lerp(DispAppLenCm, RawAppLen, Alpha);
+	}
+
+	// Clear of water / hull bob.
+	const float WaterClearCm = 24.f;
+	Root->SetWorldLocation(FVector(BoatLoc.X, BoatLoc.Y, BoatLoc.Z + LiftCm + WaterClearCm));
+	Root->SetWorldRotation(FRotator(0.f, DispHdgDeg, 0.f));
 	Root->SetWorldScale3D(FVector::OneVector);
 
-	const float TrueFromRad = FMath::DegreesToRadians(Boat->GetTrueWindDirDeg() - Hdg);
-	const float AppFromRad = FMath::DegreesToRadians(Boat->GetApparentWindAngleDeg());
-	const float TrueToRad = TrueFromRad + PI;
-	const float AppToRad = AppFromRad + PI;
-
-	const float Aws = Boat->GetApparentWindSpeedKn();
-	const float TrueLenCm = (3.2f + Tws * 0.20f) * WindCompassLocal::FtToCm;
-	const float AppLenCm = (3.2f + Aws * 0.20f) * WindCompassLocal::FtToCm;
+	// Root is boat-yawed. True local angle must be (worldFrom − dispHdg) so
+	// world = DispHdg + local = true wind (stable when turning).
+	// PlaceWindArrow: FlowTo = from+π, tip sits on rim at "from" (SeatRad = from).
+	const float TrueToRad =
+		FMath::DegreesToRadians(DispTrueWindFromDeg - DispHdgDeg) + PI;
+	const float AppToRad = DispAppToRad;
+	const float TrueLenCm = DispTrueLenCm;
+	const float AppLenCm = DispAppLenCm;
 	const bool bAppOn = Boat->IsSailing();
-	const float PlaneZ = 6.f;
+	const float PlaneZ = WindCompassLocal::PlaneZ;
+	// World north fixed: local = −heading.
+	const float NorthRad = FMath::DegreesToRadians(-DispHdgDeg);
+
+	constexpr float AngleEps = 0.012f;
+	constexpr float LenEpsCm = 4.f;
 
 	float TrueSeat = 0.f, TrueAlt = 0.f;
 	float AppSeat = 0.f, AppAlt = 0.f;
 	float NorthSeat = 0.f, NorthAlt = 0.f;
 
-	PlaceWindArrow(TrueArrowW.Get(), TrueToRad, TrueLenCm, PlaneZ, EFaceLetter::P, TrueSeat, TrueAlt);
-	PlaceWindArrow(AppArrowW.Get(), AppToRad, AppLenCm, PlaneZ, EFaceLetter::A, AppSeat, AppAlt);
+	const bool bNeedTrue = BuiltTrueLenCm < 0.f
+		|| AngDiff(BuiltTrueToRad, TrueToRad) > AngleEps
+		|| FMath::Abs(TrueLenCm - BuiltTrueLenCm) > LenEpsCm;
+	const bool bNeedApp = BuiltAppLenCm < 0.f
+		|| AngDiff(BuiltAppToRad, AppToRad) > AngleEps
+		|| FMath::Abs(AppLenCm - BuiltAppLenCm) > LenEpsCm;
+	const bool bNeedNorth = BuiltNorthRad > 1.e8f
+		|| AngDiff(BuiltNorthRad, NorthRad) > AngleEps;
 
-	const float NorthRad = FMath::DegreesToRadians(-Hdg);
-	PlaceNorthArrow(NorthArrowW.Get(), NorthRad, PlaneZ + 0.5f, NorthSeat, NorthAlt);
+	if (bNeedTrue)
+	{
+		PlaceWindArrow(TrueArrowW.Get(), TrueToRad, TrueLenCm, PlaneZ, EFaceLetter::P, TrueSeat, TrueAlt);
+		BuiltTrueToRad = TrueToRad;
+		BuiltTrueLenCm = TrueLenCm;
+		if (UProceduralMeshComponent* T = TrueArrowW.Get())
+		{
+			if (TrueMatW.IsValid()) T->SetMaterial(0, TrueMatW.Get());
+			if (MarkMatW.IsValid()) T->SetMaterial(1, MarkMatW.Get());
+		}
+	}
+	else
+	{
+		TrueSeat = TrueToRad + PI;
+		const float LenFt = TrueLenCm / WindCompassLocal::FtToCm;
+		const float Side = (3.2f + LenFt * 0.18f) * WindCompassLocal::FtToCm;
+		TrueAlt = Side * 0.866025403784f;
+	}
 
-	// Re-apply mats every update (procedural mesh section rebuild can drop them).
-	if (UProceduralMeshComponent* T = TrueArrowW.Get())
+	if (bNeedApp)
 	{
-		if (TrueMatW.IsValid()) T->SetMaterial(0, TrueMatW.Get());
-		if (MarkMatW.IsValid()) T->SetMaterial(1, MarkMatW.Get());
+		PlaceWindArrow(AppArrowW.Get(), AppToRad, AppLenCm, PlaneZ, EFaceLetter::A, AppSeat, AppAlt);
+		BuiltAppToRad = AppToRad;
+		BuiltAppLenCm = AppLenCm;
+		if (UProceduralMeshComponent* A = AppArrowW.Get())
+		{
+			if (AppMatW.IsValid()) A->SetMaterial(0, AppMatW.Get());
+			if (MarkMatW.IsValid()) A->SetMaterial(1, MarkMatW.Get());
+		}
 	}
-	if (UProceduralMeshComponent* A = AppArrowW.Get())
+	else
 	{
-		if (AppMatW.IsValid()) A->SetMaterial(0, AppMatW.Get());
-		if (MarkMatW.IsValid()) A->SetMaterial(1, MarkMatW.Get());
+		AppSeat = AppToRad + PI;
+		const float LenFt = AppLenCm / WindCompassLocal::FtToCm;
+		const float Side = (3.2f + LenFt * 0.18f) * WindCompassLocal::FtToCm;
+		AppAlt = Side * 0.866025403784f;
 	}
-	if (UProceduralMeshComponent* N = NorthArrowW.Get())
+
+	if (bNeedNorth)
 	{
-		if (NorthMatW.IsValid()) N->SetMaterial(0, NorthMatW.Get());
-		if (MarkMatW.IsValid()) N->SetMaterial(1, MarkMatW.Get());
+		PlaceNorthArrow(NorthArrowW.Get(), NorthRad, PlaneZ + 1.f, NorthSeat, NorthAlt);
+		BuiltNorthRad = NorthRad;
+		if (UProceduralMeshComponent* N = NorthArrowW.Get())
+		{
+			if (NorthMatW.IsValid()) N->SetMaterial(0, NorthMatW.Get());
+			if (MarkMatW.IsValid()) N->SetMaterial(1, MarkMatW.Get());
+		}
 	}
-	if (UProceduralMeshComponent* S = StaticMeshW.Get())
+	else
 	{
-		if (RingMatW.IsValid()) S->SetMaterial(0, RingMatW.Get());
-		if (LubberMatW.IsValid()) S->SetMaterial(1, LubberMatW.Get());
+		NorthSeat = NorthRad;
+		const float Side = 4.2f * WindCompassLocal::FtToCm;
+		NorthAlt = Side * 0.866025403784f;
 	}
 
 	SetMeshVisible(TrueArrowW.Get(), true);
@@ -802,7 +832,6 @@ void FWindCompassRing::Update(ASailBoatPawn* Boat, float DeltaSeconds)
 	SetMeshVisible(NorthArrowW.Get(), true);
 	SetMeshVisible(StaticMeshW.Get(), true);
 
-	// Outer degree labels
 	const float LabelOut = RadiusCm + TrueAlt + 5.2f * WindCompassLocal::FtToCm;
 	const float AppLabelOut = RadiusCm + AppAlt + 5.2f * WindCompassLocal::FtToCm;
 

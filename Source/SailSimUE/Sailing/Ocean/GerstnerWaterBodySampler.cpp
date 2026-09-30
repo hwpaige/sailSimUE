@@ -24,10 +24,12 @@ FOceanSample FGerstnerWaterBodySampler::Sample(const FVector& WorldPos) const
 		return Best;
 	}
 
-	// Flat plane only — never IncludeWaves / SimpleWaves (Gerstner off).
+	// Continuous Gerstner field — same waves for visuals + height queries.
 	const EWaterBodyQueryFlags Flags =
 		EWaterBodyQueryFlags::ComputeLocation
 		| EWaterBodyQueryFlags::ComputeNormal
+		| EWaterBodyQueryFlags::IncludeWaves
+		| EWaterBodyQueryFlags::SimpleWaves
 		| EWaterBodyQueryFlags::IgnoreExclusionVolumes;
 
 	float BestAbsDZ = TNumericLimits<float>::Max();
@@ -46,21 +48,18 @@ FOceanSample FGerstnerWaterBodySampler::Sample(const FVector& WorldPos) const
 		}
 
 		const FWaterBodyQueryResult& R = QueryResult.GetValue();
-		// Force flat: use constant surface Z, upright normal (ignore any residual wave asset).
-		const float SurfZ = Comp->GetConstantSurfaceZ();
-		const FVector Surf(WorldPos.X, WorldPos.Y, SurfZ);
-		const FVector Norm = FVector::UpVector;
-		const float Dz = FMath::Abs(SurfZ - WorldPos.Z);
+		const FVector Surf = R.GetWaterSurfaceLocation();
+		const FVector Norm = R.GetWaterSurfaceNormal().GetSafeNormal();
+		const float Dz = FMath::Abs(Surf.Z - WorldPos.Z);
 		if (!Best.bValid || Dz < BestAbsDZ)
 		{
 			BestAbsDZ = Dz;
 			Best.Surface = Surf;
-			Best.Normal = Norm;
+			Best.Normal = Norm.IsNearlyZero() ? FVector::UpVector : Norm;
 			Best.Velocity = FVector::ZeroVector;
 			Best.Depth = 0.f;
 			Best.bValid = true;
 		}
-		(void)R;
 	}
 
 	if (!Best.bValid)

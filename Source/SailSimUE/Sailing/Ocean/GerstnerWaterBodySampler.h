@@ -3,9 +3,9 @@
 #include "Sailing/Ocean/IOceanHeightSampler.h"
 
 /**
- * Flat UE Water body sampler — no Gerstner, no procedural swell.
- * Height is the water body's constant surface Z (one infinite plane).
- * Class name kept for module continuity; backend name is FlatWaterBody.
+ * UE Water body sampler with Gerstner waves (IncludeWaves) for VPP/physics parity.
+ * Height/normal come from the Water Body query (Gerstner when waves are assigned).
+ * Class name kept for module continuity; backend name remains FlatWaterBody for logs.
  */
 class FGerstnerWaterBodySampler : public IOceanHeightSampler
 {

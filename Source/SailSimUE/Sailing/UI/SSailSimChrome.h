@@ -14,6 +14,7 @@ class SBox;
 class SCheckBox;
 class SSlider;
 class SVerticalBox;
+class SSailSimHoverCatch;
 
 /**
  * Modern sail-sim instrument chrome (Slate).
@@ -61,6 +62,11 @@ private:
 	TSharedPtr<STextBlock> StatusLine5;
 
 	TSharedPtr<STextBlock> HelmReadout;
+	TSharedPtr<STextBlock> HelmPeekReadout;
+	TSharedPtr<SSailSimHoverCatch> HelmHoverCatch;
+	/** Helm/trim card: collapsed by default, expands on mouseover. */
+	bool bHelmExpanded = false;
+	double HelmHoverGraceUntil = 0.0;
 
 	// Autopilot panel
 	TSharedPtr<SBorder> ApPanelBorder;
@@ -114,6 +120,9 @@ private:
 	TSharedPtr<STextBlock> TimeOfDayLabel;
 	TSharedPtr<SSlider> TimeOfDaySlider;
 	float CachedTimeOfDay01 = 0.5f; // noon = Fair Day baseline
+	TSharedPtr<STextBlock> SeasonLabel;
+	TSharedPtr<SSlider> SeasonSlider;
+	float CachedSeason01 = 0.5f; // summer
 	TSharedPtr<STextBlock> OuthaulSliderLabel;
 	TSharedPtr<STextBlock> VangSliderLabel;
 	TSharedPtr<STextBlock> CompactTwsLabel;
@@ -205,10 +214,17 @@ private:
 	void SetPlotMode(uint8 Mode); // 0 pan, 1 add, 2 delete
 	void OnPlotClear();
 	TSharedRef<SWidget> MakeGlassCard(const TSharedRef<SWidget>& Content, FMargin Pad = FMargin(14.f, 12.f));
+	/** Nested section card with accent header chip (settings / sail trim). */
+	TSharedRef<SWidget> MakeSectionCard(const FString& Title, const TSharedRef<SWidget>& Content);
 	TSharedRef<SWidget> MakeTelemetryPill(TSharedPtr<STextBlock>& OutText, const FLinearColor& Color);
 	TSharedRef<SWidget> MakePillButton(const FText& Label, FOnClicked OnClicked, bool bAccent = false);
 	TSharedRef<SWidget> MakeApKey(const FString& Label, float Delta, bool bDec);
 	TSharedRef<SWidget> MakeApStatRow(const FString& Lbl, TSharedPtr<STextBlock>& OutVal);
+	/** Instrument slider with large grabber (shared style). */
+	TSharedRef<SWidget> MakeStyledSlider(
+		TFunction<float()> GetNorm01,
+		TFunction<void(float)> OnNorm01,
+		float Height = 0.f);
 	void RefreshFromBoat();
 	void RefreshAutopilotPanel();
 	void ToggleSettings();
@@ -220,6 +236,8 @@ private:
 	void OnFogSlider(float Norm01);
 	void OnTimeOfDaySlider(float Norm01);
 	void RefreshTimeOfDayLabel();
+	void OnSeasonSlider(float Norm01);
+	void RefreshSeasonLabel();
 	void OnSheetSlider(float Norm01);
 	void OnOuthaulSlider(float Norm01);
 	void OnVangSlider(float Norm01);

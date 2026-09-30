@@ -1,7 +1,7 @@
 {
   "id": "nantucket-structures",
   "version": 1,
-  "description": "Streamed structure tiles for SailSimUE \u2014 OSM houses (gable/cape/brick), hero landmarks, ENC lights/pilings, trees, grass tufts, hydrangeas. NAVT meshes from sail-sim bake. Load only near the boat.",
+  "description": "Streamed structure tiles for SailSimUE \u2014 OSM houses (gable/cape/brick), hero landmarks, ENC lights/pilings, trees, grass tufts, hydrangeas. NAVT meshes from sail-sim bake. Load only near the boat. Optional staticMesh/staticMeshLod1 from cook_nantucket_structures_nanite.py.",
   "source": "/Users/harrison/PycharmProjects/sail-sim/frontend/public/structures/nantucket",
   "units": {
     "mesh_xy": "feet from NAV_ORIGIN (x=north, z=east)",
@@ -24,26 +24,50 @@
     "loadRadius": 2,
     "unloadRadius": 3,
     "lod0Radius": 1,
-    "note": "Harbor tile ~500k verts \u2014 prefer loadRadius\u22642"
+    "openSeaSkipDistanceCm": 250000,
+    "harborFullDistanceCm": 150000,
+    "vegLoadDistanceCm": 250000,
+    "note": "Harbor tile ~500k verts \u2014 prefer loadRadius\u22642. Optional per-tile staticMesh / staticMeshLod1 for cooked SM+Nanite; runtime PMC fallback when missing. Open-sea skip beyond openSeaSkipDistanceCm. Foliage: fileFoliage JSON \u2192 HierarchicalInstancedStaticMesh (species prototypes or /Game/Foliage/*)."
+  },
+  "foliage": {
+    "format": "instances-v1",
+    "species": [
+      "oak",
+      "cedar",
+      "scrub",
+      "lawn",
+      "beach",
+      "marsh"
+    ],
+    "note": "Per-tile fileFoliage JSON \u2192 UE HierarchicalInstancedStaticMesh (not voxel _veg.mesh)"
+  },
+  "cook": {
+    "version": 1,
+    "folder": "/Game/Structures/nantucket/Cooked",
+    "naming": "SM_Struct_{tx}_{ty}_LOD{0|1}",
+    "fields": {
+      "staticMesh": "optional soft path to cooked LOD0 UStaticMesh",
+      "staticMeshLod1": "optional soft path to cooked LOD1 UStaticMesh"
+    },
+    "script": "Scripts/cook_nantucket_structures_nanite.py",
+    "note": "Missing staticMesh \u2192 runtime PMC from file/fileLod1 (dev fallback). Re-run cook after sail-sim structure rebake."
   },
   "contents": {
     "heroes": 11,
     "enc": 199,
     "osm": 3449,
-    "trees": 2619,
-    "grass": 2205,
-    "seagrass": 1834,
-    "treesShell": 1242
+    "trees": 13933,
+    "grass": 43658
   },
-  "totalVertices": 2952213,
-  "tileCount": 31,
+  "totalVertices": 2070315,
+  "tileCount": 33,
   "navLights": [
     {
       "id": "enc-4386225",
       "name": null,
       "lat": 41.30847219999998,
       "lon": -70.20100000000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#44cc77",
       "periodS": 1,
       "segments": [
@@ -64,7 +88,7 @@
       "name": null,
       "lat": 41.30508329999998,
       "lon": -70.19172220000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 1,
       "segments": [
@@ -85,7 +109,7 @@
       "name": null,
       "lat": 41.31701099999998,
       "lon": -70.103699,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#fff8d2",
       "periodS": 8,
       "segments": [
@@ -110,7 +134,7 @@
       "name": null,
       "lat": 41.31090929999999,
       "lon": -70.10207009999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -131,7 +155,7 @@
       "name": null,
       "lat": 41.310294,
       "lon": -70.100031,
-      "elevM": 9.7,
+      "elevM": 10.5,
       "color": "#44cc77",
       "periodS": 4,
       "segments": [
@@ -152,7 +176,7 @@
       "name": null,
       "lat": 41.28626700000001,
       "lon": -70.09526699999998,
-      "elevM": 4.8999999999999995,
+      "elevM": 5.7,
       "color": "#44cc77",
       "periodS": 4,
       "segments": [
@@ -173,7 +197,7 @@
       "name": null,
       "lat": 41.285799999999995,
       "lon": -70.09506699999997,
-      "elevM": 4.8999999999999995,
+      "elevM": 5.7,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -194,7 +218,7 @@
       "name": null,
       "lat": 41.29348599999997,
       "lon": -70.09456599999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 1,
       "segments": [
@@ -215,7 +239,7 @@
       "name": null,
       "lat": 41.28988670000001,
       "lon": -70.09232250000002,
-      "elevM": 11.3,
+      "elevM": 12.100000000000001,
       "color": "#fff8d2",
       "periodS": 1,
       "segments": [
@@ -236,7 +260,7 @@
       "name": null,
       "lat": 41.289255000000026,
       "lon": -70.09204920000002,
-      "elevM": 16.981387922067444,
+      "elevM": 17.781387922067445,
       "color": "#fff8d2",
       "periodS": 4,
       "segments": [
@@ -257,7 +281,7 @@
       "name": "Brant Point Light",
       "lat": 41.28917,
       "lon": -70.09056,
-      "elevM": 11.38784,
+      "elevM": 15.411200000000001,
       "color": "#ff6a52",
       "periodS": 4,
       "segments": [
@@ -277,7 +301,7 @@
       "name": null,
       "lat": 41.291867000000025,
       "lon": -70.09038299999997,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#44cc77",
       "periodS": 2.5,
       "segments": [
@@ -298,7 +322,7 @@
       "name": null,
       "lat": 41.29001699999998,
       "lon": -70.09026699999998,
-      "elevM": 8.5,
+      "elevM": 9.3,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -319,7 +343,7 @@
       "name": null,
       "lat": 41.25693669999998,
       "lon": -70.06352099999998,
-      "elevM": 18.367624487503036,
+      "elevM": 19.167624487503037,
       "color": "#fff8d2",
       "periodS": 4,
       "segments": [
@@ -360,7 +384,7 @@
       "name": null,
       "lat": 41.30541670000002,
       "lon": -70.02911110000002,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -381,7 +405,7 @@
       "name": null,
       "lat": 41.30500000000001,
       "lon": -70.02694439999999,
-      "elevM": 6.6,
+      "elevM": 7.4,
       "color": "#ff4444",
       "periodS": 4,
       "segments": [
@@ -404,7 +428,7 @@
       "name": "Brant Point Light",
       "lat": 41.28917,
       "lon": -70.09056,
-      "elevM": 11.38784,
+      "elevM": 15.411200000000001,
       "periodS": 4,
       "color": "#ff6a52"
     },
@@ -443,17 +467,31 @@
         -2607259.1999999546,
         571451.3540413213
       ],
-      "vertices": 9588,
-      "verticesLod1": 6096,
+      "vertices": 3026,
+      "verticesLod1": 3026,
+      "verticesBuildings": 3026,
+      "verticesVeg": 0,
+      "foliageInstances": 1503,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 91,
-        "trees": 39,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 26
-      }
+        "trees": 303,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_0_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_4_0_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_4_0_LOD1",
+      "staticMeshOrigin": [
+        -2517287.955,
+        592462.7837109375,
+        836.666139960289
+      ],
+      "staticMeshLod1Origin": [
+        -2517287.955,
+        592462.7837109375,
+        836.666139960289
+      ]
     },
     {
       "id": "5_0",
@@ -479,17 +517,31 @@
         -2607259.1999999546,
         883152.0926092288
       ],
-      "vertices": 70050,
-      "verticesLod1": 26625,
+      "vertices": 9520,
+      "verticesLod1": 9520,
+      "verticesBuildings": 9520,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 338,
-        "grass": 137,
-        "seagrass": 70,
-        "treesShell": 145
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_0_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_5_0_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_5_0_LOD1",
+      "staticMeshOrigin": [
+        -2564507.6662500002,
+        895358.9296875,
+        917.0570701360703
+      ],
+      "staticMeshLod1Origin": [
+        -2551018.9565625,
+        895612.35421875,
+        917.0570701360703
+      ]
     },
     {
       "id": "6_0",
@@ -515,17 +567,31 @@
         -2607259.1999999546,
         1194852.8311771955
       ],
-      "vertices": 48382,
-      "verticesLod1": 22660,
+      "vertices": 9520,
+      "verticesLod1": 9520,
+      "verticesBuildings": 9520,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 226,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 112
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_0_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_6_0_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_6_0_LOD1",
+      "staticMeshOrigin": [
+        -2551413.1725000003,
+        1192067.14453125,
+        1033.6454719305038
+      ],
+      "staticMeshLod1Origin": [
+        -2552096.829375,
+        1185920.6025,
+        1033.6454719305038
+      ]
     },
     {
       "id": "7_0",
@@ -551,17 +617,31 @@
         -2607259.1999999546,
         1506553.569745162
       ],
-      "vertices": 8660,
-      "verticesLod1": 3433,
+      "vertices": 1428,
+      "verticesLod1": 1428,
+      "verticesBuildings": 1428,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 45,
-        "trees": 38,
-        "grass": 198,
-        "seagrass": 0,
-        "treesShell": 17
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_0_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_0_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_0_LOD1",
+      "staticMeshOrigin": [
+        -2534932.6603125,
+        1500598.1465625,
+        1410.2543592453003
+      ],
+      "staticMeshLod1Origin": [
+        -2539988.5303125,
+        1591348.9532812499,
+        1410.2543592453003
+      ]
     },
     {
       "id": "2_1",
@@ -587,17 +667,31 @@
         -2385364.799999959,
         -51950.12309461189
       ],
-      "vertices": 2810,
-      "verticesLod1": 1418,
+      "vertices": 748,
+      "verticesLod1": 748,
+      "verticesBuildings": 748,
+      "verticesVeg": 0,
+      "foliageInstances": 188,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 22,
-        "trees": 12,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 6
-      }
+        "trees": 18,
+        "grass": 170
+      },
+      "fileFoliage": "tiles/2_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_2_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_2_1_LOD1",
+      "staticMeshOrigin": [
+        -2292143.5059375,
+        91957.67630859376,
+        797.2583889961243
+      ],
+      "staticMeshLod1Origin": [
+        -2292143.5059375,
+        91957.67630859376,
+        797.2583889961243
+      ]
     },
     {
       "id": "3_1",
@@ -623,17 +717,31 @@
         -2385364.799999959,
         259750.6154733547
       ],
-      "vertices": 34681,
-      "verticesLod1": 18340,
+      "vertices": 10320,
+      "verticesLod1": 10320,
+      "verticesBuildings": 10320,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 280,
-        "trees": 139,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 48
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/3_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_3_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_3_1_LOD1",
+      "staticMeshOrigin": [
+        -2343515.1646875003,
+        240880.29228515626,
+        935.7456535100937
+      ],
+      "staticMeshLod1Origin": [
+        -2343515.1646875003,
+        240880.29228515626,
+        935.7456535100937
+      ]
     },
     {
       "id": "4_1",
@@ -659,17 +767,31 @@
         -2385364.799999959,
         571451.3540413213
       ],
-      "vertices": 25211,
-      "verticesLod1": 16021,
+      "vertices": 6596,
+      "verticesLod1": 6596,
+      "verticesBuildings": 6596,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 206,
-        "trees": 115,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 81
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_4_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_4_1_LOD1",
+      "staticMeshOrigin": [
+        -2395848.6103125,
+        635753.20921875,
+        1293.2955086231232
+      ],
+      "staticMeshLod1Origin": [
+        -2395848.6103125,
+        635753.20921875,
+        1293.2955086231232
+      ]
     },
     {
       "id": "5_1",
@@ -695,17 +817,31 @@
         -2385364.799999959,
         883152.0926092288
       ],
-      "vertices": 390555,
-      "verticesLod1": 52351,
+      "vertices": 331664,
+      "verticesLod1": 35231,
+      "verticesBuildings": 331664,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 280,
-        "trees": 330,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 144
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_5_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_5_1_LOD1",
+      "staticMeshOrigin": [
+        -2380829.709375,
+        891590.988515625,
+        1381.7320227622986
+      ],
+      "staticMeshLod1Origin": [
+        -2327261.82375,
+        960155.8675781251,
+        1330.8304190635681
+      ]
     },
     {
       "id": "6_1",
@@ -731,17 +867,31 @@
         -2385364.799999959,
         1194852.8311771955
       ],
-      "vertices": 467360,
-      "verticesLod1": 63159,
+      "vertices": 359842,
+      "verticesLod1": 37845,
+      "verticesBuildings": 359842,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 280,
-        "trees": 588,
-        "grass": 420,
-        "seagrass": 0,
-        "treesShell": 216
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_6_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_6_1_LOD1",
+      "staticMeshOrigin": [
+        -2384473.0218749996,
+        1193644.84171875,
+        1383.744716644287
+      ],
+      "staticMeshLod1Origin": [
+        -2372270.6634374997,
+        1169012.1796875,
+        1383.744716644287
+      ]
     },
     {
       "id": "7_1",
@@ -767,17 +917,31 @@
         -2385364.799999959,
         1506553.569745162
       ],
-      "vertices": 9012,
-      "verticesLod1": 5744,
+      "vertices": 2924,
+      "verticesLod1": 2924,
+      "verticesBuildings": 2924,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 87,
-        "trees": 40,
-        "grass": 10,
-        "seagrass": 0,
-        "treesShell": 24
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_1_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_1_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_1_LOD1",
+      "staticMeshOrigin": [
+        -2386688.1796875,
+        1395819.8723437502,
+        2190.0999069213867
+      ],
+      "staticMeshLod1Origin": [
+        -2385557.443125,
+        1395819.8723437502,
+        2213.40913772583
+      ]
     },
     {
       "id": "1_2",
@@ -805,15 +969,29 @@
       ],
       "vertices": 34,
       "verticesLod1": 34,
+      "verticesBuildings": 34,
+      "verticesVeg": 0,
+      "foliageInstances": 1085,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 1,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "trees": 78,
+        "grass": 1007
+      },
+      "fileFoliage": "tiles/1_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_1_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_1_2_LOD1",
+      "staticMeshOrigin": [
+        -2058076.036875,
+        -230814.3987890625,
+        880.3241014480591
+      ],
+      "staticMeshLod1Origin": [
+        -2058076.036875,
+        -230814.3987890625,
+        880.3241014480591
+      ]
     },
     {
       "id": "2_2",
@@ -839,17 +1017,31 @@
         -2163470.3999999636,
         -51950.12309461189
       ],
-      "vertices": 1874,
-      "verticesLod1": 545,
+      "vertices": 170,
+      "verticesLod1": 170,
+      "verticesBuildings": 170,
+      "verticesVeg": 0,
+      "foliageInstances": 1178,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 5,
-        "trees": 5,
-        "grass": 128,
-        "seagrass": 0,
-        "treesShell": 3
-      }
+        "trees": 38,
+        "grass": 1140
+      },
+      "fileFoliage": "tiles/2_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_2_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_2_2_LOD1",
+      "staticMeshOrigin": [
+        -2209225.9996875,
+        -39960.98222167969,
+        612.0276778936386
+      ],
+      "staticMeshLod1Origin": [
+        -2220464.7853125,
+        -5722.586513671875,
+        612.0276778936386
+      ]
     },
     {
       "id": "3_2",
@@ -875,17 +1067,31 @@
         -2163470.3999999636,
         259750.6154733547
       ],
-      "vertices": 31679,
-      "verticesLod1": 15220,
+      "vertices": 9670,
+      "verticesLod1": 9670,
+      "verticesBuildings": 9670,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 282,
-        "trees": 135,
-        "grass": 6,
-        "seagrass": 0,
-        "treesShell": 48
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/3_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_3_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_3_2_LOD1",
+      "staticMeshOrigin": [
+        -2169556.39875,
+        264545.5975488281,
+        961.8123382329941
+      ],
+      "staticMeshLod1Origin": [
+        -2169556.39875,
+        264545.5975488281,
+        961.8123382329941
+      ]
     },
     {
       "id": "4_2",
@@ -911,17 +1117,31 @@
         -2163470.3999999636,
         571451.3540413213
       ],
-      "vertices": 32553,
-      "verticesLod1": 20100,
+      "vertices": 9630,
+      "verticesLod1": 9630,
+      "verticesBuildings": 9630,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 2,
         "osm": 280,
-        "trees": 141,
-        "grass": 3,
-        "seagrass": 0,
-        "treesShell": 88
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/4_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_4_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_4_2_LOD1",
+      "staticMeshOrigin": [
+        -2155439.39625,
+        573774.86765625,
+        1589.4305557012558
+      ],
+      "staticMeshLod1Origin": [
+        -2155439.39625,
+        573774.86765625,
+        1589.4305557012558
+      ]
     },
     {
       "id": "5_2",
@@ -947,17 +1167,31 @@
         -2163470.3999999636,
         883152.0926092288
       ],
-      "vertices": 543249,
-      "verticesLod1": 134881,
+      "vertices": 520350,
+      "verticesLod1": 129789,
+      "verticesBuildings": 520350,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 4,
         "enc": 30,
         "osm": 287,
-        "trees": 120,
-        "grass": 326,
-        "seagrass": 182,
-        "treesShell": 81
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/5_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_5_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_5_2_LOD1",
+      "staticMeshOrigin": [
+        -2163616.846875,
+        954440.2127343749,
+        1786.0213607549667
+      ],
+      "staticMeshLod1Origin": [
+        -2163616.846875,
+        958900.770234375,
+        1786.0213607549667
+      ]
     },
     {
       "id": "6_2",
@@ -983,17 +1217,31 @@
         -2163470.3999999636,
         1194852.8311771955
       ],
-      "vertices": 522350,
-      "verticesLod1": 165172,
+      "vertices": 490508,
+      "verticesLod1": 165338,
+      "verticesBuildings": 490508,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 6,
         "enc": 112,
         "osm": 304,
-        "trees": 172,
-        "grass": 68,
-        "seagrass": 183,
-        "treesShell": 88
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_6_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_6_2_LOD1",
+      "staticMeshOrigin": [
+        -2175479.6390625,
+        1169097.13078125,
+        1532.6440185308456
+      ],
+      "staticMeshLod1Origin": [
+        -2175479.6390625,
+        1169097.13078125,
+        1532.6440185308456
+      ]
     },
     {
       "id": "7_2",
@@ -1019,17 +1267,31 @@
         -2163470.3999999636,
         1506553.569745162
       ],
-      "vertices": 28999,
-      "verticesLod1": 15448,
+      "vertices": 6698,
+      "verticesLod1": 6698,
+      "verticesBuildings": 6698,
+      "verticesVeg": 0,
+      "foliageInstances": 3800,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 206,
-        "trees": 111,
-        "grass": 18,
-        "seagrass": 500,
-        "treesShell": 74
-      }
+        "trees": 1200,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_2_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_2_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_2_LOD1",
+      "staticMeshOrigin": [
+        -2125923.6834375,
+        1505927.5626562499,
+        1747.108969092369
+      ],
+      "staticMeshLod1Origin": [
+        -2125923.6834375,
+        1505927.5626562499,
+        1747.108969092369
+      ]
     },
     {
       "id": "1_3",
@@ -1055,17 +1317,69 @@
         -1941575.9999999683,
         -363650.8616625785
       ],
-      "vertices": 6949,
-      "verticesLod1": 4874,
+      "vertices": 2414,
+      "verticesLod1": 2414,
+      "verticesBuildings": 2414,
+      "verticesVeg": 0,
+      "foliageInstances": 1720,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 75,
-        "trees": 28,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 20
-      }
+        "trees": 520,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/1_3_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_1_3_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_1_3_LOD1",
+      "staticMeshOrigin": [
+        -1954005.5892187501,
+        -323078.6684765625,
+        1154.3716758489609
+      ],
+      "staticMeshLod1Origin": [
+        -1954005.5892187501,
+        -323078.6684765625,
+        1154.3716758489609
+      ]
+    },
+    {
+      "id": "2_3",
+      "tx": 2,
+      "ty": 3,
+      "file": "",
+      "fileLod1": "",
+      "bbox": {
+        "west": -70.24499999999999,
+        "east": -70.2075,
+        "south": 41.295,
+        "north": 41.315
+      },
+      "worldMin": [
+        -2052523.1999999464,
+        -207800.49237856566
+      ],
+      "worldMax": [
+        -1830628.7999999905,
+        103900.24618934188
+      ],
+      "worldCenter": [
+        -1941575.9999999683,
+        -51950.12309461189
+      ],
+      "vertices": 0,
+      "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 437,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 15,
+        "grass": 422
+      },
+      "fileFoliage": "tiles/2_3_foliage.json"
     },
     {
       "id": "3_3",
@@ -1091,17 +1405,31 @@
         -1941575.9999999683,
         259750.6154733547
       ],
-      "vertices": 275992,
-      "verticesLod1": 274864,
+      "vertices": 69848,
+      "verticesLod1": 69848,
+      "verticesBuildings": 69848,
+      "verticesVeg": 0,
+      "foliageInstances": 102,
       "sources": {
         "heroes": 0,
         "enc": 13,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "trees": 4,
+        "grass": 98
+      },
+      "fileFoliage": "tiles/3_3_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_3_3_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_3_3_LOD1",
+      "staticMeshOrigin": [
+        -1916297.8406250002,
+        187480.32943359375,
+        274.32000637054443
+      ],
+      "staticMeshLod1Origin": [
+        -1916297.8406250002,
+        187480.32943359375,
+        274.32000637054443
+      ]
     },
     {
       "id": "5_3",
@@ -1127,17 +1455,31 @@
         -1941575.9999999683,
         883152.0926092288
       ],
-      "vertices": 83007,
-      "verticesLod1": 65121,
+      "vertices": 81569,
+      "verticesLod1": 66181,
+      "verticesBuildings": 81569,
+      "verticesVeg": 0,
+      "foliageInstances": 138,
       "sources": {
         "heroes": 0,
         "enc": 12,
         "osm": 15,
         "trees": 2,
-        "grass": 44,
-        "seagrass": 107,
-        "treesShell": 1
-      }
+        "grass": 136
+      },
+      "fileFoliage": "tiles/5_3_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_5_3_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_5_3_LOD1",
+      "staticMeshOrigin": [
+        -1959505.44328125,
+        982581.765703125,
+        556.9149821996689
+      ],
+      "staticMeshLod1Origin": [
+        -1959505.44328125,
+        982581.765703125,
+        583.1960052251816
+      ]
     },
     {
       "id": "6_3",
@@ -1163,17 +1505,31 @@
         -1941575.9999999683,
         1194852.8311771955
       ],
-      "vertices": 71340,
-      "verticesLod1": 69968,
+      "vertices": 69732,
+      "verticesLod1": 69388,
+      "verticesBuildings": 69732,
+      "verticesVeg": 0,
+      "foliageInstances": 2630,
       "sources": {
         "heroes": 0,
         "enc": 6,
         "osm": 10,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 77,
-        "treesShell": 0
-      }
+        "trees": 30,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/6_3_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_6_3_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_6_3_LOD1",
+      "staticMeshOrigin": [
+        -1967354.5790625,
+        1164939.40875,
+        528.2704681158066
+      ],
+      "staticMeshLod1Origin": [
+        -1967354.5790625,
+        1164939.40875,
+        528.2704681158066
+      ]
     },
     {
       "id": "7_3",
@@ -1199,23 +1555,37 @@
         -1941575.9999999683,
         1506553.569745162
       ],
-      "vertices": 8756,
-      "verticesLod1": 4840,
+      "vertices": 4334,
+      "verticesLod1": 4334,
+      "verticesBuildings": 4334,
+      "verticesVeg": 0,
+      "foliageInstances": 2990,
       "sources": {
         "heroes": 0,
         "enc": 9,
         "osm": 104,
-        "trees": 26,
-        "grass": 4,
-        "seagrass": 22,
-        "treesShell": 12
-      }
+        "trees": 390,
+        "grass": 2600
+      },
+      "fileFoliage": "tiles/7_3_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_3_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_3_LOD1",
+      "staticMeshOrigin": [
+        -1942313.41359375,
+        1509190.70859375,
+        943.9994186162949
+      ],
+      "staticMeshLod1Origin": [
+        -1942313.41359375,
+        1509190.70859375,
+        943.9994186162949
+      ]
     },
     {
       "id": "0_4",
       "tx": 0,
       "ty": 4,
-      "file": "tiles/0_4.mesh",
+      "file": "",
       "fileLod1": "",
       "bbox": {
         "west": -70.32,
@@ -1235,17 +1605,62 @@
         -1719681.599999973,
         -675351.6002305452
       ],
-      "vertices": 1912,
+      "vertices": 0,
       "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 255,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
         "trees": 0,
-        "grass": 2,
-        "seagrass": 237,
-        "treesShell": 0
-      }
+        "grass": 255
+      },
+      "fileFoliage": "tiles/0_4_foliage.json",
+      "staticMeshOrigin": [
+        -1612432.1240625,
+        -698354.753671875,
+        313.7255907058716
+      ]
+    },
+    {
+      "id": "1_4",
+      "tx": 1,
+      "ty": 4,
+      "file": "",
+      "fileLod1": "",
+      "bbox": {
+        "west": -70.2825,
+        "east": -70.24499999999999,
+        "south": 41.315,
+        "north": 41.335
+      },
+      "worldMin": [
+        -1830628.7999999905,
+        -519501.2309465913
+      ],
+      "worldMax": [
+        -1608734.399999956,
+        -207800.49237856566
+      ],
+      "worldCenter": [
+        -1719681.599999973,
+        -363650.8616625785
+      ],
+      "vertices": 0,
+      "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 30,
+      "sources": {
+        "heroes": 0,
+        "enc": 0,
+        "osm": 0,
+        "trees": 0,
+        "grass": 30
+      },
+      "fileFoliage": "tiles/1_4_foliage.json"
     },
     {
       "id": "3_4",
@@ -1271,24 +1686,37 @@
         -1719681.599999973,
         259750.6154733547
       ],
-      "vertices": 268464,
-      "verticesLod1": 268464,
+      "vertices": 67118,
+      "verticesLod1": 67118,
+      "verticesBuildings": 67118,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "grass": 0
+      },
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_3_4_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_3_4_LOD1",
+      "staticMeshOrigin": [
+        -1855505.4806249999,
+        200724.879140625,
+        274.32000637054443
+      ],
+      "staticMeshLod1Origin": [
+        -1855505.4806249999,
+        200724.879140625,
+        274.32000637054443
+      ]
     },
     {
       "id": "5_4",
       "tx": 5,
       "ty": 4,
       "file": "tiles/5_4.mesh",
-      "fileLod1": "",
+      "fileLod1": "tiles/5_4_l1.mesh",
       "bbox": {
         "west": -70.1325,
         "east": -70.095,
@@ -1308,16 +1736,29 @@
         883152.0926092288
       ],
       "vertices": 328,
-      "verticesLod1": 0,
+      "verticesLod1": 328,
+      "verticesBuildings": 328,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "sources": {
         "heroes": 0,
         "enc": 3,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "grass": 0
+      },
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_5_4_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_5_4_LOD1",
+      "staticMeshOrigin": [
+        -1808317.3209375,
+        966696.208828125,
+        259.99441146850586
+      ],
+      "staticMeshLod1Origin": [
+        -1808317.3209375,
+        966696.208828125,
+        259.99441146850586
+      ]
     },
     {
       "id": "7_4",
@@ -1343,23 +1784,37 @@
         -1719681.599999973,
         1506553.569745162
       ],
-      "vertices": 4158,
-      "verticesLod1": 1844,
+      "vertices": 1288,
+      "verticesLod1": 1288,
+      "verticesBuildings": 1288,
+      "verticesVeg": 0,
+      "foliageInstances": 1456,
       "sources": {
         "heroes": 0,
         "enc": 5,
         "osm": 28,
-        "trees": 14,
-        "grass": 0,
-        "seagrass": 54,
-        "treesShell": 8
-      }
+        "trees": 256,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_4_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_4_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_4_LOD1",
+      "staticMeshOrigin": [
+        -1777324.22109375,
+        1574597.1571875,
+        1159.9414199590683
+      ],
+      "staticMeshLod1Origin": [
+        -1777324.22109375,
+        1574597.1571875,
+        1159.9414199590683
+      ]
     },
     {
       "id": "0_5",
       "tx": 0,
       "ty": 5,
-      "file": "tiles/0_5.mesh",
+      "file": "",
       "fileLod1": "",
       "bbox": {
         "west": -70.32,
@@ -1379,24 +1834,26 @@
         -1497787.1999999387,
         -675351.6002305452
       ],
-      "vertices": 2248,
+      "vertices": 0,
       "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 1222,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 1,
-        "seagrass": 280,
-        "treesShell": 0
-      }
+        "trees": 22,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/0_5_foliage.json"
     },
     {
       "id": "6_5",
       "tx": 6,
       "ty": 5,
       "file": "tiles/6_5.mesh",
-      "fileLod1": "",
+      "fileLod1": "tiles/6_5_l1.mesh",
       "bbox": {
         "west": -70.095,
         "east": -70.05749999999999,
@@ -1416,22 +1873,35 @@
         1194852.8311771955
       ],
       "vertices": 102,
-      "verticesLod1": 0,
+      "verticesLod1": 102,
+      "verticesBuildings": 102,
+      "verticesVeg": 0,
+      "foliageInstances": 0,
       "sources": {
         "heroes": 0,
         "enc": 1,
         "osm": 0,
         "trees": 0,
-        "grass": 0,
-        "seagrass": 0,
-        "treesShell": 0
-      }
+        "grass": 0
+      },
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_6_5_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_6_5_LOD1",
+      "staticMeshOrigin": [
+        -1442387.95453125,
+        1135765.1671875,
+        96.7739999294281
+      ],
+      "staticMeshLod1Origin": [
+        -1442387.95453125,
+        1135765.1671875,
+        96.7739999294281
+      ]
     },
     {
       "id": "7_5",
       "tx": 7,
       "ty": 5,
-      "file": "tiles/7_5.mesh",
+      "file": "",
       "fileLod1": "",
       "bbox": {
         "west": -70.05749999999999,
@@ -1451,17 +1921,19 @@
         -1497787.1999999387,
         1506553.569745162
       ],
-      "vertices": 232,
+      "vertices": 0,
       "verticesLod1": 0,
+      "verticesBuildings": 0,
+      "verticesVeg": 0,
+      "foliageInstances": 1202,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 29,
-        "treesShell": 0
-      }
+        "trees": 2,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_5_foliage.json"
     },
     {
       "id": "7_6",
@@ -1487,17 +1959,31 @@
         -1275892.7999999435,
         1506553.569745162
       ],
-      "vertices": 226,
+      "vertices": 34,
       "verticesLod1": 34,
+      "verticesBuildings": 34,
+      "verticesVeg": 0,
+      "foliageInstances": 1223,
       "sources": {
         "heroes": 0,
         "enc": 0,
         "osm": 1,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 24,
-        "treesShell": 0
-      }
+        "trees": 23,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_6_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_6_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_6_LOD1",
+      "staticMeshOrigin": [
+        -1304472.8006250001,
+        1644351.470625,
+        512.793219089508
+      ],
+      "staticMeshLod1Origin": [
+        -1304472.8006250001,
+        1644351.470625,
+        512.793219089508
+      ]
     },
     {
       "id": "7_7",
@@ -1523,17 +2009,31 @@
         -1053998.399999948,
         1506553.569745162
       ],
-      "vertices": 1452,
-      "verticesLod1": 700,
+      "vertices": 900,
+      "verticesLod1": 900,
+      "verticesBuildings": 900,
+      "verticesVeg": 0,
+      "foliageInstances": 1232,
       "sources": {
         "heroes": 1,
         "enc": 0,
         "osm": 0,
-        "trees": 0,
-        "grass": 0,
-        "seagrass": 69,
-        "treesShell": 0
-      }
+        "trees": 32,
+        "grass": 1200
+      },
+      "fileFoliage": "tiles/7_7_foliage.json",
+      "staticMesh": "/Game/Structures/nantucket/Cooked/SM_Struct_7_7_LOD0",
+      "staticMeshLod1": "/Game/Structures/nantucket/Cooked/SM_Struct_7_7_LOD1",
+      "staticMeshOrigin": [
+        -997415.3160937501,
+        1427173.79109375,
+        1284.356451034546
+      ],
+      "staticMeshLod1Origin": [
+        -997415.3160937501,
+        1427173.79109375,
+        1284.356451034546
+      ]
     }
   ]
 }

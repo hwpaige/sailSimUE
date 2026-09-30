@@ -571,12 +571,12 @@ UInstancedStaticMeshComponent* UEncAidSubsystem::EnsureIsm(int32 MeshId, const F
 	Ism->SetStaticMesh(Mesh);
 	PrepareMeshMaterialsForIsm(Mesh, Ism);
 	Ism->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Ism->SetCastShadow(true);
+	Ism->SetCastShadow(false); // VSM pages from hundreds of small buoys are pure cost
 	Ism->SetVisibility(true);
 	Ism->SetHiddenInGame(false);
-	Ism->bNeverDistanceCull = true;
-	// Large end distance — never fade. (0,0 can be treated as "cull immediately" on some paths.)
-	Ism->SetCullDistances(0, 5000000);
+	// Real distance cull (was never-cull + 50 km — keeps 300+ instances forever)
+	Ism->bNeverDistanceCull = false;
+	Ism->SetCullDistances(120000.f, 220000.f); // fade 1.2–2.2 km
 	Ism->RegisterComponent();
 	Ism->SetWorldLocation(AnchorWorld);
 	Owner->AddInstanceComponent(Ism);
@@ -674,11 +674,11 @@ UInstancedStaticMeshComponent* UEncAidSubsystem::EnsureMooringIsm(
 		PrepareMeshMaterialsForIsm(Mesh, Ism);
 	}
 	Ism->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Ism->SetCastShadow(true);
+	Ism->SetCastShadow(false);
 	Ism->SetVisibility(true);
 	Ism->SetHiddenInGame(false);
-	Ism->bNeverDistanceCull = true;
-	Ism->SetCullDistances(0, 5000000);
+	Ism->bNeverDistanceCull = false;
+	Ism->SetCullDistances(100000.f, 180000.f); // mooring field: fade ~1–1.8 km
 	Ism->RegisterComponent();
 	Ism->SetWorldLocation(AnchorWorld);
 	Owner->AddInstanceComponent(Ism);

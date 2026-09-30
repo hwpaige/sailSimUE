@@ -19,11 +19,14 @@ Port the browser SailSim (Angular UI + FastAPI numpy loft + ~12k-line Three.js/W
 
 Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verified):
 - Single session `SailBoatPawn_0` at open water `(95000, 72000)`; map boat + Landscape proxies removed.
+- Mooring model: **1 hero** (`MaxBoats` = 1, `MaxNearFullBoats` = 1) + harbor fill `MooringSceneryInstanceCount` = 96. Prefer-ON density gate reports scenery (floor ~64 / soft ~96) and heroes. `MaxBoats` is not harbor fill (`docs/perf/MOORING_SCENERY.md`).
 - Native Water + **28-wave Gerstner**, material polish, local tess ~140 km, backend `GerstnerWaterBody`.
 - Cloth: Verlet + shear/batten springs; fill × scale into VPP.
 - Presets 1–4, LOA scale −/=, Python re-loft **R**.
 - Chase cam raised; heel golden retuned.
 - **MCP tip:** after editor crash, `CrashReportClient` can steal port **8765** — kill it, then `ModelContextProtocol.StartServer 8765`.
+
+**P4 note (sheet/vang → VPP):** `Vang01`/`Outhaul01` now scale Cl (and mild Cd) inside `FBoatDynamics::ComputeSailForceStub` to match web trim feel; `SheetEase` IdealEase path unchanged. `UpdateSailCloth` already pushes Outhaul01/Vang01 and passes SheetEase into `MainCloth.Step` each tick.
 
 ## Immediate backlog (execution queue)
 
@@ -37,8 +40,10 @@ Phases 0–2 done. **P3/P4 partial. P5.2 open-ocean foundation done** (PIE verif
 | 6 | ✅ Chase camera raised (−28°, higher arm offsets) | `SailBoatPawn` | done | re-verify after 0042 |
 | 7 | Dynamics calibration vs web + j105 calibrate scripts | C++ | med | golden ~10% |
 | 8 | Lighting / sea moods (P5.3) | map + data | low | Lit capture |
+| 8b | AAA lighting/water/island perf stack (A–C in progress) | `docs/perf/AAA_STACK_IMPLEMENTATION_PLAN.md` | med | `docs/perf/GPU_ABL_LOG.md` |
 | 9 | ✅ P5.2 open ocean (Gerstner + no island + single boat) | ocean subsystem | done | PIE capture |
-| 10 | **Next:** P4 trim (sheet/vang) or P3 C++ loft | cloth / loft | med | |
+| 9b | **In progress:** continuous ocean — Gerstner to horizon, soft near→far normals, localTess 400–700 m hard cap (no water-pro) | `SailOceanSubsystem` | med | SailSim_Ocean PIE + CaptureViewport past tess edge |
+| 10 | ✅ P4 trim: Vang01/Outhaul01 → ComputeSailForceStub Cl/Cd (sheet IdealEase unchanged; cloth still gets sheet/vang/outhaul each tick) | `BoatDynamics.cpp` | low | PIE sheet/vang/outhaul vs speed/heel |
 
 ### C++ recompile loop — SOLVED ✅
 Editor MCP can't trigger a C++ build, so Claude drives it via **computer-use**:
@@ -62,7 +67,9 @@ Unlit view shows the hull is correctly **light cream** (base color fine). It loo
 
 ## How we work
 - **MCP-first:** drive the editor via the `unreal` server; write C++/config to disk; recompile via editor Live Coding / build.
-- **Verify visually:** `CaptureViewport` for editor look; `StartPIE` + capture + log read for behavior. Don't mark a step done on "build succeeded" alone.
+- **Verify visually:** `CaptureViewport` for the free editor camera; `SailSimToolset.StartPIE` + `CapturePlayerView` (log `grab=HighResShot` or `grab=ViewportFramebuffer`, `litOverride=0`) for the active Lit viewport. Don't mark a step done on "build succeeded" alone. Scene capture is not a scoring shot.
 - **Ask the user only for:** credentials, GUI-only actions MCP can't do, genuine design choices, and final feel/look verification.
 - **Never** copy `threejs-water-pro/src` into this repo.
 - Keep this file current: check tasks off, append findings.
+
+| mcp | **In progress:** SailSimToolset gate tools — CapturePlayerView (1x Lit viewport HighResShot), StartPIE/EnsurePIE, GetPerfSnapshot, SetCVars, ExecuteConsole, ProfileGPUDump, LoadMap | `Plugins/SailSimToolset` | med | Prefer-ON CPV log `grab=HighResShot` `litOverride=0` |

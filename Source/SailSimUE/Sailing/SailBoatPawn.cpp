@@ -968,6 +968,53 @@ void ASailBoatPawn::UpdateBoatLights()
 	if (!bMastPivotValid && MastBaseLoc.IsNearlyZero()) return;
 	EnsureBoatLightsBuilt();
 
+	const bool On[BoatLightCount] = {
+		bBreakerNav, bBreakerNav, bBreakerNav,
+		bBreakerSteaming, bBreakerAnchor,
+		bBreakerDeck, bBreakerDeck, bBreakerCabin
+	};
+	uint8 BreakerMask = 0;
+	for (int32 I = 0; I < BoatLightCount; ++I)
+	{
+		if (On[I]) BreakerMask |= static_cast<uint8>(1u << I);
+	}
+
+	// Day/night scale from ocean preset / sun (ignore moon).
+	float Night01 = 1.f;
+	if (UWorld* World = GetWorld())
+	{
+		if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
+		{
+			const float OceanNight = Ocean->GetNightAmount();
+			if (OceanNight > 0.01f)
+			{
+				// Continuous TOD: smooth, stable (no per-frame sun intensity scan).
+				Night01 = FMath::Clamp(OceanNight, 0.f, 1.f);
+			}
+			else
+			{
+				const uint8 Preset = Ocean->GetActiveEnvPreset();
+				if (Preset == 3) Night01 = 1.f;       // Night
+				else if (Preset == 2) Night01 = 0.85f; // Dusk
+				else if (Preset == 1) Night01 = 0.55f; // Golden
+				else Night01 = 0.18f;                 // Fair / overcast / storm / fog day
+			}
+		}
+	}
+	const float VisScale = FMath::Clamp(Night01, 0.15f, 1.f);
+
+	// Skip full light/material thrash when nothing meaningful changed.
+	// Recreating MIDs + SetIntensity every tick was flashing the whole scene (Lumen/AE).
+	if (BreakerMask == CachedBoatLightBreakerMask
+		&& FMath::IsNearlyEqual(VisScale, CachedBoatLightVisScale, 0.02f)
+		&& bBoatLightsBuilt
+		&& LightHousingMids.Num() == BoatLightCount)
+	{
+		return;
+	}
+	CachedBoatLightBreakerMask = BreakerMask;
+	CachedBoatLightVisScale = VisScale;
+
 	const float MeshS = ActiveSpec.MeshUniformScale();
 	const FVector MastBase = MastBaseLoc * MeshS;
 	const float MastH = FMath::Max(100.f, ActiveSpec.I * 30.48f * MeshS);
@@ -981,11 +1028,9 @@ void ASailBoatPawn::UpdateBoatLights()
 
 	// Fixtures on the boat — bow is much narrower than max beam, so do NOT use
 	// full HalfB at the stem (that hangs lights over open water).
-	// Port/stbd sit on the bow pulpit / stemhead corners (~35–40% of max half-beam).
 	const float BowHalfY = HalfB * 0.36f;
 	const FVector PosPort(Mx + Jcm * 0.72f, -BowHalfY, Mz + 0.50f * Ft);
 	const FVector PosStbd(Mx + Jcm * 0.72f, BowHalfY, Mz + 0.50f * Ft);
-	// Stern light on the transom centerline (slightly inboard of the rail).
 	const FVector PosStern(Mx - LoaCm * 0.46f, 0.f, Mz + 0.65f * Ft);
 	const FVector PosSteam(Mx + 0.2f * Ft, 0.f, Mz + MastH * 0.65f);
 	const FVector PosAnchor(Mx, 0.f, MastTop.Z + 0.12f * Ft);
@@ -999,72 +1044,28 @@ void ASailBoatPawn::UpdateBoatLights()
 		PosPort, PosStbd, PosStern, PosSteam, PosAnchor, PosDeckP, PosDeckS, PosCabin
 	};
 
-	// Saturated COLREGS lens colors (must read as red/green even at distance).
 	const FLinearColor Colors[BoatLightCount] = {
-		FLinearColor(1.00f, 0.04f, 0.02f),   // port red
-		FLinearColor(0.02f, 0.95f, 0.18f),   // stbd green
-		FLinearColor(0.98f, 0.96f, 0.90f),   // stern white
-		FLinearColor(0.97f, 0.96f, 0.92f),   // steaming
-		FLinearColor(0.96f, 0.97f, 1.00f),   // anchor
-		FLinearColor(1.00f, 0.82f, 0.55f),   // deck halogen
+		FLinearColor(1.00f, 0.04f, 0.02f),
+		FLinearColor(0.02f, 0.95f, 0.18f),
+		FLinearColor(0.98f, 0.96f, 0.90f),
+		FLinearColor(0.97f, 0.96f, 0.92f),
+		FLinearColor(0.96f, 0.97f, 1.00f),
 		FLinearColor(1.00f, 0.82f, 0.55f),
-		FLinearColor(1.00f, 0.72f, 0.42f),   // cabin tungsten
+		FLinearColor(1.00f, 0.82f, 0.55f),
+		FLinearColor(1.00f, 0.72f, 0.42f),
 	};
 
-	const bool On[BoatLightCount] = {
-		bBreakerNav, bBreakerNav, bBreakerNav,
-		bBreakerSteaming, bBreakerAnchor,
-		bBreakerDeck, bBreakerDeck, bBreakerCabin
-	};
-
-	// Day/night scale from the *sun* only (ignore moon / dim night lights).
-	// Night → full output; bright day → fixtures dim so they don't look like floods.
-	float Night01 = 1.f;
-	if (UWorld* World = GetWorld())
-	{
-		// Prefer env preset when available.
-		if (USailOceanSubsystem* Ocean = World->GetSubsystem<USailOceanSubsystem>())
-		{
-			const uint8 Preset = Ocean->GetActiveEnvPreset();
-			// ESailEnvPreset: FairDay=0 … Night=3
-			if (Preset == 3) // Night
-			{
-				Night01 = 1.f;
-			}
-			else if (Preset == 2) // Dusk
-			{
-				Night01 = 0.85f;
-			}
-			else if (Preset == 1) // Golden
-			{
-				Night01 = 0.55f;
-			}
-			else
-			{
-				// Fair / overcast / storm / fog: derive from brightest non-moon directional.
-				float BestSun = 0.f;
-				for (TActorIterator<ADirectionalLight> It(World); It; ++It)
-				{
-					ADirectionalLight* L = *It;
-					if (!IsValid(L)) continue;
-					if (L->GetActorNameOrLabel().Contains(TEXT("SailSim_Moon"))) continue;
-					if (UDirectionalLightComponent* C = Cast<UDirectionalLightComponent>(L->GetLightComponent()))
-					{
-						if (C->IsVisible())
-						{
-							BestSun = FMath::Max(BestSun, C->Intensity);
-						}
-					}
-				}
-				// sun int 0..10 → night factor 1..0.15
-				Night01 = FMath::GetMappedRangeValueClamped(
-					FVector2D(0.3f, 8.f), FVector2D(1.f, 0.18f), BestSun);
-			}
-		}
-	}
-	const float VisScale = FMath::Clamp(Night01, 0.15f, 1.f);
 	// Extra punch for lens emissives at night (exposure bias darkens the scene).
 	const float LensEmMul = FMath::Lerp(1.2f, 8.f, VisScale);
+
+	if (LightHousingMids.Num() != BoatLightCount)
+	{
+		LightHousingMids.SetNum(BoatLightCount);
+	}
+	if (LightLensMids.Num() != BoatLightCount)
+	{
+		LightLensMids.SetNum(BoatLightCount);
+	}
 
 	// Housing + lens larger so red/green read as fixtures, not dust motes.
 	const FLinearColor HousingCol(0.05f, 0.05f, 0.055f);
@@ -1092,7 +1093,13 @@ void ASailBoatPawn::UpdateBoatLights()
 			H->SetVisibility(true);
 			H->SetHiddenInGame(false);
 			H->SetCastShadow(false);
-			if (UMaterialInstanceDynamic* Mid = H->CreateAndSetMaterialInstanceDynamic(0))
+			UMaterialInstanceDynamic* Mid = LightHousingMids[I].Get();
+			if (!Mid)
+			{
+				Mid = H->CreateAndSetMaterialInstanceDynamic(0);
+				LightHousingMids[I] = Mid;
+			}
+			if (Mid)
 			{
 				Mid->SetVectorParameterValue(TEXT("Color"), HousingCol);
 				Mid->SetVectorParameterValue(TEXT("BaseColor"), HousingCol);
@@ -1110,12 +1117,16 @@ void ASailBoatPawn::UpdateBoatLights()
 			Lens->SetVisibility(true);
 			Lens->SetHiddenInGame(false);
 			Lens->SetCastShadow(false);
-			// Lenses must not be depth-culled against dark hull at night.
 			Lens->SetBoundsScale(2.f);
-			if (UMaterialInstanceDynamic* Mid = Lens->CreateAndSetMaterialInstanceDynamic(0))
+			UMaterialInstanceDynamic* Mid = LightLensMids[I].Get();
+			if (!Mid)
+			{
+				Mid = Lens->CreateAndSetMaterialInstanceDynamic(0);
+				LightLensMids[I] = Mid;
+			}
+			if (Mid)
 			{
 				const bool bLit = On[I];
-				// Off: dark tinted glass. On: saturated color + strong emissive.
 				const FLinearColor Base = bLit ? Colors[I] : (Colors[I] * 0.12f);
 				const float Em = bLit ? (2.5f * LensEmMul) : 0.f;
 				Mid->SetVectorParameterValue(TEXT("Color"), Base);
@@ -1928,8 +1939,10 @@ void ASailBoatPawn::BeginPlay()
 void ASailBoatPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	// ONLY "Turn" (A/D). Do NOT also bind engine "MoveRight" — with Enhanced Input
+	// / leftover axis maps that can overwrite HelmAxis every frame (often with 0 or
+	// stick noise) and thrash / disengage the autopilot.
 	PlayerInputComponent->BindAxis(TEXT("Turn"), this, &ASailBoatPawn::OnMoveRight);
-	PlayerInputComponent->BindAxis(TEXT("MoveRight"), this, &ASailBoatPawn::OnMoveRight);
 	PlayerInputComponent->BindAxis(TEXT("Sheet"), this, &ASailBoatPawn::OnSheetAxis);
 	PlayerInputComponent->BindAxis(TEXT("Outhaul"), this, &ASailBoatPawn::OnOuthaulAxis);
 	PlayerInputComponent->BindAxis(TEXT("Vang"), this, &ASailBoatPawn::OnVangAxis);
@@ -2087,8 +2100,8 @@ void ASailBoatPawn::SetAutoHeading(bool bEnabled)
 {
 	if (bEnabled)
 	{
-		// Pilot takes the helm — zero sticky tiller so hand-off is clean
-		HeldHelmStarboardDeg = 0.f;
+		// Keep sticky tiller synced to live helm (don't force midships on engage).
+		HeldHelmStarboardDeg = -Dynamics.Rudder;
 		// Web hEngageAutopilot(captureLive): NAV re-seeds the route from the chart.
 		if (Dynamics.AutoMode == FBoatDynamics::EAutoMode::Nav)
 		{
@@ -2238,30 +2251,19 @@ static void SailSimNavRangeBearing(const FVector& BoatLocCm, double WpLat, doubl
 }
 
 /**
- * Heading command so *course over ground* aims at the mark.
- * Aiming the bow at the WP leaves a leeward miss (Beta / Vsway crab).
- * With way on: AutoTarget = Heading + (Brg − COG)  →  equilibrium COG = Brg.
- * Nearly stopped: fall back to raw bearing (no reliable COG).
+ * Stable NAV helm setpoint = true bearing to the mark (web hNavUpdateTarget).
+ *
+ * Do NOT feed COG back into AutoTarget every frame (Heading + (Brg−COG)).
+ * That couples noisy U/Vsway into the heading PID → rudder chatter → surge
+ * fore/aft stutter. A small open-loop leeway bias from Beta is OK because it
+ * is not a velocity feedback loop.
  */
 static float SailSimNavHeadingCmd(const FBoatDynamics& Dyn, double BrgDeg)
 {
 	const float Brg = FBoatDynamics::Wrap360(static_cast<float>(BrgDeg));
-	// Need a few tenths of a knot for COG to be meaningful.
-	if (Dyn.V < 0.6f) // ft/s ≈ 0.35 kn
-	{
-		return Brg;
-	}
-	const float Hrad = FMath::DegreesToRadians(Dyn.Heading);
-	const float CosH = FMath::Cos(Hrad);
-	const float SinH = FMath::Sin(Hrad);
-	// World velocity (same axes as ApplyDynamicsToTransform).
-	const float Vx = Dyn.U * CosH - Dyn.Vsway * SinH; // north
-	const float Vy = Dyn.U * SinH + Dyn.Vsway * CosH; // east
-	const float Cog = FBoatDynamics::Wrap360(
-		FMath::RadiansToDegrees(FMath::Atan2(Vy, Vx)));
-	const float CogErr = FBoatDynamics::Wrap180(Brg - Cog);
-	// Command a heading that cancels the COG error (includes leeway).
-	return FBoatDynamics::Wrap360(Dyn.Heading + CogErr);
+	// Mild open-loop crab compensation; clamp so a wild Beta cannot thrash helm.
+	const float Lee = FMath::Clamp(Dyn.Beta, -12.f, 12.f);
+	return FBoatDynamics::Wrap360(Brg - Lee);
 }
 
 /** Arrival radius (nm). Fixed 0.01 nm ≈ 61 ft (~1.8 boat lengths on a J/105). */
@@ -2443,20 +2445,20 @@ void ASailBoatPawn::UpdateNavTarget()
 	{
 		Nav->SetSelectedIndex(Dynamics.NavWpIndex);
 	}
-	// Steer so track (COG) hits the mark — not just the bow bearing.
-	Dynamics.AutoTarget = SailSimNavHeadingCmd(Dynamics, BrgDeg);
 
-	// Periodic diagnostics (every ~2 s).
-	static double LastNavLog = -1000.0;
-	const double Now = FPlatformTime::Seconds();
-	if (Now - LastNavLog > 2.0)
+	// Stable bearing setpoint (no per-frame COG feedback).
+	// Near the pin, raw brg can spin; rate-limit so the helm does not thrash.
+	const float Desired = SailSimNavHeadingCmd(Dynamics, BrgDeg);
+	const float Delta = FBoatDynamics::Wrap180(Desired - Dynamics.AutoTarget);
+	// ~30°/s at 60 fps → smooth, still responsive on course changes.
+	constexpr float MaxStepDeg = 0.5f;
+	if (FMath::Abs(Delta) <= MaxStepDeg)
 	{
-		LastNavLog = Now;
-		const float Err = FBoatDynamics::Wrap180(Dynamics.AutoTarget - Dynamics.Heading);
-		UE_LOG(LogSailSim, Log,
-			TEXT("[nav] track WP%d/%d  dist=%.2fnm  brg=%.0f°  cmd=%.0f°  hdg=%.0f°  beta=%+.1f°  err=%+.0f°  sog=%.1fkt"),
-			Dynamics.NavWpIndex + 1, Nav->Num(), DistNm, BrgDeg, Dynamics.AutoTarget,
-			Dynamics.Heading, Dynamics.Beta, Err, Dynamics.GetSpeedKnots());
+		Dynamics.AutoTarget = Desired;
+	}
+	else
+	{
+		Dynamics.AutoTarget = FBoatDynamics::Wrap360(Dynamics.AutoTarget + FMath::Sign(Delta) * MaxStepDeg);
 	}
 }
 
@@ -3556,53 +3558,80 @@ void ASailBoatPawn::Tick(float DeltaSeconds)
 	// --- CPU profiling scopes (Settings → PERFORMANCE) ---
 	{
 		SAIL_PERF_SCOPE(Dynamics);
-		// Sticky tiller (restored): A/D rates the held angle; release keeps it.
-		// No snap-to-stop, no auto return to center. Tack owns rudder during maneuver.
-		if (!Dynamics.bTacking)
+		// Sticky tiller: A/D rates held angle. While AP is on, rudder is owned
+		// exclusively by Dynamics.UpdateHelm — keyboard/gamepad/UI cannot touch it.
+		if (!Dynamics.bTacking && !Dynamics.bAutoHeading)
 		{
-			if (FMath::Abs(HelmAxis) > 0.05f)
+			constexpr float HelmAxisDead = 0.12f;
+			if (FMath::Abs(HelmAxis) > HelmAxisDead)
 			{
-				if (Dynamics.bAutoHeading)
-				{
-					// Hand on tiller — seamless take-over from pilot
-					HeldHelmStarboardDeg = -Dynamics.Rudder;
-				}
-				const float HelmRateDegS = 35.f; // °/s at full A or D
+				const float HelmRateDegS = 35.f;
 				HeldHelmStarboardDeg = FMath::Clamp(
 					HeldHelmStarboardDeg + HelmAxis * HelmRateDegS * Dt, -35.f, 35.f);
 			}
-			if (!Dynamics.bAutoHeading || FMath::Abs(HelmAxis) > 0.05f)
-			{
-				Dynamics.SetRudderStarboardPositive(HeldHelmStarboardDeg);
-			}
+			Dynamics.SetRudderStarboardPositive(HeldHelmStarboardDeg);
+		}
+		else if (Dynamics.bAutoHeading && FMath::Abs(HelmAxis) > 0.55f)
+		{
+			// Explicit hard take-over: full stick/key held — disengage pilot once.
+			HeldHelmStarboardDeg = -Dynamics.Rudder;
+			const float HelmRateDegS = 35.f;
+			HeldHelmStarboardDeg = FMath::Clamp(
+				HeldHelmStarboardDeg + HelmAxis * HelmRateDegS * Dt, -35.f, 35.f);
+			Dynamics.SetRudderStarboardPositive(HeldHelmStarboardDeg);
 		}
 
 		if (FMath::Abs(SheetAxis) > 0.05f)
 		{
-			// W (+1) sheets in, S (−1) eases out — main boom max angle + jib lee sheet length
 			Dynamics.SetSheetEase(Dynamics.SheetEase - SheetAxis * 0.55f * Dt);
 		}
 		if (FMath::Abs(OuthaulAxis) > 0.05f)
 		{
-			// O = on (increase), P = ease
 			SetOuthaul(Dynamics.Outhaul01 + OuthaulAxis * 0.55f * Dt);
 		}
 		if (FMath::Abs(VangAxis) > 0.05f)
 		{
-			// V = hard on (decrease Vang01), B = ease off
 			SetVang(Dynamics.Vang01 + VangAxis * 0.55f * Dt);
 		}
 		if (FMath::Abs(JibCarAxis) > 0.05f)
 		{
-			// I = aft, U = forward
 			SetJibCar(Dynamics.JibCar01 + JibCarAxis * 0.45f * Dt);
 		}
 		if (FMath::Abs(JibLeechAxis) > 0.05f)
 		{
-			// M = tighter leech, N = ease
 			SetJibLeechTension(Dynamics.JibLeechTension01 + JibLeechAxis * 0.55f * Dt);
 		}
+
+		const float HdgBefore = Dynamics.Heading;
 		Dynamics.Update(Dt);
+
+		// High-rate diagnostic (every ~0.5 s) — root-cause heading thrash.
+		{
+			static double LastHdgLog = -1000.0;
+			const double Now = FPlatformTime::Seconds();
+			if (Now - LastHdgLog >= 0.5)
+			{
+				LastHdgLog = Now;
+				const float Err = FBoatDynamics::Wrap180(Dynamics.AutoTarget - Dynamics.Heading);
+				const float ActorYaw = GetActorRotation().Yaw;
+				UE_LOG(LogSailSim, Warning,
+					TEXT("[hdg] Hdg=%.1f ActYaw=%.1f Tgt=%.1f Err=%+.1f Rud=%.1f Auto=%d Mode=%d ")
+					TEXT("YawR=%.1f HelmAx=%.2f Held=%.1f Cloth=%.2f Tws=%.1f Twd=%.0f Nsail=%.0f Lee=%d"),
+					Dynamics.Heading, ActorYaw, Dynamics.AutoTarget, Err, Dynamics.Rudder,
+					Dynamics.bAutoHeading ? 1 : 0, static_cast<int32>(Dynamics.AutoMode),
+					Dynamics.YawRate, HelmAxis, HeldHelmStarboardDeg,
+					Dynamics.ClothForceScale, Dynamics.TrueWindSpeedKn, Dynamics.TrueWindDirDeg,
+					Dynamics.GetNsailYaw(), Dynamics.GetLeeSign());
+				// Detect single-tick jumps that prove thrash source.
+				const float Jump = FMath::Abs(FBoatDynamics::Wrap180(Dynamics.Heading - HdgBefore));
+				if (Jump > 8.f)
+				{
+					UE_LOG(LogSailSim, Error,
+						TEXT("[hdg] JUMP %.1f° in one tick (dt=%.3f) R=%.3f rad/s"),
+						Jump, Dt, Dynamics.R);
+				}
+			}
+		}
 	}
 
 	// Water height / buoyancy samples (CPU) — separated from boat dynamics

@@ -25,6 +25,21 @@ void UNantucketTerrainSubsystem::Initialize(FSubsystemCollectionBase& Collection
 	ReloadManifest();
 }
 
+void UNantucketTerrainSubsystem::SetSeason(float InSeason01)
+{
+	Season01 = FMath::Clamp(InSeason01, 0.f, 1.f);
+	for (TPair<uint64, FResidentTile>& Pair : Resident)
+	{
+		ApplySeasonToMid(Pair.Value.Mid);
+	}
+}
+
+void UNantucketTerrainSubsystem::ApplySeasonToMid(UMaterialInstanceDynamic* Mid) const
+{
+	if (!Mid) return;
+	Mid->SetScalarParameterValue(TEXT("Season01"), Season01);
+}
+
 void UNantucketTerrainSubsystem::Deinitialize()
 {
 	TArray<uint64> Keys;
@@ -94,6 +109,7 @@ bool UNantucketTerrainSubsystem::ReloadManifest()
 	bManifestLoaded = false;
 	TileDescs.Reset();
 	KeyToDescIndex.Empty();
+	FailedTileKeys.Empty();
 
 	FString Root;
 	if (!ResolveTerrainRoot(Root))
@@ -146,6 +162,21 @@ bool UNantucketTerrainSubsystem::LoadManifestFromRoot(const FString& Root)
 		if ((*StreamObj)->HasField(TEXT("lod0Radius")))
 		{
 			Lod0Radius = FMath::Clamp((int32)(*StreamObj)->GetNumberField(TEXT("lod0Radius")), 0, 4);
+		}
+		if (Lod0Radius > LoadRadius)
+		{
+			Lod0Radius = LoadRadius;
+		}
+		// Current terrain bake: most tiles/*_l1.mesh have nI=0 (no triangles).
+		// Forcing shell LOD on Cheb>lod0 left a hollow ring at the load edge.
+		// Prefer full LOD0 for the entire load disc until shell is re-baked.
+		// EnsureTile still falls back LOD1→LOD0 if shell is requested later.
+		if (Lod0Radius < LoadRadius)
+		{
+			UE_LOG(LogSailSim, Log,
+				TEXT("NantucketTerrain: raising lod0Radius %d→%d (shell *_l1 often nI=0)"),
+				Lod0Radius, LoadRadius);
+			Lod0Radius = LoadRadius;
 		}
 	}
 
@@ -334,20 +365,62 @@ void UNantucketTerrainSubsystem::EnsureTile(int32 Tx, int32 Ty, int32 Lod)
 	if (!DescIdx || !TileDescs.IsValidIndex(*DescIdx)) return;
 	const FNantucketTileDesc& Desc = TileDescs[*DescIdx];
 
-	FString Rel = (Lod == 0 || Desc.FileLod1.IsEmpty()) ? Desc.FileLod0 : Desc.FileLod1;
-	// If lod1 requested but file missing, fall back
-	if (Lod == 1 && !Desc.FileLod1.IsEmpty())
+	// Prefer requested LOD; shell (LOD1) meshes in the current bake are often
+	// corrupt (nI=0). Always fall back to LOD0 so the load disc is never hollow.
+	int32 EffectiveLod = Lod;
+	FString Rel;
+	if (EffectiveLod == 1 && !Desc.FileLod1.IsEmpty())
 	{
 		const FString Abs1 = TerrainRoot / Desc.FileLod1;
-		if (!FPaths::FileExists(Abs1))
+		if (FPaths::FileExists(Abs1) && !FailedTileKeys.Contains(FailKey(Tx, Ty, 1)))
 		{
+			Rel = Desc.FileLod1;
+		}
+		else
+		{
+			// Missing or previously-failed shell → full mesh
+			EffectiveLod = 0;
 			Rel = Desc.FileLod0;
-			Lod = 0;
+		}
+	}
+	else
+	{
+		EffectiveLod = 0;
+		Rel = Desc.FileLod0;
+	}
+
+	if (FailedTileKeys.Contains(FailKey(Tx, Ty, EffectiveLod)))
+	{
+		// Last chance: if LOD0 poisoned but LOD1 was never tried (unlikely), stop.
+		if (EffectiveLod == 0)
+		{
+			return;
+		}
+		EffectiveLod = 0;
+		Rel = Desc.FileLod0;
+		if (FailedTileKeys.Contains(FailKey(Tx, Ty, 0)))
+		{
+			return;
 		}
 	}
 
 	UProceduralMeshComponent* Mesh = CreateTileMesh(Rel);
-	if (!Mesh) return;
+	if (!Mesh && EffectiveLod == 1)
+	{
+		// Shell LOD parse fail (typical: nV>0 nI=0) — do not leave a hole.
+		FailedTileKeys.Add(FailKey(Tx, Ty, 1));
+		EffectiveLod = 0;
+		Rel = Desc.FileLod0;
+		if (!FailedTileKeys.Contains(FailKey(Tx, Ty, 0)))
+		{
+			Mesh = CreateTileMesh(Rel);
+		}
+	}
+	if (!Mesh)
+	{
+		FailedTileKeys.Add(FailKey(Tx, Ty, EffectiveLod));
+		return;
+	}
 
 	int32 Verts = 0;
 	if (AActor* Owner = Mesh->GetOwner())
@@ -366,9 +439,14 @@ void UNantucketTerrainSubsystem::EnsureTile(int32 Tx, int32 Ty, int32 Lod)
 	FResidentTile R;
 	R.Tx = Tx;
 	R.Ty = Ty;
-	R.Lod = Lod;
+	R.Lod = EffectiveLod;
 	R.VertCount = Verts;
 	R.Mesh = Mesh;
+	if (UMaterialInterface* Mat = Mesh->GetMaterial(0))
+	{
+		R.Mid = Cast<UMaterialInstanceDynamic>(Mat);
+		ApplySeasonToMid(R.Mid);
+	}
 	ResidentVerts += Verts;
 	Resident.Add(K, MoveTemp(R));
 }
@@ -378,6 +456,7 @@ void UNantucketTerrainSubsystem::ReleaseTile(uint64 Key)
 	FResidentTile* R = Resident.Find(Key);
 	if (!R) return;
 	ResidentVerts = FMath::Max(0, ResidentVerts - R->VertCount);
+	R->Mid = nullptr;
 	if (R->Mesh)
 	{
 		if (AActor* Owner = R->Mesh->GetOwner())
@@ -397,11 +476,12 @@ UMaterialInterface* UNantucketTerrainSubsystem::GetOrCreateTerrainMaterial()
 {
 	if (TerrainMaterial) return TerrainMaterial;
 
-	// Dedicated land material (beach / lush grass remap) — not the town structure mat
+	// AAA pattern: assign a Material *Instance* (MIC), create per-tile MIDs for
+	// Season01 — never mutate the master material asset at runtime.
 	static const TCHAR* Candidates[] = {
+		TEXT("/Game/Materials/Navt/MI_NavtTerrain.MI_NavtTerrain"),
 		TEXT("/Game/Materials/Navt/M_NavtTerrain.M_NavtTerrain"),
 		TEXT("/Game/Materials/M_NavtTerrain.M_NavtTerrain"),
-		// Fallback: flat vertex color (no window emissives ideal, but better than nothing)
 		TEXT("/Game/Materials/Navt/M_NavtVertexColor.M_NavtVertexColor"),
 		TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"),
 	};
@@ -447,11 +527,23 @@ UProceduralMeshComponent* UNantucketTerrainSubsystem::CreateTileMesh(const FStri
 		return nullptr;
 	}
 
-	// Attach to world transient actor-less component on subsystem is awkward;
-	// use a lightweight root: World settings or spawn under first player.
-	// ProceduralMeshComponent needs an owner Actor — use a transient AActor.
+	// -------------------------------------------------------------------------
+	// AAA open-world mesh pattern (same as cooked structures):
+	//   • Vertices in LOCAL space (centered on tile AABB)
+	//   • Actor/root at tile world origin
+	// Absolute verts at |XY|≈2e6 cm (harbor ~22 km from UE origin) break
+	// Lumen / VSM / float precision — surfaces look bright for a frame then go dark.
+	// Structures already do this; terrain was the outlier.
+	// -------------------------------------------------------------------------
+	const FVector TileOrigin = Data.Bounds.GetCenter();
+	for (FVector& P : Data.Positions)
+	{
+		P -= TileOrigin;
+	}
+	// Normals are direction-only; recompute not required after pure translation.
+
 	FActorSpawnParameters Sp;
-	Sp.Name = FName(*FString::Printf(TEXT("TerrainTile_%s"), *FPaths::GetBaseFilename(RelPath)));
+	Sp.Name = NAME_None;
 	Sp.ObjectFlags = RF_Transient;
 	Sp.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -462,33 +554,78 @@ UProceduralMeshComponent* UNantucketTerrainSubsystem::CreateTileMesh(const FStri
 	}
 	Owner->Tags.Add(FName(TEXT("NantucketTerrain")));
 
+	// Movable root so SetWorldLocation is valid (Static + SetWorldTransform warns).
 	USceneComponent* Root = NewObject<USceneComponent>(Owner, TEXT("Root"));
+	Root->SetMobility(EComponentMobility::Movable);
 	Owner->SetRootComponent(Root);
-	Root->SetMobility(EComponentMobility::Static);
+	Root->SetWorldLocation(TileOrigin);
 	Root->RegisterComponent();
 
 	UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(Owner, NAME_None, RF_Transient);
 	Mesh->SetupAttachment(Root);
-	Mesh->SetMobility(EComponentMobility::Static);
+	Mesh->SetMobility(EComponentMobility::Movable);
+	Mesh->SetRelativeLocation(FVector::ZeroVector);
+
+	// Material before geometry (first drawn frame has correct shader).
+	UMaterialInterface* BaseMat = GetOrCreateTerrainMaterial();
+	UMaterialInstanceDynamic* Mid = nullptr;
+	if (BaseMat)
+	{
+		Mid = UMaterialInstanceDynamic::Create(BaseMat, Mesh);
+		if (Mid)
+		{
+			Mid->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.f, 1.f, 1.f, 1.f));
+			Mid->SetScalarParameterValue(TEXT("ColorBoost"), 1.4f);
+			Mid->SetScalarParameterValue(TEXT("Roughness"), 0.9f);
+			Mid->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+			Mid->SetScalarParameterValue(TEXT("Specular"), 0.25f);
+			ApplySeasonToMid(Mid);
+			Mesh->SetMaterial(0, Mid);
+		}
+		else
+		{
+			Mesh->SetMaterial(0, BaseMat);
+		}
+	}
+
 	Mesh->RegisterComponent();
-	// Query-only collision — complex cook of 30k-vert tiles stalls PIE; land is visual first
 	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	Mesh->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
 	Mesh->bUseComplexAsSimpleCollision = false;
-	Mesh->SetCastShadow(true);
+	// Large ground sheets: no self-shadow (VSM acne). Receive sun + Lumen.
+	Mesh->SetCastShadow(false);
+	Mesh->bCastDynamicShadow = false;
+	Mesh->bCastStaticShadow = false;
+	Mesh->bCastContactShadow = false;
+	Mesh->bCastFarShadow = false;
 	Mesh->SetVisibility(true);
 	Mesh->SetHiddenInGame(false);
-	Mesh->bNeverDistanceCull = true;
+	Mesh->bNeverDistanceCull = false;
+	Mesh->bAffectDynamicIndirectLighting = true;
+	// PMC has no mesh SDF; claiming DF lighting does nothing useful — leave off.
+	Mesh->SetAffectDistanceFieldLighting(false);
+	Mesh->bAffectDistanceFieldLighting = false;
+	Mesh->SetRenderInMainPass(true);
+	Mesh->SetRenderCustomDepth(false);
+	Mesh->bReceivesDecals = true;
 
 	TArray<FVector2D> UV0;
 	UV0.SetNum(Data.Positions.Num());
+	TArray<FProcMeshTangent> Tangents;
+	Tangents.SetNum(Data.Positions.Num());
 	for (int32 I = 0; I < Data.Positions.Num(); ++I)
 	{
-		// Simple planar UV from world XY (meters scale)
+		// Planar UV from local XY (stable after centering)
 		UV0[I] = FVector2D(Data.Positions[I].X * 0.0001f, Data.Positions[I].Y * 0.0001f);
+		const FVector N = Data.Normals.IsValidIndex(I) ? Data.Normals[I] : FVector::UpVector;
+		FVector T = FVector::CrossProduct(FVector::UpVector, N);
+		if (T.SizeSquared() < 1e-8f)
+		{
+			T = FVector::CrossProduct(FVector(1.f, 0.f, 0.f), N);
+		}
+		T.Normalize();
+		Tangents[I] = FProcMeshTangent(T, /*bFlipTangentY*/ false);
 	}
-	TArray<FProcMeshTangent> Tangents;
-	Tangents.Init(FProcMeshTangent(1.f, 0.f, 0.f), Data.Positions.Num());
 
 	Mesh->CreateMeshSection_LinearColor(
 		0,
@@ -499,59 +636,26 @@ UProceduralMeshComponent* UNantucketTerrainSubsystem::CreateTileMesh(const FStri
 		Data.Colors,
 		Tangents,
 		/*bCreateCollision*/ false);
+	if (Mid)
+	{
+		Mesh->SetMaterial(0, Mid);
+	}
+	else if (BaseMat)
+	{
+		Mesh->SetMaterial(0, BaseMat);
+	}
 
-	// Stash vert count on owner tag for EnsureTile accounting
+	// Force bounds update so Lumen/culling see local-space mesh at world origin.
+	Mesh->UpdateBounds();
+	Mesh->MarkRenderStateDirty();
+
 	Owner->Tags.Add(FName(*FString::Printf(TEXT("NavtVerts_%d"), Data.Positions.Num())));
 
-	UE_LOG(LogSailSim, Log, TEXT("NantucketTerrain: loaded %s verts=%d tris=%d bounds=%s"),
+	UE_LOG(LogSailSim, Log,
+		TEXT("NantucketTerrain: loaded %s verts=%d tris=%d origin=(%.0f,%.0f,%.0f) mat=%s"),
 		*RelPath, Data.Positions.Num(), Data.Indices.Num() / 3,
-		*Data.Bounds.ToString());
-
-	if (UMaterialInterface* Mat = GetOrCreateTerrainMaterial())
-	{
-		const FString MatPath = Mat->GetPathName();
-		const bool bTerrainMat = MatPath.Contains(TEXT("NavtTerrain"));
-		const bool bVertexColorMat = bTerrainMat || MatPath.Contains(TEXT("NavtVertexColor"));
-		if (UMaterialInstanceDynamic* Mid = UMaterialInstanceDynamic::Create(Mat, Mesh))
-		{
-			Mid->SetVectorParameterValue(TEXT("Tint"), FLinearColor(1.f, 1.f, 1.f, 1.f));
-			Mid->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 1.f, 1.f, 1.f));
-			Mid->SetVectorParameterValue(TEXT("BaseColor"), FLinearColor(1.f, 1.f, 1.f, 1.f));
-			if (bTerrainMat)
-			{
-				// Push washed aerial mix toward storybook beach / moor grass
-				Mid->SetScalarParameterValue(TEXT("GrassBoost"), 0.78f);
-				Mid->SetScalarParameterValue(TEXT("SandBoost"), 0.85f);
-				Mid->SetScalarParameterValue(TEXT("DetailAmt"), 1.05f);
-				Mid->SetScalarParameterValue(TEXT("ColorBoost"), 1.14f);
-				Mid->SetScalarParameterValue(TEXT("Roughness"), 0.90f);
-				Mid->SetScalarParameterValue(TEXT("Metallic"), 0.0f);
-			}
-			// Fallback: BasicShapeMaterial ignores vertex color — solid average tint
-			if (!bVertexColorMat && Data.Colors.Num() > 0)
-			{
-				FLinearColor Avg(0, 0, 0, 0);
-				const int32 Step = FMath::Max(1, Data.Colors.Num() / 256);
-				int32 N = 0;
-				for (int32 I = 0; I < Data.Colors.Num(); I += Step)
-				{
-					Avg += Data.Colors[I];
-					++N;
-				}
-				if (N > 0)
-				{
-					Avg /= float(N);
-					Mid->SetVectorParameterValue(TEXT("Color"), Avg);
-					Mid->SetVectorParameterValue(TEXT("BaseColor"), Avg);
-				}
-			}
-			Mesh->SetMaterial(0, Mid);
-		}
-		else
-		{
-			Mesh->SetMaterial(0, Mat);
-		}
-	}
+		TileOrigin.X, TileOrigin.Y, TileOrigin.Z,
+		BaseMat ? *BaseMat->GetName() : TEXT("none"));
 
 	return Mesh;
 }
