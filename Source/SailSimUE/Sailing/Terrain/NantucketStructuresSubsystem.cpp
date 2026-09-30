@@ -1121,9 +1121,16 @@ UProceduralMeshComponent* UNantucketStructuresSubsystem::CreateTileMesh(
 	Mesh->SetupAttachment(Root);
 	Mesh->SetMobility(EComponentMobility::Movable);
 	Mesh->RegisterComponent();
-	// Visual-only for dense architecture (harbor tile ~500k verts).
+	// Visual-only dense architecture (harbor tile ~400–540k verts, non-Nanite PMC).
+	// Building shadows only: keep these tiles out of VSM Non-Nanite + ShadowDepths.
+	// SetCastShadow(false) alone is not always enough on Metal + VSM.
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	Mesh->SetCastShadow(true);
+	Mesh->SetCastShadow(false);
+	Mesh->bCastContactShadow = false;
+	Mesh->bCastDynamicShadow = false;
+	Mesh->bCastStaticShadow = false;
+	Mesh->bCastVolumetricTranslucentShadow = false;
+	Mesh->bCastInsetShadow = false;
 	Mesh->SetVisibility(true);
 	Mesh->SetHiddenInGame(false);
 	Mesh->bNeverDistanceCull = false;
