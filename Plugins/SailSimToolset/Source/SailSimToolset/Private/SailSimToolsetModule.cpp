@@ -11,6 +11,8 @@
 namespace
 {
 	IConsoleObject* GSailSimRunPreferOnGateCmd = nullptr;
+	IConsoleObject* GSailSimAssertModuleFreshCmd = nullptr;
+	IConsoleObject* GSailSimEnsureTipInBinaryCmd = nullptr;
 
 	void ExecSailSimRunPreferOnGate()
 	{
@@ -24,6 +26,59 @@ namespace
 				FString::Printf(TEXT("SailSim.RunPreferOnGate → Saved/SailSim/last_prefer_on_gate.json (%d chars)"), Json.Len()));
 		}
 	}
+
+	bool IsHexShaArg(const FString& Arg)
+	{
+		if (Arg.Len() < 7 || Arg.Len() > 40)
+		{
+			return false;
+		}
+		for (const TCHAR Ch : Arg)
+		{
+			if (!FChar::IsHexDigit(Ch))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void ParseFreshArgs(const TArray<FString>& Args, FString& OutSha, bool& bLiveCompile)
+	{
+		OutSha.Reset();
+		bLiveCompile = false;
+		for (const FString& Arg : Args)
+		{
+			if (Arg.Equals(TEXT("LiveCompile"), ESearchCase::IgnoreCase)
+				|| Arg.Equals(TEXT("bLiveCompile=1"), ESearchCase::IgnoreCase)
+				|| Arg.Equals(TEXT("1")))
+			{
+				bLiveCompile = true;
+			}
+			else if (IsHexShaArg(Arg))
+			{
+				OutSha = Arg;
+			}
+		}
+	}
+
+	void ExecAssertModuleFresh(const TArray<FString>& Args)
+	{
+		FString Sha;
+		bool bLiveCompile = false;
+		ParseFreshArgs(Args, Sha, bLiveCompile);
+		const FString Json = USailSimToolset::AssertModuleFresh(Sha, bLiveCompile);
+		UE_LOG(LogTemp, Display, TEXT("SailSim.AssertModuleFresh: %s"), *Json);
+	}
+
+	void ExecEnsureTipInBinary(const TArray<FString>& Args)
+	{
+		FString Sha;
+		bool bLiveCompile = false;
+		ParseFreshArgs(Args, Sha, bLiveCompile);
+		const FString Json = USailSimToolset::EnsureTipInBinary(Sha, bLiveCompile);
+		UE_LOG(LogTemp, Display, TEXT("SailSim.EnsureTipInBinary: %s"), *Json);
+	}
 }
 
 void FSailSimToolsetModule::StartupModule()
@@ -34,14 +89,43 @@ void FSailSimToolsetModule::StartupModule()
 	{
 		GSailSimRunPreferOnGateCmd = IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("SailSim.RunPreferOnGate"),
-			TEXT("Ops Prefer-ON gate: EnsurePIE + DSF2 Prefer-ON stick + scenery floor (~64, soft ~96) assert, reports heroes (MaxBoats default 1) + midHarborMoored CPV. Writes Saved/SailSim/last_prefer_on_gate.json. Does not change Prefer-ON / DSF2 / moored strip. ProfileGPUDump stays parked."),
+			TEXT("Ops Prefer-ON gate. Fails closed (stale_binary / tip_not_in_binary) before HighResShot unless the game-module binary is newer than Source/SailSimUE and the log shows hull slot only + multi-slot mats=. Optional arg: expected git SHA. Writes Saved/SailSim/last_prefer_on_gate.json."),
 			FConsoleCommandDelegate::CreateStatic(&ExecSailSimRunPreferOnGate),
+			ECVF_Default);
+	}
+	if (!GSailSimAssertModuleFreshCmd)
+	{
+		GSailSimAssertModuleFreshCmd = IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("SailSim.AssertModuleFresh"),
+			TEXT("Compare git HEAD (optional SHA arg) to SailSimUE/SailSimToolset binary mtimes. Pass LiveCompile to queue LiveCoding.Compile without blocking. If LC cannot start, ubtHint is the editor-target rebuild. Writes Saved/SailSim/last_module_fresh.json."),
+			FConsoleCommandWithArgsDelegate::CreateStatic(&ExecAssertModuleFresh),
+			ECVF_Default);
+	}
+	if (!GSailSimEnsureTipInBinaryCmd)
+	{
+		GSailSimEnsureTipInBinaryCmd = IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("SailSim.EnsureTipInBinary"),
+			TEXT("Same as SailSim.AssertModuleFresh. Call before RunPreferOnGate. Optional SHA, optional LiveCompile."),
+			FConsoleCommandWithArgsDelegate::CreateStatic(&ExecEnsureTipInBinary),
 			ECVF_Default);
 	}
 }
 
+extern void SailSimStopEditorLogDismiss();
+
 void FSailSimToolsetModule::ShutdownModule()
 {
+	SailSimStopEditorLogDismiss();
+	if (GSailSimEnsureTipInBinaryCmd)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(GSailSimEnsureTipInBinaryCmd, false);
+		GSailSimEnsureTipInBinaryCmd = nullptr;
+	}
+	if (GSailSimAssertModuleFreshCmd)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(GSailSimAssertModuleFreshCmd, false);
+		GSailSimAssertModuleFreshCmd = nullptr;
+	}
 	if (GSailSimRunPreferOnGateCmd)
 	{
 		IConsoleManager::Get().UnregisterConsoleObject(GSailSimRunPreferOnGateCmd, false);

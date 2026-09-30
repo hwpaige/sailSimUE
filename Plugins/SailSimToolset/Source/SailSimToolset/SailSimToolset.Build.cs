@@ -24,6 +24,7 @@ public class SailSimToolset : ModuleRules
 			"UnrealEd",
 			"LevelEditor",
 			"EditorFramework",
+			"StatusBar",
 			"Slate",
 			"SlateCore",
 			"Json",

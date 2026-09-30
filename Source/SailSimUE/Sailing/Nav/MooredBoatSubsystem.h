@@ -347,7 +347,7 @@ private:
 	float SceneryShadeFloorApplied = -1.f;
 	bool bSceneryHismDirty = false;
 	bool bLoggedSceneryDraw = false;
-	/** Re-flush HISM a few stream ticks so ISM shaders that finish late still bind. */
+	/** Mark HISM render state a few stream ticks so late ISM shaders bind. Not a tree rebuild. */
 	int32 SceneryDrawRefreshLeft = 0;
 
 	/** Slot index → sway runtime (near full only). */

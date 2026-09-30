@@ -18,12 +18,21 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
+#include "Serialization/JsonReader.h"
 #include "IAssetViewport.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "LevelEditor.h"
 #include "LevelEditorViewport.h"
+#include "SLevelViewport.h"
+#include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Docking/TabManager.h"
+#include "StatusBarSubsystem.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/Paths.h"
@@ -31,6 +40,7 @@
 #include "HAL/CriticalSection.h"
 #include "PlayInEditorDataTypes.h"
 #include "RenderingThread.h"
+#include "Async/TaskGraphInterfaces.h"
 #include "Sailing/SailSimPerf.h"
 #include "Sailing/Nav/NavGeo.h"
 #include "Sailing/Nav/MooredBoatSubsystem.h"
@@ -577,8 +587,28 @@ namespace SailSimToolsetPrivate
 
 		for (const FString& Raw : Lines)
 		{
-			const FString Line = Raw.TrimEnd();
+			FString Line = Raw.TrimEnd();
 			if (Line.IsEmpty())
+			{
+				continue;
+			}
+			// Engine log lines hide the table indent behind "LogRHI:".
+			{
+				static const TCHAR* RhiTokens[] = {
+					TEXT("LogRHI:"), TEXT("LogMetal:"), TEXT("LogD3D12RHI:"),
+					TEXT("LogVulkanRHI:"), TEXT("LogD3D11RHI:")
+				};
+				for (const TCHAR* Token : RhiTokens)
+				{
+					const int32 Idx = Line.Find(Token, ESearchCase::IgnoreCase);
+					if (Idx != INDEX_NONE && Idx < 96)
+					{
+						Line = Line.Mid(Idx + FCString::Strlen(Token));
+						break;
+					}
+				}
+			}
+			if (Line.TrimStartAndEnd().IsEmpty())
 			{
 				continue;
 			}
@@ -678,7 +708,15 @@ namespace SailSimToolsetPrivate
 			FString Name = Line.Mid(TokenEnd).TrimStartAndEnd();
 			if (Name.IsEmpty())
 			{
-				continue;
+				if (Line.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase))
+				{
+					Name = TEXT("total GPU time");
+					Depth = 0;
+				}
+				else
+				{
+					continue;
+				}
 			}
 			FProfileEvent Event;
 			Event.Depth = Depth;
@@ -742,6 +780,89 @@ namespace SailSimToolsetPrivate
 		}
 	}
 
+	static bool IsGpuFrameEvent(const FProfileEvent& Event)
+	{
+		const FString& Name = Event.Name;
+		return Name.Equals(TEXT("<root>"), ESearchCase::IgnoreCase)
+			|| Name.Equals(TEXT("Frame"), ESearchCase::IgnoreCase)
+			|| Name.StartsWith(TEXT("GPU Frame"), ESearchCase::IgnoreCase)
+			|| Name.StartsWith(TEXT("Frame "), ESearchCase::IgnoreCase)
+			|| Name.Contains(TEXT("Frame Time"), ESearchCase::IgnoreCase)
+			|| Name.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase);
+	}
+
+	struct FProfileShape
+	{
+		float GpuFrameMs = -1.f;
+		FString GpuFrameName;
+		int32 GpuFrameDepth = 0;
+		TArray<int32> TopLevel;
+		float TopLevelSumMs = 0.f;
+		bool bComplete = false;
+	};
+
+	/** Top-level rows are the frame's children (inclusive). A flat dump uses the shallowest non-frame rows. */
+	static FProfileShape ShapeProfile(const TArray<FProfileEvent>& Events)
+	{
+		FProfileShape Shape;
+		int32 FrameIdx = INDEX_NONE;
+		int32 MinDepth = MAX_int32;
+		for (int32 Index = 0; Index < Events.Num(); ++Index)
+		{
+			MinDepth = FMath::Min(MinDepth, Events[Index].Depth);
+			if (FrameIdx == INDEX_NONE && IsGpuFrameEvent(Events[Index]))
+			{
+				FrameIdx = Index;
+				Shape.GpuFrameMs = Events[Index].Ms;
+				Shape.GpuFrameName = Events[Index].Name;
+				Shape.GpuFrameDepth = Events[Index].Depth;
+			}
+		}
+		if (Events.Num() == 0)
+		{
+			return Shape;
+		}
+
+		auto AddAtDepth = [&](int32 Depth)
+		{
+			for (int32 Index = 0; Index < Events.Num(); ++Index)
+			{
+				if (Events[Index].Depth == Depth)
+				{
+					Shape.TopLevel.Add(Index);
+					Shape.TopLevelSumMs += Events[Index].Ms;
+				}
+			}
+		};
+
+		// Shallowest rows are the top of the tree (graphics and async-compute roots).
+		// A dump whose only root is the frame itself expands to that frame's children.
+		AddAtDepth(MinDepth);
+		if (FrameIdx != INDEX_NONE && Shape.TopLevel.Num() == 1 && Shape.TopLevel[0] == FrameIdx)
+		{
+			Shape.TopLevel.Reset();
+			Shape.TopLevelSumMs = 0.f;
+			AddAtDepth(Events[FrameIdx].Depth + 1);
+		}
+		Shape.bComplete = Shape.GpuFrameMs >= 0.f && Shape.TopLevel.Num() > 0 && Events.Num() >= 2;
+		return Shape;
+	}
+
+	static void AddProfileGaps(const TSharedRef<FJsonObject>& Root)
+	{
+		TArray<TSharedPtr<FJsonValue>> Gaps;
+		auto Add = [&Gaps](const TCHAR* Text)
+		{
+			Gaps.Add(MakeShared<FJsonValueString>(Text));
+		};
+		Add(TEXT("CPU Game thread and Render thread are not in this GPU dump. Cross-check GetPerfSnapshot.frameMs, hud.gameThreadMs, hud.renderThreadMs, and RunPreferOnGate.frameMs_avg (GAverageMS)."));
+		Add(TEXT("SceneUpdate is CPU/game-thread work. It will not show up as GPU time."));
+		Add(TEXT("Nanite cost often sits under a parent marker. bucketsMs.Nanite only sums rows whose names contain Nanite."));
+		Add(TEXT("Async compute is a separate queue on UE 5.6+ ProfileGPU tables. A graphics-only total can miss it, and topLevelSumMs can exceed gpuFrameMs when queues overlap."));
+		Add(TEXT("VSM Log Stats rows can report exclusive equal to inclusive (excl=incl). Treat that as stats noise, not a real pass cost."));
+		Root->SetArrayField(TEXT("gaps"), Gaps);
+	}
+
 	class FProfileLogCapture : public FOutputDevice
 	{
 	public:
@@ -751,7 +872,7 @@ namespace SailSimToolsetPrivate
 
 		/** ProfileGPU / LogRHI table is emitted from the RHI/render thread. */
 		virtual bool CanBeUsedOnAnyThread() const override { return true; }
-		virtual bool CanBeUsedOnMultipleThreads() const override { return false; } // Mutex protects Text
+		virtual bool CanBeUsedOnMultipleThreads() const override { return true; } // Mutex protects Text
 
 		virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity, const FName& Category) override
 		{
@@ -838,13 +959,125 @@ namespace SailSimToolsetPrivate
 			"r.Lumen.Reflections.DownsampleFactor=2");
 	}
 
-	static FString ReadGitShaShort()
+	/** Disk proof that the running editor was built from this checkout. Fail closed. */
+	struct FModuleFreshness
 	{
-		const FString GitDir = FPaths::Combine(FPaths::ProjectDir(), TEXT(".git"));
+		bool bBinaryFresh = false;
+		bool bShaMatch = false;
+		bool bTipInBinary = false;
+		bool bLiveCompileAttempted = false;
+		FString FailCode;
+		FString Error;
+		FString GitHead;
+		FString GitHeadShort = TEXT("unknown");
+		FString BinaryPath;
+		FString BinaryMtime;
+		FString NewestSourcePath;
+		FString NewestSourceMtime;
+		FString ToolsetBinaryPath;
+		FString ToolsetBinaryMtime;
+		FString BuildId;
+		FString SceneryProof;
+		FString MatsSummary;
+		FString UbtHint;
+		FString LiveCompileResult;
+	};
+
+	struct FSceneryProof
+	{
+		bool bLogged = false;
+		bool bOk = false;
+		FString Line;
+		FString Mats;
+		FString Error;
+	};
+
+	static FString IsoTime(const FDateTime& Stamp)
+	{
+		return Stamp.ToIso8601();
+	}
+
+	static FString EditorUbtHint()
+	{
+		const FString Project = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+#if PLATFORM_MAC
+		return FString::Printf(
+			TEXT("Quit UnrealEditor, then \"$UE_ROOT/Engine/Build/BatchFiles/Mac/Build.sh\" SailSimUEEditor Mac Development -Project=\"%s\" -WaitMutex — restart the editor after. If CrashReportClient owns :8765, kill CRC only."),
+			*Project);
+#elif PLATFORM_LINUX
+		return FString::Printf(
+			TEXT("Quit UnrealEditor, then \"$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh\" SailSimUEEditor Linux Development -Project=\"%s\" -WaitMutex — restart the editor after. If CrashReportClient owns :8765, kill CRC only."),
+			*Project);
+#else
+		return FString::Printf(
+			TEXT("Quit UnrealEditor, then \"%%UE_ROOT%%\\Engine\\Build\\BatchFiles\\Build.bat\" SailSimUEEditor Win64 Development -Project=\"%s\" -WaitMutex — restart the editor after. If CrashReportClient owns :8765, kill CRC only."),
+			*Project);
+#endif
+	}
+
+	static FString ResolveGitDir()
+	{
+		const FString GitPath = FPaths::Combine(FPaths::ProjectDir(), TEXT(".git"));
+		if (IFileManager::Get().DirectoryExists(*GitPath))
+		{
+			return GitPath;
+		}
+		FString Text;
+		if (FFileHelper::LoadFileToString(Text, *GitPath))
+		{
+			Text.TrimStartAndEndInline();
+			if (Text.StartsWith(TEXT("gitdir:")))
+			{
+				FString Dir = Text.Mid(7).TrimStartAndEnd();
+				if (FPaths::IsRelative(Dir))
+				{
+					Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), Dir);
+				}
+				return Dir;
+			}
+		}
+		return GitPath;
+	}
+
+	static FString ReadPackedRef(const FString& GitDir, const FString& Ref)
+	{
+		FString Packed;
+		if (!FFileHelper::LoadFileToString(Packed, *FPaths::Combine(GitDir, TEXT("packed-refs"))))
+		{
+			return FString();
+		}
+		TArray<FString> Lines;
+		Packed.ParseIntoArrayLines(Lines);
+		for (const FString& Raw : Lines)
+		{
+			FString Line = Raw.TrimStartAndEnd();
+			if (Line.IsEmpty() || Line.StartsWith(TEXT("#")) || Line.StartsWith(TEXT("^")))
+			{
+				continue;
+			}
+			FString Sha;
+			FString Name;
+			if (!Line.Split(TEXT(" "), &Sha, &Name))
+			{
+				continue;
+			}
+			Name.TrimStartAndEndInline();
+			if (Name == Ref)
+			{
+				return Sha.TrimStartAndEnd();
+			}
+		}
+		return FString();
+	}
+
+	/** Full git HEAD, or empty when the checkout cannot be read. */
+	static FString ReadGitHeadFull()
+	{
+		const FString GitDir = ResolveGitDir();
 		FString Head;
 		if (!FFileHelper::LoadFileToString(Head, *FPaths::Combine(GitDir, TEXT("HEAD"))))
 		{
-			return TEXT("unknown");
+			return FString();
 		}
 		Head.TrimStartAndEndInline();
 		if (Head.StartsWith(TEXT("ref:")))
@@ -854,11 +1087,432 @@ namespace SailSimToolsetPrivate
 			if (FFileHelper::LoadFileToString(Sha, *FPaths::Combine(GitDir, Ref)))
 			{
 				Sha.TrimStartAndEndInline();
-				return Sha.Left(7);
+				return Sha;
 			}
-			return TEXT("unknown");
+			return ReadPackedRef(GitDir, Ref);
 		}
-		return Head.Left(7);
+		return Head;
+	}
+
+	static FString ReadGitShaShort()
+	{
+		const FString Full = ReadGitHeadFull();
+		return Full.IsEmpty() ? TEXT("unknown") : Full.Left(7);
+	}
+
+	static bool ShaMatchesHead(const FString& Head, const FString& Expected)
+	{
+		const FString Want = Expected.TrimStartAndEnd().ToLower();
+		if (Want.IsEmpty())
+		{
+			return !Head.IsEmpty();
+		}
+		const FString Have = Head.ToLower();
+		if (Have.IsEmpty())
+		{
+			return false;
+		}
+		return Have.StartsWith(Want) || Want.StartsWith(Have);
+	}
+
+	static bool ReadFileTail(const FString& Path, int64 MaxBytes, FString& Out)
+	{
+		TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*Path));
+		if (!Reader)
+		{
+			return false;
+		}
+		const int64 Size = Reader->TotalSize();
+		if (Size <= 0)
+		{
+			return false;
+		}
+		const int64 Start = FMath::Max<int64>(0, Size - MaxBytes);
+		Reader->Seek(Start);
+		const int64 Count = Size - Start;
+		TArray<uint8> Bytes;
+		Bytes.SetNumUninitialized(static_cast<int32>(Count));
+		Reader->Serialize(Bytes.GetData(), Count);
+		Reader->Close();
+		FFileHelper::BufferToString(Out, Bytes.GetData(), Bytes.Num());
+		return true;
+	}
+
+	static void ParseSceneryProofText(const FString& Text, FSceneryProof& InOut)
+	{
+		if (Text.IsEmpty())
+		{
+			return;
+		}
+		TArray<FString> Lines;
+		Text.ParseIntoArrayLines(Lines);
+		for (const FString& Raw : Lines)
+		{
+			const FString Line = Raw.TrimStartAndEnd();
+			if (Line.Contains(TEXT("scenery gelcoat"), ESearchCase::IgnoreCase)
+				|| Line.Contains(TEXT("scenery bucket"), ESearchCase::IgnoreCase)
+				|| Line.Contains(TEXT("mat="), ESearchCase::IgnoreCase))
+			{
+				InOut.bLogged = true;
+			}
+			if (Line.Contains(TEXT("hull slot only"), ESearchCase::IgnoreCase))
+			{
+				InOut.Line = Line;
+			}
+			int32 MatsIdx = INDEX_NONE;
+			if (Line.FindChar(TEXT('='), MatsIdx))
+			{
+				const int32 Key = Line.Find(TEXT("mats="), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+				if (Key != INDEX_NONE)
+				{
+					const FString Rest = Line.Mid(Key + 5);
+					if (Rest.Contains(TEXT("|")))
+					{
+						InOut.Mats = Rest;
+					}
+				}
+			}
+		}
+		InOut.bOk = !InOut.Line.IsEmpty() && !InOut.Mats.IsEmpty();
+	}
+
+	/** Current session log only (not SailSimUE-backup-*.log from an older editor). */
+	static FSceneryProof ReadSceneryProof(const FString& ExtraText)
+	{
+		FSceneryProof Proof;
+		ParseSceneryProofText(ExtraText, Proof);
+		const FString LogPath = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log"));
+		FString Tail;
+		if (ReadFileTail(LogPath, 4 * 1024 * 1024, Tail))
+		{
+			ParseSceneryProofText(Tail, Proof);
+		}
+		if (!Proof.bOk)
+		{
+			Proof.Error = Proof.bLogged
+				? TEXT("running binary logged scenery materials without \"hull slot only\" and multi-slot mats=. Refusing HighResShot (tip_not_in_binary).")
+				: TEXT("scenery proof missing: need log substring \"hull slot only\" and a multi-slot mats= line (with '|') after scenery flush. Refusing HighResShot.");
+		}
+		return Proof;
+	}
+
+	static bool NewestSourceUnder(const FString& Dir, FDateTime& OutTime, FString& OutPath)
+	{
+		bool bAny = false;
+		const TCHAR* Patterns[] = { TEXT("*.cpp"), TEXT("*.h"), TEXT("*.inl"), TEXT("*.cs") };
+		for (const TCHAR* Pattern : Patterns)
+		{
+			TArray<FString> Files;
+			IFileManager::Get().FindFilesRecursive(Files, *Dir, Pattern, true, false, false);
+			for (const FString& Path : Files)
+			{
+				const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*Path);
+				if (Stamp.GetYear() < 2000)
+				{
+					continue;
+				}
+				if (!bAny || Stamp > OutTime)
+				{
+					bAny = true;
+					OutTime = Stamp;
+					OutPath = Path;
+				}
+			}
+		}
+		return bAny;
+	}
+
+	static bool NameIsModuleBinary(const FString& FileName, const TCHAR* Module)
+	{
+		const FString LibDylib = FString::Printf(TEXT("libUnrealEditor-%s.dylib"), Module);
+		const FString Dylib = FString::Printf(TEXT("UnrealEditor-%s.dylib"), Module);
+		const FString LibSo = FString::Printf(TEXT("libUnrealEditor-%s.so"), Module);
+		const FString So = FString::Printf(TEXT("UnrealEditor-%s.so"), Module);
+		const FString Dll = FString::Printf(TEXT("UnrealEditor-%s.dll"), Module);
+		const FString LibDll = FString::Printf(TEXT("libUnrealEditor-%s.dll"), Module);
+		return FileName == LibDylib || FileName == Dylib || FileName == LibSo || FileName == So
+			|| FileName == Dll || FileName == LibDll;
+	}
+
+	static FString LoadedModulePath(const TCHAR* Module)
+	{
+		TArray<FModuleStatus> Statuses;
+		FModuleManager::Get().QueryModules(Statuses);
+		for (const FModuleStatus& Status : Statuses)
+		{
+			if (Status.bIsLoaded && Status.Name == Module && !Status.FilePath.IsEmpty())
+			{
+				return FPaths::ConvertRelativePathToFull(Status.FilePath);
+			}
+		}
+		return FString();
+	}
+
+	static FString FindModuleBinaryOnDisk(const TCHAR* Module)
+	{
+		const FString Loaded = LoadedModulePath(Module);
+		if (!Loaded.IsEmpty() && IFileManager::Get().FileExists(*Loaded))
+		{
+			return Loaded;
+		}
+		TArray<FString> Roots;
+		Roots.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Binaries")));
+		Roots.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/SailSimToolset/Binaries")));
+		TArray<FString> Hits;
+		for (const FString& Root : Roots)
+		{
+			TArray<FString> Files;
+			IFileManager::Get().FindFilesRecursive(Files, *Root, TEXT("*.*"), true, false, false);
+			for (const FString& Path : Files)
+			{
+				if (NameIsModuleBinary(FPaths::GetCleanFilename(Path), Module))
+				{
+					Hits.Add(FPaths::ConvertRelativePathToFull(Path));
+				}
+			}
+		}
+		if (Hits.Num() == 0)
+		{
+			return FString();
+		}
+#if PLATFORM_MAC
+		const TCHAR* Token = TEXT("/Mac/");
+#elif PLATFORM_LINUX
+		const TCHAR* Token = TEXT("/Linux/");
+#else
+		const TCHAR* Token = TEXT("/Win64/");
+#endif
+		FString Best;
+		FDateTime BestStamp;
+		bool bHave = false;
+		auto Consider = [&](const FString& Path)
+		{
+			const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*Path);
+			if (!bHave || Stamp > BestStamp)
+			{
+				bHave = true;
+				Best = Path;
+				BestStamp = Stamp;
+			}
+		};
+		for (const FString& Path : Hits)
+		{
+			if (Path.Contains(Token))
+			{
+				Consider(Path);
+			}
+		}
+		if (!bHave)
+		{
+			for (const FString& Path : Hits)
+			{
+				Consider(Path);
+			}
+		}
+		return Best;
+	}
+
+	static FString ReadBuildIdNear(const FString& BinaryPath)
+	{
+		if (BinaryPath.IsEmpty())
+		{
+			return FString();
+		}
+		const FString Dir = FPaths::GetPath(BinaryPath);
+		TArray<FString> Names;
+		IFileManager::Get().FindFiles(Names, *(Dir / TEXT("*.modules")), true, false);
+		for (const FString& Name : Names)
+		{
+			FString Text;
+			if (!FFileHelper::LoadFileToString(Text, *(Dir / Name)))
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Obj;
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+			if (!FJsonSerializer::Deserialize(Reader, Obj) || !Obj.IsValid())
+			{
+				continue;
+			}
+			FString BuildId;
+			if (Obj->TryGetStringField(TEXT("BuildId"), BuildId) && !BuildId.IsEmpty())
+			{
+				return BuildId;
+			}
+		}
+		return FString();
+	}
+
+	static bool TriggerLiveCodingCompile(FString& OutError)
+	{
+		if (!GLog)
+		{
+			OutError = TEXT("no log device");
+			return false;
+		}
+		UWorld* World = GetExecWorld();
+		// Do not wait. LiveCoding.Compile needs the game thread to finish this tool call.
+		const bool bOk = IConsoleManager::Get().ProcessUserConsoleInput(TEXT("LiveCoding.Compile"), *GLog, World);
+		if (!bOk)
+		{
+			OutError = TEXT("LiveCoding.Compile is not registered or returned false");
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Game-module binary must be strictly newer than Source/SailSimUE (and the toolset
+	 * binary newer than its sources). Optional ExpectedSha must match git HEAD.
+	 * If the current SailSimUE.log already shows MooredBoats without the tip proof, fail.
+	 * bLiveCompile queues LiveCoding.Compile and returns without blocking the game thread.
+	 * bRequireLoggedProof: when the session log already has a scenery material line, the tip
+	 * marker must be in it. RunPreferOnGate passes false here and asserts the marker itself
+	 * after scenery flush, immediately before HighResShot.
+	 */
+	static FModuleFreshness EvaluateModuleFresh(const FString& ExpectedSha, bool bLiveCompile, bool bRequireLoggedProof)
+	{
+		FModuleFreshness Info;
+		Info.UbtHint = EditorUbtHint();
+		Info.GitHead = ReadGitHeadFull();
+		Info.GitHeadShort = Info.GitHead.IsEmpty() ? TEXT("unknown") : Info.GitHead.Left(7);
+		Info.bShaMatch = ShaMatchesHead(Info.GitHead, ExpectedSha);
+
+		const FString GameSource = FPaths::Combine(FPaths::ProjectDir(), TEXT("Source/SailSimUE"));
+		const FString ToolSource = FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/SailSimToolset/Source"));
+		FDateTime GameSourceStamp;
+		FDateTime ToolSourceStamp;
+		FString GameSourcePath;
+		FString ToolSourcePath;
+		const bool bHaveGameSource = NewestSourceUnder(GameSource, GameSourceStamp, GameSourcePath);
+		const bool bHaveToolSource = NewestSourceUnder(ToolSource, ToolSourceStamp, ToolSourcePath);
+
+		Info.BinaryPath = FindModuleBinaryOnDisk(TEXT("SailSimUE"));
+		Info.ToolsetBinaryPath = FindModuleBinaryOnDisk(TEXT("SailSimToolset"));
+		const FDateTime GameBinStamp = Info.BinaryPath.IsEmpty()
+			? FDateTime()
+			: IFileManager::Get().GetTimeStamp(*Info.BinaryPath);
+		const FDateTime ToolBinStamp = Info.ToolsetBinaryPath.IsEmpty()
+			? FDateTime()
+			: IFileManager::Get().GetTimeStamp(*Info.ToolsetBinaryPath);
+		if (GameBinStamp.GetYear() >= 2000)
+		{
+			Info.BinaryMtime = IsoTime(GameBinStamp);
+		}
+		if (ToolBinStamp.GetYear() >= 2000)
+		{
+			Info.ToolsetBinaryMtime = IsoTime(ToolBinStamp);
+		}
+		Info.BuildId = ReadBuildIdNear(Info.BinaryPath);
+		if (Info.BuildId.IsEmpty())
+		{
+			Info.BuildId = ReadBuildIdNear(Info.ToolsetBinaryPath);
+		}
+
+		// Report the older of the two source trees that actually failed, preferring the game module.
+		Info.NewestSourcePath = bHaveGameSource ? GameSourcePath : ToolSourcePath;
+		if (bHaveGameSource)
+		{
+			Info.NewestSourceMtime = IsoTime(GameSourceStamp);
+		}
+
+		bool bGameStale = true;
+		bool bToolStale = true;
+		if (bHaveGameSource && GameBinStamp.GetYear() >= 2000 && GameBinStamp > GameSourceStamp)
+		{
+			bGameStale = false;
+		}
+		if (bHaveToolSource && ToolBinStamp.GetYear() >= 2000 && ToolBinStamp > ToolSourceStamp)
+		{
+			bToolStale = false;
+		}
+		if (bGameStale && bHaveGameSource)
+		{
+			Info.NewestSourcePath = GameSourcePath;
+			Info.NewestSourceMtime = IsoTime(GameSourceStamp);
+		}
+		else if (bToolStale && bHaveToolSource)
+		{
+			Info.NewestSourcePath = ToolSourcePath;
+			Info.NewestSourceMtime = IsoTime(ToolSourceStamp);
+		}
+		Info.bBinaryFresh = !bGameStale && !bToolStale;
+
+		const FSceneryProof Proof = ReadSceneryProof(FString());
+		Info.SceneryProof = Proof.Line;
+		Info.MatsSummary = Proof.Mats;
+
+		if (!Info.bShaMatch)
+		{
+			Info.FailCode = TEXT("tip_not_in_binary");
+			Info.Error = Info.GitHead.IsEmpty()
+				? TEXT("could not read git HEAD; refusing HighResShot (tip_not_in_binary).")
+				: FString::Printf(
+					TEXT("git HEAD %s does not match expected SHA %s (tip_not_in_binary). Refusing HighResShot."),
+					*Info.GitHead, *ExpectedSha.TrimStartAndEnd());
+		}
+		else if (!Info.bBinaryFresh)
+		{
+			Info.FailCode = TEXT("stale_binary");
+			Info.Error = FString::Printf(
+				TEXT("game or toolset binary is missing or older than sources (stale_binary). binary=%s mtime=%s source=%s mtime=%s. Refusing HighResShot. %s"),
+				*Info.BinaryPath, *Info.BinaryMtime, *Info.NewestSourcePath, *Info.NewestSourceMtime, *Info.UbtHint);
+			if (bLiveCompile)
+			{
+				Info.bLiveCompileAttempted = true;
+				FString LcError;
+				if (!TriggerLiveCodingCompile(LcError))
+				{
+					Info.FailCode = TEXT("live_compile_failed");
+					Info.LiveCompileResult = TEXT("failed");
+					Info.Error = FString::Printf(
+						TEXT("LiveCoding.Compile did not start (%s). %s"), *LcError, *Info.Error);
+				}
+				else
+				{
+					Info.FailCode = TEXT("live_compile_requested");
+					Info.LiveCompileResult = TEXT("requested");
+					Info.Error = FString::Printf(
+						TEXT("LiveCoding.Compile queued. Poll AssertModuleFresh after the editor ticks. If the log says Live Coding failed, do not retry LC. %s"),
+						*Info.UbtHint);
+				}
+			}
+		}
+		else if (bRequireLoggedProof && Proof.bLogged && !Proof.bOk)
+		{
+			Info.FailCode = TEXT("tip_not_in_binary");
+			Info.Error = Proof.Error;
+		}
+		else
+		{
+			Info.bTipInBinary = true;
+			if (bLiveCompile)
+			{
+				Info.LiveCompileResult = TEXT("skipped_already_fresh");
+			}
+		}
+		return Info;
+	}
+
+	static void ApplyFreshnessJson(const TSharedRef<FJsonObject>& Root, const FModuleFreshness& Info)
+	{
+		Root->SetStringField(TEXT("gitHead"), Info.GitHead);
+		Root->SetStringField(TEXT("sha"), Info.GitHeadShort);
+		Root->SetStringField(TEXT("binaryPath"), Info.BinaryPath);
+		Root->SetStringField(TEXT("binaryMtime"), Info.BinaryMtime);
+		Root->SetStringField(TEXT("newestSourcePath"), Info.NewestSourcePath);
+		Root->SetStringField(TEXT("newestSourceMtime"), Info.NewestSourceMtime);
+		Root->SetStringField(TEXT("toolsetBinaryPath"), Info.ToolsetBinaryPath);
+		Root->SetStringField(TEXT("toolsetBinaryMtime"), Info.ToolsetBinaryMtime);
+		Root->SetStringField(TEXT("buildId"), Info.BuildId);
+		Root->SetBoolField(TEXT("tipInBinary"), Info.bTipInBinary);
+		Root->SetStringField(TEXT("sceneryProof"), Info.SceneryProof);
+		Root->SetStringField(TEXT("matsSummary"), Info.MatsSummary);
+		Root->SetStringField(TEXT("ubtHint"), Info.UbtHint);
+		if (Info.bLiveCompileAttempted || !Info.LiveCompileResult.IsEmpty())
+		{
+			Root->SetStringField(TEXT("liveCompile"), Info.LiveCompileResult);
+		}
 	}
 
 	struct FFramingPreset
@@ -1301,11 +1955,260 @@ namespace SailSimToolsetPrivate
 		return true;
 	}
 
+	static void SnapshotProfilingFiles(const FString& Dir, TMap<FString, int64>& Out)
+	{
+		Out.Reset();
+		if (!IFileManager::Get().DirectoryExists(*Dir))
+		{
+			return;
+		}
+		TArray<FString> Files;
+		IFileManager::Get().FindFilesRecursive(Files, *Dir, TEXT("*.txt"), true, false, false);
+		TArray<FString> Csv;
+		IFileManager::Get().FindFilesRecursive(Csv, *Dir, TEXT("*.csv"), true, false, false);
+		Files.Append(Csv);
+		for (const FString& Path : Files)
+		{
+			const FString Full = FPaths::ConvertRelativePathToFull(Path);
+			Out.Add(Full, IFileManager::Get().FileSize(*Full));
+		}
+	}
 
+	struct FGpuDumpHit
+	{
+		FString Path;
+		FString Text;
+		float TotalMs = -1.f;
+		TArray<FProfileEvent> Events;
+	};
+
+	/** True when the file has bytes. Events may still be empty — caller marks that incomplete. */
+	static bool TryReadGpuDump(const FString& Path, FGpuDumpHit& Out)
+	{
+		FString Text;
+		if (!FFileHelper::LoadFileToString(Text, *Path) || Text.Len() < 64)
+		{
+			return false;
+		}
+		float Total = -1.f;
+		TArray<FProfileEvent> Events;
+		ParseProfileGPU(Text, Total, Events);
+		Out.Path = Path;
+		Out.Text = MoveTemp(Text);
+		Out.TotalMs = Total;
+		Out.Events = MoveTemp(Events);
+		return true;
+	}
+
+	static bool LooksLikeGpuProfileText(const FString& Text)
+	{
+		return Text.Contains(TEXT("┃"))
+			|| Text.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("Profiling the next GPU frame"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("Perf marker hierarchy"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("GPU Profile"), ESearchCase::IgnoreCase);
+	}
+
+	/** Drop log lines from before the latest ProfileGPU header so unrelated "ms" rows are not the hierarchy. */
+	static FString ProfileSlice(const FString& Text)
+	{
+		int32 Best = INDEX_NONE;
+		static const TCHAR* Markers[] = {
+			TEXT("Profiling the next GPU frame"),
+			TEXT("Perf marker hierarchy"),
+			TEXT("total GPU time"),
+			TEXT("GPU Profile"),
+		};
+		for (const TCHAR* Marker : Markers)
+		{
+			const int32 Idx = Text.Find(Marker, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+			if (Idx != INDEX_NONE && (Best == INDEX_NONE || Idx > Best))
+			{
+				Best = Idx;
+			}
+		}
+		if (Best == INDEX_NONE)
+		{
+			Best = Text.Find(TEXT("┃"), ESearchCase::CaseSensitive, ESearchDir::FromStart);
+		}
+		if (Best == INDEX_NONE)
+		{
+			return Text;
+		}
+		int32 LineStart = Best;
+		while (LineStart > 0 && Text[LineStart - 1] != TEXT('\n'))
+		{
+			--LineStart;
+		}
+		return Text.Mid(LineStart);
+	}
+
+	/** Read bytes appended to a log the editor still has open. */
+	static void AppendFileGrowth(const FString& Path, int64& InOutOffset, FString& OutText)
+	{
+		const int64 Size = IFileManager::Get().FileSize(*Path);
+		if (Size < 0 || Size <= InOutOffset)
+		{
+			return;
+		}
+		TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*Path, FILEREAD_AllowWrite));
+		if (!Reader)
+		{
+			return;
+		}
+		int64 Start = InOutOffset;
+		if (Size - Start > 1024 * 1024)
+		{
+			Start = Size - 1024 * 1024;
+		}
+		Reader->Seek(Start);
+		const int32 Count = static_cast<int32>(Size - Start);
+		TArray<uint8> Bytes;
+		Bytes.SetNumUninitialized(Count);
+		Reader->Serialize(Bytes.GetData(), Count);
+		Reader->Close();
+		FString Chunk;
+		FFileHelper::BufferToString(Chunk, Bytes.GetData(), Bytes.Num());
+		OutText += Chunk;
+		InOutOffset = Size;
+	}
+
+	/**
+	 * ProfileGPU 2.0 emits when a render frame ends. Viewport::Draw alone does not.
+	 * Then drain game-thread tasks so the log line is not stuck behind this call.
+	 */
+	static void PresentProfileFrame(FViewport* Viewport)
+	{
+		if (!Viewport)
+		{
+			return;
+		}
+		Viewport->EnqueueBeginRenderFrame(true);
+		Viewport->Draw(true);
+		Viewport->EnqueueEndRenderFrame(false, true);
+		FlushRenderingCommands();
+		if (IsInGameThread() && FTaskGraphInterface::IsRunning())
+		{
+			FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+		}
+		if (GLog)
+		{
+			GLog->Flush();
+		}
+	}
+
+	static FTSTicker::FDelegateHandle GDismissLogTicker;
+	static int32 GDismissLogTicksLeft = 0;
+
+	static void CloseLiveLogTab(FTabManager& Manager, const FName TabId)
+	{
+		if (TSharedPtr<SDockTab> Tab = Manager.FindExistingLiveTab(FTabId(TabId)))
+		{
+			Tab->RequestCloseTab();
+		}
+	}
+
+	/** Close Message Log / Output Log UI only. Does not touch GLog or SailSimUE.log. */
+	static void DismissEditorLogPanels()
+	{
+		if (GEditor)
+		{
+			if (UStatusBarSubsystem* StatusBar = GEditor->GetEditorSubsystem<UStatusBarSubsystem>())
+			{
+				StatusBar->ForceDismissDrawer();
+			}
+		}
+
+		static const FName LogTabs[] = { TEXT("OutputLog"), TEXT("MessageLog") };
+		for (const FName TabId : LogTabs)
+		{
+			CloseLiveLogTab(*FGlobalTabmanager::Get(), TabId);
+		}
+		if (!FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+		{
+			return;
+		}
+		FLevelEditorModule& LevelEditor = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+		TSharedPtr<FTabManager> LevelTabs = LevelEditor.GetLevelEditorTabManager();
+		if (LevelTabs.IsValid())
+		{
+			for (const FName TabId : LogTabs)
+			{
+				CloseLiveLogTab(*LevelTabs, TabId);
+			}
+		}
+		if (!FSlateApplication::IsInitialized())
+		{
+			return;
+		}
+		if (TSharedPtr<SDockTab> LevelTab = FGlobalTabmanager::Get()->FindExistingLiveTab(FTabId(TEXT("LevelEditor"))))
+		{
+			LevelTab->DrawAttention();
+		}
+		if (TSharedPtr<IAssetViewport> Active = LevelEditor.GetFirstActiveViewport())
+		{
+			TSharedPtr<SLevelViewport> LevelViewport = StaticCastSharedPtr<SLevelViewport>(Active);
+			if (LevelViewport.IsValid())
+			{
+				FSlateApplication::Get().SetAllUserFocus(LevelViewport.ToSharedRef(), EFocusCause::SetDirectly);
+			}
+		}
+	}
+
+	static void StopDismissEditorLogs()
+	{
+		if (GDismissLogTicker.IsValid())
+		{
+			FTSTicker::GetCoreTicker().RemoveTicker(GDismissLogTicker);
+			GDismissLogTicker.Reset();
+		}
+		GDismissLogTicksLeft = 0;
+	}
+
+	/**
+	 * ProfileGPU and HighResShot open the output-log drawer. Editor warnings and
+	 * RaiseScriptError open the Message Log via FMessageLog::Open. Both steal the
+	 * PIE viewport. Dismiss now and for a few ticks after this tool returns.
+	 */
+	static void ScheduleDismissEditorLogs()
+	{
+		DismissEditorLogPanels();
+		GDismissLogTicksLeft = 12;
+		if (GDismissLogTicker.IsValid())
+		{
+			return;
+		}
+		GDismissLogTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float DeltaSeconds)
+		{
+			(void)DeltaSeconds;
+			DismissEditorLogPanels();
+			if (--GDismissLogTicksLeft > 0)
+			{
+				return true;
+			}
+			GDismissLogTicker.Reset();
+			return false;
+		}));
+	}
+
+	struct FRestoreEditorFocus
+	{
+		~FRestoreEditorFocus()
+		{
+			ScheduleDismissEditorLogs();
+		}
+	};
+
+}
+
+void SailSimStopEditorLogDismiss()
+{
+	SailSimToolsetPrivate::StopDismissEditorLogs();
 }
 
 FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FString& FramingPreset)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	FToolsetImage Out;
 
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
@@ -1382,6 +2285,7 @@ FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FS
 
 FString USailSimToolset::FindActorsByName(const FString& Query, int32 MaxResults)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	UWorld* World = SailSimToolsetPrivate::GetSearchWorld();
 	if (!World)
 	{
@@ -1447,16 +2351,19 @@ FString USailSimToolset::FindActorsByName(const FString& Query, int32 MaxResults
 
 FString USailSimToolset::EnsurePIE(float MinWorldSeconds)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	return SailSimToolsetPrivate::RequestOrDescribePIE(MinWorldSeconds);
 }
 
 FString USailSimToolset::StartPIE(float MinWorldSeconds)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	return SailSimToolsetPrivate::RequestOrDescribePIE(MinWorldSeconds);
 }
 
 FString USailSimToolset::GetLevelPath()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	FString EditorLevel;
 	FString PIELevel;
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
@@ -1489,6 +2396,7 @@ FString USailSimToolset::GetLevelPath()
 
 FString USailSimToolset::GetPlayerCameraTransform()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
 	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
 	if (!PlayWorld)
@@ -1534,6 +2442,7 @@ FString USailSimToolset::GetPlayerCameraTransform()
 
 FString USailSimToolset::GetPerfSnapshot()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const FSailSimPerf& Perf = SailSimGetPerf();
 	const float FrameMs = GAverageMS;
 	const float Fps = GAverageFPS > 0.f
@@ -1594,6 +2503,7 @@ FString USailSimToolset::GetPerfSnapshot()
 
 FString USailSimToolset::SetCVars(const FString& Assignments)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	TArray<FString> Lines;
 	SailSimToolsetPrivate::SplitBatch(Assignments, Lines);
 
@@ -1663,6 +2573,7 @@ FString USailSimToolset::SetCVars(const FString& Assignments)
 
 FString USailSimToolset::ExecuteConsole(const FString& Commands)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	TArray<FString> Lines;
 	SailSimToolsetPrivate::SplitBatch(Commands, Lines);
 
@@ -1711,6 +2622,7 @@ FString USailSimToolset::ExecuteConsole(const FString& Commands)
 
 FString USailSimToolset::ProfileGPUDump()
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	UWorld* World = SailSimToolsetPrivate::GetExecWorld();
 	if (!GEngine || !World)
@@ -1721,9 +2633,33 @@ FString USailSimToolset::ProfileGPUDump()
 		return SailSimToolsetPrivate::JsonString(Root);
 	}
 
+	static bool bInProfileGPUDump = false;
+	if (bInProfileGPUDump)
+	{
+		Root->SetBoolField(TEXT("ok"), false);
+		Root->SetBoolField(TEXT("incomplete"), true);
+		Root->SetStringField(TEXT("code"), TEXT("profile_incomplete"));
+		Root->SetStringField(TEXT("error"), TEXT("ProfileGPUDump re-entered while a dump was already waiting."));
+		Root->SetStringField(TEXT("scrapeLog"), FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log")));
+		return SailSimToolsetPrivate::JsonString(Root);
+	}
+	struct FProfileDumpGuard
+	{
+		bool& Flag;
+		explicit FProfileDumpGuard(bool& InFlag) : Flag(InFlag) { Flag = true; }
+		~FProfileDumpGuard() { Flag = false; }
+	};
+	FProfileDumpGuard DumpGuard(bInProfileGPUDump);
+
+	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
 	FString ViewportSource;
-	FViewport* Viewport = SailSimToolsetPrivate::FindFrameViewport(
-		SailSimToolsetPrivate::GetPlayWorld(), ViewportSource);
+	FViewport* Viewport = PlayWorld
+		? SailSimToolsetPrivate::FindLitViewportFramebuffer(PlayWorld, ViewportSource)
+		: nullptr;
+	if (!Viewport)
+	{
+		Viewport = SailSimToolsetPrivate::FindFrameViewport(PlayWorld, ViewportSource);
+	}
 	if (!Viewport)
 	{
 		Root->SetBoolField(TEXT("ok"), false);
@@ -1745,35 +2681,162 @@ FString USailSimToolset::ProfileGPUDump()
 		GLog->AddOutputDevice(&Capture);
 	}
 	Capture.bCapture = true;
-	const bool bTriggered = GEngine->Exec(World, TEXT("ProfileGPU"));
-	// ProfileGPU dumps ~3–6 frames later under LogRHI. Keep the capture device
-	// attached and present until the table appears (or we hit a frame budget).
-	const double Deadline = FPlatformTime::Seconds() + 2.5;
-	int32 FramesPumped = 0;
-	while (FPlatformTime::Seconds() < Deadline && FramesPumped < 12)
+
+	// UE 5.8 ProfileGPU logs the table when a render frame ends. It often never
+	// writes Saved/Profiling. Draw() alone does not end that frame, so the old
+	// 8s file watch returned profile_timeout with an empty hierarchy.
+	const FString DumpDir = FPaths::ProfilingDir();
+	IFileManager::Get().MakeDirectory(*DumpDir, true);
+	TMap<FString, int64> Before;
+	SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Before);
+
+	const FString SessionLog = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log"));
+	int64 LogOffset = IFileManager::Get().FileSize(*SessionLog);
+	if (LogOffset < 0)
 	{
-		Viewport->Draw();
-		FlushRenderingCommands();
-		if (GLog)
+		LogOffset = 0;
+	}
+	FString LogGrowth;
+
+	const bool bTriggered = GEngine->Exec(World, TEXT("ProfileGPU"));
+	constexpr double TimeoutSec = 20.0;
+	const double Started = FPlatformTime::Seconds();
+	const double Deadline = Started + TimeoutSec;
+	int32 FramesPumped = 0;
+	TMap<FString, int64> SeenSize;
+	FString ProfileSource;
+	FString DumpPath;
+	float TotalMs = -1.f;
+	TArray<SailSimToolsetPrivate::FProfileEvent> Events;
+	FString UnparsedNewDump;
+	int32 BestEventCount = -1;
+	bool bDumpComplete = false;
+	bool bRetriggered = false;
+
+	auto AcceptDump = [&](const SailSimToolsetPrivate::FGpuDumpHit& Hit, bool bComplete)
+	{
+		ProfileSource = TEXT("dump_file");
+		DumpPath = Hit.Path;
+		TotalMs = Hit.TotalMs;
+		Events = Hit.Events;
+		bDumpComplete = bComplete;
+		BestEventCount = Hit.Events.Num();
+	};
+
+	auto ConsiderDumpMap = [&](const TMap<FString, int64>& Now, bool bRequireStable) -> bool
+	{
+		for (const TPair<FString, int64>& Pair : Now)
 		{
-			GLog->Flush();
-		}
-		++FramesPumped;
-		if ((Capture.Text.Contains(TEXT("GPU Profile")) || Capture.Text.Contains(TEXT("LogRHI")))
-			&& Capture.Text.Contains(TEXT("ms"))
-			&& Capture.Text.Len() > 800)
-		{
-			// Give one extra frame so leaf rows finish streaming into the log.
-			Viewport->Draw();
-			FlushRenderingCommands();
-			if (GLog)
+			const int64* Prev = Before.Find(Pair.Key);
+			const bool bNewOrGrown = (Prev == nullptr) || (*Prev != Pair.Value);
+			if (!bNewOrGrown || Pair.Value < 64)
 			{
-				GLog->Flush();
+				continue;
 			}
-			++FramesPumped;
+			const int64* Last = SeenSize.Find(Pair.Key);
+			const bool bStable = Last && *Last == Pair.Value;
+			SeenSize.Add(Pair.Key, Pair.Value);
+			if (bRequireStable && !bStable)
+			{
+				UnparsedNewDump = Pair.Key;
+				continue;
+			}
+			SailSimToolsetPrivate::FGpuDumpHit Hit;
+			if (!SailSimToolsetPrivate::TryReadGpuDump(Pair.Key, Hit))
+			{
+				UnparsedNewDump = Pair.Key;
+				continue;
+			}
+			const SailSimToolsetPrivate::FProfileShape Shape = SailSimToolsetPrivate::ShapeProfile(Hit.Events);
+			if (Shape.bComplete)
+			{
+				AcceptDump(Hit, true);
+				return true;
+			}
+			// Stable but short of a GPU frame + top-level rows. Keep the richer partial and keep waiting.
+			if (Hit.Events.Num() > BestEventCount || ProfileSource.IsEmpty())
+			{
+				AcceptDump(Hit, false);
+			}
+			UnparsedNewDump = Pair.Key;
+		}
+		return false;
+	};
+
+	auto ConsiderText = [&](const FString& Text, const TCHAR* Source) -> bool
+	{
+		if (bDumpComplete || !SailSimToolsetPrivate::LooksLikeGpuProfileText(Text))
+		{
+			return bDumpComplete;
+		}
+		float ParsedTotal = -1.f;
+		TArray<SailSimToolsetPrivate::FProfileEvent> Parsed;
+		SailSimToolsetPrivate::ParseProfileGPU(SailSimToolsetPrivate::ProfileSlice(Text), ParsedTotal, Parsed);
+		const SailSimToolsetPrivate::FProfileShape ParsedShape = SailSimToolsetPrivate::ShapeProfile(Parsed);
+		if (ParsedShape.bComplete)
+		{
+			ProfileSource = Source;
+			TotalMs = ParsedShape.GpuFrameMs;
+			Events = MoveTemp(Parsed);
+			bDumpComplete = true;
+			BestEventCount = Events.Num();
+			return true;
+		}
+		if (Parsed.Num() > BestEventCount)
+		{
+			ProfileSource = Source;
+			TotalMs = ParsedTotal;
+			Events = MoveTemp(Parsed);
+			bDumpComplete = false;
+			BestEventCount = Events.Num();
+		}
+		return false;
+	};
+
+	while (FPlatformTime::Seconds() < Deadline && !bDumpComplete)
+	{
+		SailSimToolsetPrivate::PresentProfileFrame(Viewport);
+		++FramesPumped;
+		TMap<FString, int64> Now;
+		SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Now);
+		if (ConsiderDumpMap(Now, true))
+		{
 			break;
 		}
+		{
+			FScopeLock Lock(&Capture.Mutex);
+			ConsiderText(Capture.Text, TEXT("log_capture"));
+		}
+		SailSimToolsetPrivate::AppendFileGrowth(SessionLog, LogOffset, LogGrowth);
+		if (ConsiderText(LogGrowth, TEXT("log_file")))
+		{
+			break;
+		}
+		if (!bRetriggered && (FPlatformTime::Seconds() - Started) > 1.0)
+		{
+			bRetriggered = true;
+			GEngine->Exec(World, TEXT("ProfileGPU"));
+		}
+		FPlatformProcess::Sleep(0.01f);
 	}
+
+	// Last presented frame can land the table after the deadline check.
+	if (!bDumpComplete)
+	{
+		SailSimToolsetPrivate::PresentProfileFrame(Viewport);
+		++FramesPumped;
+		TMap<FString, int64> Now;
+		SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Now);
+		ConsiderDumpMap(Now, false);
+		{
+			FScopeLock Lock(&Capture.Mutex);
+			ConsiderText(Capture.Text, TEXT("log_capture"));
+		}
+		SailSimToolsetPrivate::AppendFileGrowth(SessionLog, LogOffset, LogGrowth);
+		ConsiderText(LogGrowth, TEXT("log_file"));
+	}
+
+	const double WaitedSec = FPlatformTime::Seconds() - Started;
 	if (GLog)
 	{
 		GLog->Flush();
@@ -1785,16 +2848,22 @@ FString USailSimToolset::ProfileGPUDump()
 		ShowUI->Set(PreviousShowUI, ECVF_SetByCode);
 	}
 
-	const FString DumpDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Profiling"));
-	IFileManager::Get().MakeDirectory(*DumpDir, true);
-	const FString DumpPath = FPaths::Combine(
-		DumpDir,
-		FString::Printf(TEXT("SailSimProfileGPU-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
-	FFileHelper::SaveStringToFile(Capture.Text, *DumpPath);
+	// Keep a copy of whatever arrived. A complete log table is a successful emit.
+	FString CapturedPath;
+	if (Capture.Text.Len() > 0 || LogGrowth.Len() > 0)
+	{
+		CapturedPath = FPaths::Combine(
+			DumpDir,
+			FString::Printf(TEXT("SailSimProfileGPU-capture-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
+		FFileHelper::SaveStringToFile(Capture.Text + LogGrowth, *CapturedPath);
+	}
 
-	float TotalMs = -1.f;
-	TArray<SailSimToolsetPrivate::FProfileEvent> Events;
-	SailSimToolsetPrivate::ParseProfileGPU(Capture.Text, TotalMs, Events);
+	const SailSimToolsetPrivate::FProfileShape Shape = SailSimToolsetPrivate::ShapeProfile(Events);
+	if (Shape.GpuFrameMs >= 0.f)
+	{
+		TotalMs = Shape.GpuFrameMs;
+	}
+	bDumpComplete = Shape.bComplete;
 
 	TMap<FString, float> Sums;
 	SailSimToolsetPrivate::SumBuckets(Events, Sums);
@@ -1811,6 +2880,9 @@ FString USailSimToolset::ProfileGPUDump()
 	const float Known = Water + LumenGI + LumenReflections + Shadows + Nanite;
 	const float Other = TotalMs >= 0.f ? FMath::Max(0.f, TotalMs - Known) : -1.f;
 	const bool bParsed = Events.Num() > 0;
+	const FString ReportedDump = !DumpPath.IsEmpty()
+		? DumpPath
+		: (!UnparsedNewDump.IsEmpty() ? UnparsedNewDump : DumpDir);
 
 	const TSharedRef<FJsonObject> Buckets = MakeShared<FJsonObject>();
 	Buckets->SetNumberField(TEXT("SingleLayerWater"), Water);
@@ -1824,47 +2896,132 @@ FString USailSimToolset::ProfileGPUDump()
 		Buckets->SetNumberField(TEXT("Other"), Other);
 	}
 
-	Events.Sort([](const SailSimToolsetPrivate::FProfileEvent& A, const SailSimToolsetPrivate::FProfileEvent& B)
-	{
-		return A.Ms > B.Ms;
-	});
-	TArray<TSharedPtr<FJsonValue>> Top;
-	const int32 TopCount = FMath::Min(12, Events.Num());
-	for (int32 Index = 0; Index < TopCount; ++Index)
+	constexpr int32 HierarchyLimit = 2000;
+	const bool bHierarchyTruncated = Events.Num() > HierarchyLimit;
+	TArray<TSharedPtr<FJsonValue>> Hierarchy;
+	const int32 HierCount = FMath::Min(Events.Num(), HierarchyLimit);
+	for (int32 Index = 0; Index < HierCount; ++Index)
 	{
 		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
 		One->SetStringField(TEXT("name"), Events[Index].Name);
 		One->SetNumberField(TEXT("ms"), Events[Index].Ms);
+		One->SetNumberField(TEXT("depth"), Events[Index].Depth);
 		One->SetStringField(TEXT("bucket"), Events[Index].Bucket);
+		Hierarchy.Add(MakeShared<FJsonValueObject>(One));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> TopLevel;
+	for (int32 Index : Shape.TopLevel)
+	{
+		if (!Events.IsValidIndex(Index))
+		{
+			continue;
+		}
+		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
+		One->SetStringField(TEXT("name"), Events[Index].Name);
+		One->SetNumberField(TEXT("ms"), Events[Index].Ms);
+		One->SetNumberField(TEXT("depth"), Events[Index].Depth);
+		One->SetStringField(TEXT("bucket"), Events[Index].Bucket);
+		TopLevel.Add(MakeShared<FJsonValueObject>(One));
+	}
+
+	TArray<SailSimToolsetPrivate::FProfileEvent> ByMs = Events;
+	ByMs.Sort([](const SailSimToolsetPrivate::FProfileEvent& A, const SailSimToolsetPrivate::FProfileEvent& B)
+	{
+		return A.Ms > B.Ms;
+	});
+	TArray<TSharedPtr<FJsonValue>> Top;
+	const int32 TopCount = FMath::Min(12, ByMs.Num());
+	for (int32 Index = 0; Index < TopCount; ++Index)
+	{
+		const TSharedRef<FJsonObject> One = MakeShared<FJsonObject>();
+		One->SetStringField(TEXT("name"), ByMs[Index].Name);
+		One->SetNumberField(TEXT("ms"), ByMs[Index].Ms);
+		One->SetNumberField(TEXT("depth"), ByMs[Index].Depth);
+		One->SetStringField(TEXT("bucket"), ByMs[Index].Bucket);
 		Top.Add(MakeShared<FJsonValueObject>(One));
 	}
 
-	Root->SetBoolField(TEXT("ok"), bParsed);
+	const bool bFileEmitted = ProfileSource == TEXT("dump_file");
+	const bool bIncomplete = !bDumpComplete;
+	FString Code;
+	FString Error;
+	if (bDumpComplete)
+	{
+		Code = TEXT("ok");
+	}
+	else if (bParsed || bFileEmitted || !UnparsedNewDump.IsEmpty())
+	{
+		Code = TEXT("profile_incomplete");
+		Error = FString::Printf(
+			TEXT("ProfileGPU capture is missing a GPU frame row plus top-level passes after %.1fs. incomplete=true. dumpPath=%s. Scrape Saved/Logs/SailSimUE.log for the rest."),
+			TimeoutSec, *ReportedDump);
+	}
+	else
+	{
+		Code = TEXT("profile_timeout");
+		Error = FString::Printf(
+			TEXT("ProfileGPU did not reach a GPU frame and top-level passes within %.1fs. expectedDir=%s dumpPath=%s. incomplete=true. Scrape Saved/Logs/SailSimUE.log."),
+			TimeoutSec, *DumpDir, *ReportedDump);
+	}
+
+	const FString ScrapeLog = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log"));
+	const TSharedRef<FJsonObject> FrameCompare = MakeShared<FJsonObject>();
+	FrameCompare->SetStringField(TEXT("cpuFrameField"), TEXT("GetPerfSnapshot.frameMs and RunPreferOnGate.frameMs_avg (GAverageMS, CPU frame)"));
+	FrameCompare->SetStringField(TEXT("gpuTimerField"), TEXT("GetPerfSnapshot.gpuMs (RHIGetGPUFrameCycles) and hud.gpuMs"));
+	FrameCompare->SetStringField(
+		TEXT("note"),
+		TEXT("gpuFrameMs is the ProfileGPU frame row (inclusive). frameMs_avg is the CPU frame. Compare them; they are not the same clock."));
+
+	Root->SetBoolField(TEXT("ok"), bDumpComplete);
+	Root->SetBoolField(TEXT("incomplete"), bIncomplete);
 	Root->SetBoolField(TEXT("triggered"), bTriggered);
 	Root->SetNumberField(TEXT("framesPumped"), FramesPumped);
-	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len());
+	Root->SetNumberField(TEXT("waitedSec"), WaitedSec);
+	Root->SetNumberField(TEXT("timeoutSec"), TimeoutSec);
+	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len() + LogGrowth.Len());
 	Root->SetBoolField(TEXT("parsed"), bParsed);
-	Root->SetStringField(TEXT("code"), bParsed ? TEXT("ok") : TEXT("profile_not_emitted"));
-	Root->SetStringField(TEXT("error"), bParsed
-		? TEXT("")
-		: TEXT("ProfileGPU did not emit a parseable hierarchy. Dump file has the captured log lines. Present a frame and call again."));
-	Root->SetStringField(TEXT("dumpPath"), DumpPath);
+	Root->SetStringField(TEXT("profileSource"), ProfileSource);
+	Root->SetStringField(TEXT("code"), Code);
+	Root->SetStringField(TEXT("error"), Error);
+	Root->SetStringField(TEXT("dumpPath"), ReportedDump);
+	Root->SetStringField(TEXT("expectedDumpDir"), DumpDir);
+	Root->SetStringField(TEXT("scrapeLog"), ScrapeLog);
+	if (!CapturedPath.IsEmpty())
+	{
+		Root->SetStringField(TEXT("capturedPath"), CapturedPath);
+	}
 	Root->SetStringField(TEXT("profiledWorld"), SailSimToolsetPrivate::WorldKind(World));
 	Root->SetStringField(TEXT("viewport"), ViewportSource);
-	if (TotalMs >= 0.f)
+	if (Shape.GpuFrameMs >= 0.f)
+	{
+		Root->SetNumberField(TEXT("gpuFrameMs"), Shape.GpuFrameMs);
+		Root->SetNumberField(TEXT("totalGpuMs"), Shape.GpuFrameMs);
+		Root->SetStringField(TEXT("gpuFrameName"), Shape.GpuFrameName);
+		FrameCompare->SetNumberField(TEXT("gpuFrameMs"), Shape.GpuFrameMs);
+	}
+	else if (TotalMs >= 0.f)
 	{
 		Root->SetNumberField(TEXT("totalGpuMs"), TotalMs);
 	}
+	Root->SetNumberField(TEXT("topLevelSumMs"), Shape.TopLevelSumMs);
+	Root->SetNumberField(TEXT("hierarchyCount"), Events.Num());
+	Root->SetBoolField(TEXT("hierarchyTruncated"), bHierarchyTruncated);
+	Root->SetObjectField(TEXT("frameCompare"), FrameCompare);
 	Root->SetObjectField(TEXT("bucketsMs"), Buckets);
+	Root->SetArrayField(TEXT("topLevel"), TopLevel);
+	Root->SetArrayField(TEXT("hierarchy"), Hierarchy);
 	Root->SetArrayField(TEXT("topEvents"), Top);
+	SailSimToolsetPrivate::AddProfileGaps(Root);
 	Root->SetStringField(
 		TEXT("note"),
-		TEXT("Bucket ms sum the shallowest matching pass (children of the same bucket are not added again). Other = totalGpuMs minus those buckets, so overlap across buckets can shrink Other."));
+		TEXT("hierarchy is dump order (inclusive ms). topLevel is the shallowest rows (a lone frame root expands to its children). topLevelSumMs adds those inclusive times and can exceed gpuFrameMs when queues overlap. Bucket ms sum the shallowest matching pass. gaps are costs this dump does not prove — cross-check frameMs_avg and scrape SailSimUE.log when incomplete is true."));
 	return SailSimToolsetPrivate::JsonString(Root);
 }
 
 FString USailSimToolset::LoadMap(const FString& MapPath)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
 	if (!GEditor)
 	{
@@ -1934,13 +3091,17 @@ FString USailSimToolset::LoadMap(const FString& MapPath)
 	return SailSimToolsetPrivate::JsonString(Obj);
 }
 
-FString USailSimToolset::RunPreferOnGate()
+FString USailSimToolset::RunPreferOnGate(const FString& ExpectedSha)
 {
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
 	using namespace SailSimToolsetPrivate;
 	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
-	const FString Sha = ReadGitShaShort();
-	Root->SetStringField(TEXT("sha"), Sha);
+	const FModuleFreshness Fresh = EvaluateModuleFresh(ExpectedSha, false, false);
+	ApplyFreshnessJson(Root, Fresh);
+	// Proof is asserted after scenery flush. Do not claim tipInBinary before that.
+	Root->SetBoolField(TEXT("tipInBinary"), false);
 	Root->SetBoolField(TEXT("ok"), false);
+	const FString Sha = Fresh.GitHeadShort;
 
 	auto Fail = [&](const FString& Code, const FString& Error) -> FString
 	{
@@ -1968,6 +3129,12 @@ FString USailSimToolset::RunPreferOnGate()
 		UE_LOG(LogTemp, Error, TEXT("RunPreferOnGate FAIL code=%s sha=%s err=%s"), *Code, *Sha, *Error);
 		return Out;
 	};
+
+	// Fail closed before PIE or HighResShot when the on-disk module is not this checkout.
+	if (!Fresh.FailCode.IsEmpty())
+	{
+		return Fail(Fresh.FailCode, Fresh.Error);
+	}
 
 	if (!GEditor)
 	{
@@ -2060,6 +3227,12 @@ FString USailSimToolset::RunPreferOnGate()
 	int32 HeroesMax = 1;
 	int32 HeroesNearCap = 1;
 	int32 HeroesNear = 0;
+	FProfileLogCapture SceneryLog;
+	if (GLog)
+	{
+		GLog->AddOutputDevice(&SceneryLog);
+	}
+	SceneryLog.bCapture = true;
 	if (UMooredBoatSubsystem* Moored = PlayWorld->GetSubsystem<UMooredBoatSubsystem>())
 	{
 		SceneryBudget = FMath::Max(1, Moored->MooringSceneryInstanceCount);
@@ -2079,6 +3252,12 @@ FString USailSimToolset::RunPreferOnGate()
 		HeroesNear = Moored->GetNearFullCount();
 		Root->SetNumberField(TEXT("moored"), LastMoored);
 	}
+	if (GLog)
+	{
+		GLog->Flush();
+		GLog->RemoveOutputDevice(&SceneryLog);
+	}
+	SceneryLog.bCapture = false;
 	const int32 Sampled = FMath::Min(SceneryBudget, SlotCount > 0 ? SlotCount : SceneryBudget);
 	const int32 MinFilled = FMath::Max(SceneryFloor, (Sampled * 2) / 3);
 	Root->SetNumberField(TEXT("mooringSceneryBudget"), SceneryBudget);
@@ -2094,6 +3273,20 @@ FString USailSimToolset::RunPreferOnGate()
 			FString::Printf(
 				TEXT("expected mid-harbor scenery moored>=%d (soft scenery %d, floor %d, slots=%d); heroes MaxBoats=%d NearFull≤%d near=%d; got moored=%d"),
 				MinFilled, SceneryBudget, SceneryFloor, SlotCount, HeroesMax, HeroesNearCap, HeroesNear, LastMoored));
+	}
+
+	// Tip proof before any HighResShot. Missing marker → no PNG.
+	{
+		const FSceneryProof Proof = ReadSceneryProof(SceneryLog.Text);
+		Root->SetStringField(TEXT("sceneryProof"), Proof.Line);
+		Root->SetStringField(TEXT("matsSummary"), Proof.Mats);
+		if (!Proof.bOk)
+		{
+			return Fail(
+				TEXT("tip_not_in_binary"),
+				FString::Printf(TEXT("%s %s"), *Proof.Error, *Fresh.UbtHint));
+		}
+		Root->SetBoolField(TEXT("tipInBinary"), true);
 	}
 
 	// 5) Lit viewport grab (midHarborMoored already applied). Same path as CapturePlayerView.
@@ -2150,9 +3343,55 @@ FString USailSimToolset::RunPreferOnGate()
 	const FString Out = JsonString(Root);
 	PersistPreferOnGateJson(Out);
 	UE_LOG(LogTemp, Display,
-		TEXT("RunPreferOnGate OK sha=%s moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s capture=%s grab=%s litOverride=0"),
-		*Sha, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath,
+		TEXT("RunPreferOnGate OK sha=%s gitHead=%s tipInBinary=1 moored=%d scenery=%d floor=%d heroes MaxBoats=%d NearFull≤%d near=%d frameMs_avg=%.2f fps=%.1f cpv=%s capture=%s grab=%s litOverride=0 proof=%s"),
+		*Sha, *Fresh.GitHead, LastMoored, SceneryBudget, MinFilled, HeroesMax, HeroesNearCap, HeroesNear, FrameAvg, FpsAvg, *CpvPath,
 		*Root->GetStringField(TEXT("captureSource")),
-		*Root->GetStringField(TEXT("grab")));
+		*Root->GetStringField(TEXT("grab")),
+		*Root->GetStringField(TEXT("sceneryProof")));
 	return Out;
+}
+
+static void PersistModuleFreshJson(const FString& Json)
+{
+	const FString Dir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("SailSim"));
+	IFileManager::Get().MakeDirectory(*Dir, true);
+	const FString Path = FPaths::Combine(Dir, TEXT("last_module_fresh.json"));
+	if (!FFileHelper::SaveStringToFile(Json, *Path))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AssertModuleFresh: failed to write %s"), *Path);
+		return;
+	}
+	UE_LOG(LogTemp, Display, TEXT("AssertModuleFresh wrote %s"), *Path);
+}
+
+FString USailSimToolset::AssertModuleFresh(const FString& ExpectedSha, bool bLiveCompile)
+{
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
+	using namespace SailSimToolsetPrivate;
+	const FModuleFreshness Fresh = EvaluateModuleFresh(ExpectedSha, bLiveCompile, true);
+	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	ApplyFreshnessJson(Root, Fresh);
+	const bool bOk = Fresh.FailCode.IsEmpty();
+	Root->SetBoolField(TEXT("ok"), bOk);
+	Root->SetStringField(TEXT("code"), bOk ? TEXT("ok") : Fresh.FailCode);
+	Root->SetStringField(TEXT("failCode"), bOk ? TEXT("") : Fresh.FailCode);
+	Root->SetStringField(TEXT("error"), bOk ? TEXT("") : Fresh.Error);
+	Root->SetStringField(TEXT("cpvPath"), TEXT(""));
+	if (bOk && Fresh.SceneryProof.IsEmpty())
+	{
+		Root->SetStringField(
+			TEXT("note"),
+			TEXT("Binary mtime is newer than Source/SailSimUE and the toolset sources. Scenery has not logged yet. RunPreferOnGate still requires \"hull slot only\" and multi-slot mats= before HighResShot."));
+	}
+	const FString Out = JsonString(Root);
+	PersistModuleFreshJson(Out);
+	UE_LOG(LogTemp, Display, TEXT("AssertModuleFresh ok=%d code=%s gitHead=%s binaryMtime=%s tipInBinary=%d"),
+		bOk ? 1 : 0, *Root->GetStringField(TEXT("code")), *Fresh.GitHead, *Fresh.BinaryMtime, Fresh.bTipInBinary ? 1 : 0);
+	return Out;
+}
+
+FString USailSimToolset::EnsureTipInBinary(const FString& ExpectedSha, bool bLiveCompile)
+{
+	SailSimToolsetPrivate::FRestoreEditorFocus RestoreEditorFocus;
+	return AssertModuleFresh(ExpectedSha, bLiveCompile);
 }
