@@ -34,6 +34,7 @@
 #include "HAL/CriticalSection.h"
 #include "PlayInEditorDataTypes.h"
 #include "RenderingThread.h"
+#include "Async/TaskGraphInterfaces.h"
 #include "Sailing/SailSimPerf.h"
 #include "Sailing/Nav/NavGeo.h"
 #include "Sailing/Nav/MooredBoatSubsystem.h"
@@ -580,8 +581,28 @@ namespace SailSimToolsetPrivate
 
 		for (const FString& Raw : Lines)
 		{
-			const FString Line = Raw.TrimEnd();
+			FString Line = Raw.TrimEnd();
 			if (Line.IsEmpty())
+			{
+				continue;
+			}
+			// Engine log lines hide the table indent behind "LogRHI:".
+			{
+				static const TCHAR* RhiTokens[] = {
+					TEXT("LogRHI:"), TEXT("LogMetal:"), TEXT("LogD3D12RHI:"),
+					TEXT("LogVulkanRHI:"), TEXT("LogD3D11RHI:")
+				};
+				for (const TCHAR* Token : RhiTokens)
+				{
+					const int32 Idx = Line.Find(Token, ESearchCase::IgnoreCase);
+					if (Idx != INDEX_NONE && Idx < 96)
+					{
+						Line = Line.Mid(Idx + FCString::Strlen(Token));
+						break;
+					}
+				}
+			}
+			if (Line.TrimStartAndEnd().IsEmpty())
 			{
 				continue;
 			}
@@ -681,7 +702,15 @@ namespace SailSimToolsetPrivate
 			FString Name = Line.Mid(TokenEnd).TrimStartAndEnd();
 			if (Name.IsEmpty())
 			{
-				continue;
+				if (Line.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase))
+				{
+					Name = TEXT("total GPU time");
+					Depth = 0;
+				}
+				else
+				{
+					continue;
+				}
 			}
 			FProfileEvent Event;
 			Event.Depth = Depth;
@@ -837,7 +866,7 @@ namespace SailSimToolsetPrivate
 
 		/** ProfileGPU / LogRHI table is emitted from the RHI/render thread. */
 		virtual bool CanBeUsedOnAnyThread() const override { return true; }
-		virtual bool CanBeUsedOnMultipleThreads() const override { return false; } // Mutex protects Text
+		virtual bool CanBeUsedOnMultipleThreads() const override { return true; } // Mutex protects Text
 
 		virtual void Serialize(const TCHAR* Message, ELogVerbosity::Type Verbosity, const FName& Category) override
 		{
@@ -1965,6 +1994,103 @@ namespace SailSimToolsetPrivate
 		return true;
 	}
 
+	static bool LooksLikeGpuProfileText(const FString& Text)
+	{
+		return Text.Contains(TEXT("┃"))
+			|| Text.Contains(TEXT("total GPU time"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("Profiling the next GPU frame"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("Perf marker hierarchy"), ESearchCase::IgnoreCase)
+			|| Text.Contains(TEXT("GPU Profile"), ESearchCase::IgnoreCase);
+	}
+
+	/** Drop log lines from before the latest ProfileGPU header so unrelated "ms" rows are not the hierarchy. */
+	static FString ProfileSlice(const FString& Text)
+	{
+		int32 Best = INDEX_NONE;
+		static const TCHAR* Markers[] = {
+			TEXT("Profiling the next GPU frame"),
+			TEXT("Perf marker hierarchy"),
+			TEXT("total GPU time"),
+			TEXT("GPU Profile"),
+		};
+		for (const TCHAR* Marker : Markers)
+		{
+			const int32 Idx = Text.Find(Marker, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+			if (Idx != INDEX_NONE && (Best == INDEX_NONE || Idx > Best))
+			{
+				Best = Idx;
+			}
+		}
+		if (Best == INDEX_NONE)
+		{
+			Best = Text.Find(TEXT("┃"), ESearchCase::CaseSensitive, ESearchDir::FromStart);
+		}
+		if (Best == INDEX_NONE)
+		{
+			return Text;
+		}
+		int32 LineStart = Best;
+		while (LineStart > 0 && Text[LineStart - 1] != TEXT('\n'))
+		{
+			--LineStart;
+		}
+		return Text.Mid(LineStart);
+	}
+
+	/** Read bytes appended to a log the editor still has open. */
+	static void AppendFileGrowth(const FString& Path, int64& InOutOffset, FString& OutText)
+	{
+		const int64 Size = IFileManager::Get().FileSize(*Path);
+		if (Size < 0 || Size <= InOutOffset)
+		{
+			return;
+		}
+		TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*Path, FILEREAD_AllowWrite));
+		if (!Reader)
+		{
+			return;
+		}
+		int64 Start = InOutOffset;
+		if (Size - Start > 1024 * 1024)
+		{
+			Start = Size - 1024 * 1024;
+		}
+		Reader->Seek(Start);
+		const int32 Count = static_cast<int32>(Size - Start);
+		TArray<uint8> Bytes;
+		Bytes.SetNumUninitialized(Count);
+		Reader->Serialize(Bytes.GetData(), Count);
+		Reader->Close();
+		FString Chunk;
+		FFileHelper::BufferToString(Chunk, Bytes.GetData(), Bytes.Num());
+		OutText += Chunk;
+		InOutOffset = Size;
+	}
+
+	/**
+	 * ProfileGPU 2.0 emits when a render frame ends. Viewport::Draw alone does not.
+	 * Then drain game-thread tasks so the log line is not stuck behind this call.
+	 */
+	static void PresentProfileFrame(FViewport* Viewport)
+	{
+		if (!Viewport)
+		{
+			return;
+		}
+		Viewport->EnqueueBeginRenderFrame(true);
+		Viewport->Draw(true);
+		Viewport->EnqueueEndRenderFrame(false, true);
+		FlushRenderingCommands();
+		if (IsInGameThread() && FTaskGraphInterface::IsRunning())
+		{
+			FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+		}
+		if (GLog)
+		{
+			GLog->Flush();
+		}
+	}
+
 }
 
 FToolsetImage USailSimToolset::CapturePlayerView(float MinWorldSeconds, const FString& FramingPreset)
@@ -2384,9 +2510,33 @@ FString USailSimToolset::ProfileGPUDump()
 		return SailSimToolsetPrivate::JsonString(Root);
 	}
 
+	static bool bInProfileGPUDump = false;
+	if (bInProfileGPUDump)
+	{
+		Root->SetBoolField(TEXT("ok"), false);
+		Root->SetBoolField(TEXT("incomplete"), true);
+		Root->SetStringField(TEXT("code"), TEXT("profile_incomplete"));
+		Root->SetStringField(TEXT("error"), TEXT("ProfileGPUDump re-entered while a dump was already waiting."));
+		Root->SetStringField(TEXT("scrapeLog"), FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log")));
+		return SailSimToolsetPrivate::JsonString(Root);
+	}
+	struct FProfileDumpGuard
+	{
+		bool& Flag;
+		explicit FProfileDumpGuard(bool& InFlag) : Flag(InFlag) { Flag = true; }
+		~FProfileDumpGuard() { Flag = false; }
+	};
+	FProfileDumpGuard DumpGuard(bInProfileGPUDump);
+
+	UWorld* PlayWorld = SailSimToolsetPrivate::GetPlayWorld();
 	FString ViewportSource;
-	FViewport* Viewport = SailSimToolsetPrivate::FindFrameViewport(
-		SailSimToolsetPrivate::GetPlayWorld(), ViewportSource);
+	FViewport* Viewport = PlayWorld
+		? SailSimToolsetPrivate::FindLitViewportFramebuffer(PlayWorld, ViewportSource)
+		: nullptr;
+	if (!Viewport)
+	{
+		Viewport = SailSimToolsetPrivate::FindFrameViewport(PlayWorld, ViewportSource);
+	}
 	if (!Viewport)
 	{
 		Root->SetBoolField(TEXT("ok"), false);
@@ -2409,15 +2559,24 @@ FString USailSimToolset::ProfileGPUDump()
 	}
 	Capture.bCapture = true;
 
-	// Wait for the engine dump file. Do not return profile_not_emitted on a short
-	// log scrape — ProfileGPU resolves a few frames later and writes under ProfilingDir.
+	// UE 5.8 ProfileGPU logs the table when a render frame ends. It often never
+	// writes Saved/Profiling. Draw() alone does not end that frame, so the old
+	// 8s file watch returned profile_timeout with an empty hierarchy.
 	const FString DumpDir = FPaths::ProfilingDir();
 	IFileManager::Get().MakeDirectory(*DumpDir, true);
 	TMap<FString, int64> Before;
 	SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Before);
 
+	const FString SessionLog = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("SailSimUE.log"));
+	int64 LogOffset = IFileManager::Get().FileSize(*SessionLog);
+	if (LogOffset < 0)
+	{
+		LogOffset = 0;
+	}
+	FString LogGrowth;
+
 	const bool bTriggered = GEngine->Exec(World, TEXT("ProfileGPU"));
-	constexpr double TimeoutSec = 8.0;
+	constexpr double TimeoutSec = 20.0;
 	const double Started = FPlatformTime::Seconds();
 	const double Deadline = Started + TimeoutSec;
 	int32 FramesPumped = 0;
@@ -2429,6 +2588,7 @@ FString USailSimToolset::ProfileGPUDump()
 	FString UnparsedNewDump;
 	int32 BestEventCount = -1;
 	bool bDumpComplete = false;
+	bool bRetriggered = false;
 
 	auto AcceptDump = [&](const SailSimToolsetPrivate::FGpuDumpHit& Hit, bool bComplete)
 	{
@@ -2480,14 +2640,39 @@ FString USailSimToolset::ProfileGPUDump()
 		return false;
 	};
 
+	auto ConsiderText = [&](const FString& Text, const TCHAR* Source) -> bool
+	{
+		if (bDumpComplete || !SailSimToolsetPrivate::LooksLikeGpuProfileText(Text))
+		{
+			return bDumpComplete;
+		}
+		float ParsedTotal = -1.f;
+		TArray<SailSimToolsetPrivate::FProfileEvent> Parsed;
+		SailSimToolsetPrivate::ParseProfileGPU(SailSimToolsetPrivate::ProfileSlice(Text), ParsedTotal, Parsed);
+		const SailSimToolsetPrivate::FProfileShape ParsedShape = SailSimToolsetPrivate::ShapeProfile(Parsed);
+		if (ParsedShape.bComplete)
+		{
+			ProfileSource = Source;
+			TotalMs = ParsedShape.GpuFrameMs;
+			Events = MoveTemp(Parsed);
+			bDumpComplete = true;
+			BestEventCount = Events.Num();
+			return true;
+		}
+		if (Parsed.Num() > BestEventCount)
+		{
+			ProfileSource = Source;
+			TotalMs = ParsedTotal;
+			Events = MoveTemp(Parsed);
+			bDumpComplete = false;
+			BestEventCount = Events.Num();
+		}
+		return false;
+	};
+
 	while (FPlatformTime::Seconds() < Deadline && !bDumpComplete)
 	{
-		Viewport->Draw();
-		FlushRenderingCommands();
-		if (GLog)
-		{
-			GLog->Flush();
-		}
+		SailSimToolsetPrivate::PresentProfileFrame(Viewport);
 		++FramesPumped;
 		TMap<FString, int64> Now;
 		SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Now);
@@ -2495,22 +2680,37 @@ FString USailSimToolset::ProfileGPUDump()
 		{
 			break;
 		}
-		FPlatformProcess::Sleep(0.03f);
+		{
+			FScopeLock Lock(&Capture.Mutex);
+			ConsiderText(Capture.Text, TEXT("log_capture"));
+		}
+		SailSimToolsetPrivate::AppendFileGrowth(SessionLog, LogOffset, LogGrowth);
+		if (ConsiderText(LogGrowth, TEXT("log_file")))
+		{
+			break;
+		}
+		if (!bRetriggered && (FPlatformTime::Seconds() - Started) > 1.0)
+		{
+			bRetriggered = true;
+			GEngine->Exec(World, TEXT("ProfileGPU"));
+		}
+		FPlatformProcess::Sleep(0.01f);
 	}
 
-	// One assert after the wait: a file that landed on the last sample still counts.
+	// Last presented frame can land the table after the deadline check.
 	if (!bDumpComplete)
 	{
-		Viewport->Draw();
-		FlushRenderingCommands();
-		if (GLog)
-		{
-			GLog->Flush();
-		}
+		SailSimToolsetPrivate::PresentProfileFrame(Viewport);
 		++FramesPumped;
 		TMap<FString, int64> Now;
 		SailSimToolsetPrivate::SnapshotProfilingFiles(DumpDir, Now);
 		ConsiderDumpMap(Now, false);
+		{
+			FScopeLock Lock(&Capture.Mutex);
+			ConsiderText(Capture.Text, TEXT("log_capture"));
+		}
+		SailSimToolsetPrivate::AppendFileGrowth(SessionLog, LogOffset, LogGrowth);
+		ConsiderText(LogGrowth, TEXT("log_file"));
 	}
 
 	const double WaitedSec = FPlatformTime::Seconds() - Started;
@@ -2525,23 +2725,14 @@ FString USailSimToolset::ProfileGPUDump()
 		ShowUI->Set(PreviousShowUI, ECVF_SetByCode);
 	}
 
-	// No dump file: keep the log capture as "whatever was captured". It does not count as a complete emit.
+	// Keep a copy of whatever arrived. A complete log table is a successful emit.
 	FString CapturedPath;
-	if (ProfileSource.IsEmpty() && Capture.Text.Len() > 0)
-	{
-		SailSimToolsetPrivate::ParseProfileGPU(Capture.Text, TotalMs, Events);
-		CapturedPath = FPaths::Combine(
-			DumpDir,
-			FString::Printf(TEXT("SailSimProfileGPU-capture-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
-		FFileHelper::SaveStringToFile(Capture.Text, *CapturedPath);
-		ProfileSource = TEXT("log_capture");
-	}
-	else if (!bDumpComplete && Capture.Text.Len() > 0)
+	if (Capture.Text.Len() > 0 || LogGrowth.Len() > 0)
 	{
 		CapturedPath = FPaths::Combine(
 			DumpDir,
 			FString::Printf(TEXT("SailSimProfileGPU-capture-%s.txt"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
-		FFileHelper::SaveStringToFile(Capture.Text, *CapturedPath);
+		FFileHelper::SaveStringToFile(Capture.Text + LogGrowth, *CapturedPath);
 	}
 
 	const SailSimToolsetPrivate::FProfileShape Shape = SailSimToolsetPrivate::ShapeProfile(Events);
@@ -2549,7 +2740,7 @@ FString USailSimToolset::ProfileGPUDump()
 	{
 		TotalMs = Shape.GpuFrameMs;
 	}
-	bDumpComplete = ProfileSource == TEXT("dump_file") && Shape.bComplete;
+	bDumpComplete = Shape.bComplete;
 
 	TMap<FString, float> Sums;
 	SailSimToolsetPrivate::SumBuckets(Events, Sums);
@@ -2636,18 +2827,18 @@ FString USailSimToolset::ProfileGPUDump()
 	{
 		Code = TEXT("ok");
 	}
-	else if (bFileEmitted)
+	else if (bParsed || bFileEmitted || !UnparsedNewDump.IsEmpty())
 	{
 		Code = TEXT("profile_incomplete");
 		Error = FString::Printf(
-			TEXT("ProfileGPU dump file is missing a GPU frame row plus top-level passes after %.1fs. incomplete=true. dumpPath=%s. Scrape Saved/Logs/SailSimUE.log for the rest."),
+			TEXT("ProfileGPU capture is missing a GPU frame row plus top-level passes after %.1fs. incomplete=true. dumpPath=%s. Scrape Saved/Logs/SailSimUE.log for the rest."),
 			TimeoutSec, *ReportedDump);
 	}
 	else
 	{
 		Code = TEXT("profile_timeout");
 		Error = FString::Printf(
-			TEXT("ProfileGPU dump file was not emitted within %.1fs. expectedDir=%s dumpPath=%s. incomplete=true. Captured rows are in hierarchy; scrape Saved/Logs/SailSimUE.log."),
+			TEXT("ProfileGPU did not reach a GPU frame and top-level passes within %.1fs. expectedDir=%s dumpPath=%s. incomplete=true. Scrape Saved/Logs/SailSimUE.log."),
 			TimeoutSec, *DumpDir, *ReportedDump);
 	}
 
@@ -2665,7 +2856,7 @@ FString USailSimToolset::ProfileGPUDump()
 	Root->SetNumberField(TEXT("framesPumped"), FramesPumped);
 	Root->SetNumberField(TEXT("waitedSec"), WaitedSec);
 	Root->SetNumberField(TEXT("timeoutSec"), TimeoutSec);
-	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len());
+	Root->SetNumberField(TEXT("captureChars"), Capture.Text.Len() + LogGrowth.Len());
 	Root->SetBoolField(TEXT("parsed"), bParsed);
 	Root->SetStringField(TEXT("profileSource"), ProfileSource);
 	Root->SetStringField(TEXT("code"), Code);

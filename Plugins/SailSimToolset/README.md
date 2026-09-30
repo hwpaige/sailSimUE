@@ -203,7 +203,7 @@ r.Lumen.Reflections.Allow=1
 
 ## ProfileGPUDump
 
-Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and waits until a **new file under `Saved/Profiling`** has a GPU frame row and top-level passes (up to 8s). `ok: true` only then (`profileSource=dump_file`, `incomplete: false`).
+Sets `r.ProfileGPU.ShowUI` to 0 for the call (restored after), runs `ProfileGPU`, and presents render frames for up to 20s. `ok: true` when the log table or a new `Saved/Profiling` file parses a GPU frame row plus top-level passes (`profileSource` is `log_capture`, `log_file`, or `dump_file`). UE 5.8 usually logs the table and does not write a dump file.
 
 Compare fields (different clocks):
 
@@ -219,8 +219,8 @@ Compare fields (different clocks):
 
 ### Incomplete or missing
 
-- No new dump file after the wait: `ok: false`, `code: profile_timeout`, `incomplete: true`, `expectedDumpDir`, `dumpPath`, `timeoutSec`. Any log lines captured during the wait are in `hierarchy` and `capturedPath`. This is not `profile_not_emitted`.
-- File exists but has no GPU frame row plus top-level passes: `code: profile_incomplete`, `incomplete: true`, and the rows that did parse.
+- Nothing usable after the wait: `ok: false`, `code: profile_timeout`, `incomplete: true`, `expectedDumpDir`, `dumpPath`, `timeoutSec`. This is not `profile_not_emitted`.
+- Rows arrived but there is no GPU frame plus top-level passes: `code: profile_incomplete`, `incomplete: true`, and the rows that did parse (`hierarchy`, `capturedPath`).
 - `scrapeLog` is `Saved/Logs/SailSimUE.log`. When `incomplete` is true, scrape that log. The tool still returns whatever it captured.
 
 ### Gaps the dump does not prove

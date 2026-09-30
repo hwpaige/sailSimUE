@@ -136,12 +136,13 @@ public:
 	static FString ExecuteConsole(const FString& Commands);
 
 	/**
-	 * Trigger ProfileGPU (UI suppressed) and wait until a new dump file under Saved/Profiling
-	 * contains a GPU frame row and top-level passes (up to 8s).
+	 * Trigger ProfileGPU (UI suppressed) and present render frames until the log table
+	 * (or a Saved/Profiling file) has a GPU frame row and top-level passes (up to 20s).
+	 * ok is true when that parse is ready — UE 5.8 often never writes a dump file.
 	 * Success JSON: gpuFrameMs (compare to GetPerfSnapshot.frameMs / frameMs_avg — CPU frame, different clock),
 	 * topLevel, topLevelSumMs, hierarchy (dump order), bucketsMs.
-	 * No file after the wait: code profile_timeout, incomplete=true, path + timeout, plus any captured rows.
-	 * File without a frame + top-level: code profile_incomplete, incomplete=true, whatever parsed.
+	 * Nothing usable after the wait: code profile_timeout, incomplete=true, path + timeout.
+	 * Rows without a frame + top-level: code profile_incomplete, incomplete=true, whatever parsed.
 	 * gaps lists CPU Game/Render, SceneUpdate, Nanite parents, async compute, and VSM excl=incl noise.
 	 * scrapeLog is Saved/Logs/SailSimUE.log. Does not return profile_not_emitted.
 	 */
